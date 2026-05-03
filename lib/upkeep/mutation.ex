@@ -62,6 +62,14 @@ defmodule Upkeep.Mutation do
     |> notify()
   end
 
+  def with_transaction_journal(fun) when is_function(fun, 0) do
+    if journal_active?() do
+      run_nested_transaction_journal(fun)
+    else
+      run_outer_transaction_journal(fun)
+    end
+  end
+
   defp run_outer_mutation(repo, fun) do
     previous = Process.get(@journal_key, :upkeep_no_journal)
     put_journal([])
@@ -112,6 +120,48 @@ defmodule Upkeep.Mutation do
         error
     end
   end
+
+  defp run_outer_transaction_journal(fun) do
+    previous = Process.get(@journal_key, :upkeep_no_journal)
+    put_journal([])
+
+    try do
+      result = fun.()
+
+      if transaction_committed?(result) do
+        Enum.each(journal(), &Upkeep.Coordinator.notify/1)
+      end
+
+      result
+    after
+      restore_journal(previous)
+    end
+  end
+
+  defp run_nested_transaction_journal(fun) do
+    previous = journal()
+
+    try do
+      result = fun.()
+
+      unless transaction_committed?(result) do
+        put_journal(previous)
+      end
+
+      result
+    rescue
+      exception ->
+        put_journal(previous)
+        reraise exception, __STACKTRACE__
+    catch
+      kind, reason ->
+        put_journal(previous)
+        :erlang.raise(kind, reason, __STACKTRACE__)
+    end
+  end
+
+  defp transaction_committed?({:ok, _result}), do: true
+  defp transaction_committed?(_result), do: false
 
   defp journal_active?, do: is_list(Process.get(@journal_key))
   defp journal, do: Process.get(@journal_key, [])
