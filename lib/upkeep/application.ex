@@ -14,6 +14,7 @@ defmodule Upkeep.Application do
        repos: Application.fetch_env!(:upkeep, :ecto_repos), skip: skip_migrations?()},
       {DNSCluster, query: Application.get_env(:upkeep, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Upkeep.PubSub},
+      Upkeep.Kanban,
       durable_supervisor_child(),
       # Start to serve requests, typically the last entry
       UpkeepWeb.Endpoint
