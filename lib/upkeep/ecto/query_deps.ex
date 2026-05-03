@@ -103,6 +103,7 @@ defmodule Upkeep.Ecto.QueryDeps do
 
   defp assoc_schema(_bindings, _assoc), do: nil
 
+  defp source_schema({source, nil}) when is_binary(source), do: source
   defp source_schema({_source, schema}) when is_atom(schema) and not is_nil(schema), do: schema
   defp source_schema(_source), do: nil
 

@@ -166,6 +166,31 @@ defmodule Upkeep.SourceEctoTest do
     end
   end
 
+  defmodule SchemalessProjectIssues do
+    use Upkeep.Source
+
+    import Ecto.Query
+
+    @table "upkeep_source_ecto_test_issues"
+
+    def query(%{project_id: project_id, user_id: user_id}) do
+      from i in @table,
+        where:
+          field(i, :project_id) == ^project_id and
+            field(i, :assignee_id) == ^user_id and
+            field(i, :status) == "open",
+        order_by: [asc: field(i, :position)],
+        select: %{
+          id: field(i, :id),
+          project_id: field(i, :project_id),
+          assignee_id: field(i, :assignee_id),
+          status: field(i, :status),
+          title: field(i, :title),
+          position: field(i, :position)
+        }
+    end
+  end
+
   setup do
     Repo.query!("DROP TABLE IF EXISTS upkeep_source_ecto_test_comments")
     Repo.query!("DROP TABLE IF EXISTS upkeep_source_ecto_test_columns")
@@ -400,6 +425,34 @@ defmodule Upkeep.SourceEctoTest do
              issue(project_id: 2, title: "Other") |> Upkeep.Change.updated(),
              params
            )
+  end
+
+  test "schemaless query sources infer table-keyed interest from field filters" do
+    params = %{project_id: 1, user_id: 9}
+
+    assert SchemalessProjectIssues.__upkeep_interest_keys__(params) == [
+             {:upkeep_change, :inserted, "upkeep_source_ecto_test_issues",
+              [assignee_id: 9, project_id: 1, status: "open"]},
+             {:upkeep_change, :updated, "upkeep_source_ecto_test_issues",
+              [assignee_id: 9, project_id: 1, status: "open"]},
+             {:upkeep_change, :deleted, "upkeep_source_ecto_test_issues",
+              [assignee_id: 9, project_id: 1, status: "open"]}
+           ]
+
+    change =
+      Upkeep.Change.changed(
+        :inserted,
+        %{project_id: 1, assignee_id: 9, status: "open"},
+        schema: "upkeep_source_ecto_test_issues",
+        record: %{project_id: 1, assignee_id: 9, status: "open"}
+      )
+
+    refute SchemalessProjectIssues.reacts_to?(
+             %{change | record: %{project_id: 1, assignee_id: 10, status: "open"}},
+             params
+           )
+
+    assert SchemalessProjectIssues.reacts_to?(change, params)
   end
 
   defp issue(attrs) do
