@@ -44,13 +44,15 @@ defmodule Upkeep.Live do
 
     case Map.fetch(watches(socket), source_id) do
       {:ok, watch} ->
+        emit([:source, :watch], %{count: 1}, watch_metadata(watch, assign_name, :alias))
+
         socket
         |> put_watch_assign(source_id, assign_name)
         |> put_assign_node(assign_name, source_node_id(source_id))
         |> assign(assign_name, Map.fetch!(socket.assigns, primary_assign_name(watch)))
 
       :error ->
-        value = source.load(params)
+        value = load_source(source, params, source_id, component, :watch)
         interest_keys = source.__upkeep_interest_keys__(params)
 
         join_interest(interest_keys, assign_name, source)
@@ -64,9 +66,21 @@ defmodule Upkeep.Live do
           component: component,
           interest_keys: interest_keys
         })
+        |> tap(fn _socket ->
+          emit([:source, :watch], %{count: 1}, %{
+            source_id: source_id,
+            node_id: source_node_id(source_id),
+            source: source,
+            params: params,
+            component: component,
+            assign_name: assign_name,
+            kind: :new,
+            interest_keys: interest_keys
+          })
+        end)
         |> put_dag_source(source_id, value, source_deps(component))
         |> put_assign_node(assign_name, source_node_id(source_id))
-        |> assign(assign_name, value)
+        |> assign_source_value(assign_name, value, source_id)
     end
   end
 
@@ -179,6 +193,7 @@ defmodule Upkeep.Live do
     |> watches()
     |> Enum.reduce(socket, fn {_source_id, watch}, socket ->
       if watch.source.reacts_to?(event, watch.params) do
+        emit([:source, :queue], %{count: 1}, watch_metadata(watch, event: event))
         queue_refresh(socket, watch.source_id)
       else
         socket
@@ -201,7 +216,7 @@ defmodule Upkeep.Live do
   end
 
   defp maybe_refresh(socket, watch, changed) do
-    value = watch.source.load(watch.params)
+    value = load_source(watch, :refresh)
 
     socket = assign_watch(socket, watch, value)
 
@@ -224,9 +239,20 @@ defmodule Upkeep.Live do
 
   defp recompute_derived(socket, changed_source_nodes) do
     {dag, changed_derived_nodes, _recomputed_nodes} =
-      socket
-      |> dag()
-      |> Upkeep.DAG.recompute(changed_source_nodes)
+      span([:dag, :recompute], %{changed_source_nodes: changed_source_nodes}, fn ->
+        socket
+        |> dag()
+        |> Upkeep.DAG.recompute(changed_source_nodes)
+        |> then(fn {_dag, changed_derived_nodes, recomputed_nodes} = result ->
+          {result,
+           %{
+             changed_derived_nodes: changed_derived_nodes,
+             recomputed_nodes: recomputed_nodes,
+             changed_count: length(changed_derived_nodes),
+             recomputed_count: length(recomputed_nodes)
+           }}
+        end)
+      end)
 
     socket
     |> put_dag(dag)
@@ -239,13 +265,15 @@ defmodule Upkeep.Live do
 
       socket
       |> assign_names_for_node(node_id)
-      |> Enum.reduce(socket, fn assign_name, socket -> assign(socket, assign_name, value) end)
+      |> Enum.reduce(socket, fn assign_name, socket ->
+        assign_derived_value(socket, assign_name, value, node_id)
+      end)
     end)
   end
 
   defp assign_watch(socket, watch, value) do
     Enum.reduce(watch.assign_names, socket, fn assign_name, socket ->
-      assign(socket, assign_name, value)
+      assign_source_value(socket, assign_name, value, watch.source_id)
     end)
   end
 
@@ -259,6 +287,17 @@ defmodule Upkeep.Live do
           source: inspect(source)
         })
     end
+  end
+
+  defp load_source(watch, reason) do
+    load_source(watch.source, watch.params, watch.source_id, watch.component, reason)
+  end
+
+  defp load_source(source, params, source_id, component, reason) do
+    span([:source, :reload], source_metadata(source, params, source_id, component, reason), fn ->
+      value = source.load(params)
+      {value, %{changed?: nil}}
+    end)
   end
 
   defp put_watch(socket, source_id, watch) do
@@ -287,6 +326,7 @@ defmodule Upkeep.Live do
       {:ok, watch} ->
         watches = Map.delete(current_watches, source_id)
         leave_interest(unused_interest_keys(watch.interest_keys, watches))
+        emit([:source, :unwatch], %{count: 1}, watch_metadata(watch))
 
         private = socket.private || %{}
 
@@ -329,6 +369,8 @@ defmodule Upkeep.Live do
         if Enum.empty?(assign_names) do
           remove_watch(socket, source_id)
         else
+          emit([:source, :unwatch], %{count: 1}, watch_metadata(watch, assign_name, :alias))
+
           socket
           |> put_existing_watch(source_id, %{watch | assign_names: assign_names})
           |> delete_assign_node(assign_name)
@@ -520,6 +562,69 @@ defmodule Upkeep.Live do
 
   defp sort_maps_by(maps, key), do: Enum.sort_by(maps, &inspect(Map.fetch!(&1, key)))
   defp sort_terms(terms), do: Enum.sort_by(terms, &inspect/1)
+
+  defp assign_source_value(socket, assign_name, value, source_id) do
+    emit([:live, :assign], %{count: 1}, %{
+      assign: assign_name,
+      node_id: source_node_id(source_id),
+      source_id: source_id,
+      kind: :source
+    })
+
+    assign(socket, assign_name, value)
+  end
+
+  defp assign_derived_value(socket, assign_name, value, node_id) do
+    emit([:live, :assign], %{count: 1}, %{
+      assign: assign_name,
+      node_id: node_id,
+      kind: :derived
+    })
+
+    assign(socket, assign_name, value)
+  end
+
+  defp watch_metadata(watch), do: watch_metadata(watch, nil, :remove)
+
+  defp watch_metadata(watch, opts) when is_list(opts) do
+    Map.merge(watch_metadata(watch), Map.new(opts))
+  end
+
+  defp watch_metadata(watch, assign_name, kind) do
+    %{
+      source_id: watch.source_id,
+      node_id: source_node_id(watch.source_id),
+      source: watch.source,
+      params: watch.params,
+      component: watch.component,
+      assign_name: assign_name,
+      assign_names: watch.assign_names |> MapSet.to_list() |> sort_terms(),
+      kind: kind,
+      interest_keys: watch.interest_keys
+    }
+  end
+
+  defp source_metadata(source, params, source_id, component, reason) do
+    %{
+      source_id: source_id,
+      node_id: source_node_id(source_id),
+      source: source,
+      params: params,
+      component: component,
+      reason: reason
+    }
+  end
+
+  defp emit(event, measurements, metadata) do
+    :telemetry.execute([:upkeep | event], measurements, metadata)
+  end
+
+  defp span(event, metadata, fun) do
+    :telemetry.span([:upkeep | event], metadata, fn ->
+      {result, stop_metadata} = fun.()
+      {result, Map.merge(metadata, stop_metadata)}
+    end)
+  end
 
   defp normalize_params(params) when is_list(params), do: Map.new(params)
   defp normalize_params(params) when is_map(params), do: params

@@ -49,9 +49,17 @@ defmodule Upkeep.Coordinator do
 
   @impl true
   def handle_call({:notify, event}, _from, state) do
-    event
-    |> interested_pids()
-    |> Enum.each(&send(&1, {:upkeep_event, event}))
+    pids = interested_pids(event)
+
+    :telemetry.span(
+      [:upkeep, :coordinator, :dispatch],
+      %{event: event},
+      fn ->
+        Enum.each(pids, &send(&1, {:upkeep_event, event}))
+
+        {:ok, %{event: event, pid_count: length(pids)}}
+      end
+    )
 
     {:reply, :ok, %{state | notified_count: state.notified_count + 1}}
   end

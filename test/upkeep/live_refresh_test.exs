@@ -447,6 +447,72 @@ defmodule Upkeep.LiveRefreshTest do
              Enum.find(snapshot.dag.edges, &(&1.to == {:source, comments_source_id}))
   end
 
+  test "emits telemetry for watch, queue, reload, recompute, assign, and unwatch", %{
+    table: table
+  } do
+    attach_telemetry([
+      [:upkeep, :source, :watch],
+      [:upkeep, :source, :queue],
+      [:upkeep, :source, :reload, :start],
+      [:upkeep, :source, :reload, :stop],
+      [:upkeep, :source, :unwatch],
+      [:upkeep, :dag, :recompute, :start],
+      [:upkeep, :dag, :recompute, :stop],
+      [:upkeep, :live, :assign]
+    ])
+
+    source_id = {ProjectIssues, %{project_id: 1}}
+
+    socket =
+      new_socket()
+      |> Live.watch(:issues, ProjectIssues, project_id: 1)
+      |> Live.derive(:issue_count, [:issues], fn %{issues: issues} -> length(issues) end)
+
+    assert_receive {:telemetry, [:upkeep, :source, :reload, :start], _measurements,
+                    %{source_id: ^source_id, reason: :watch}}
+
+    assert_receive {:telemetry, [:upkeep, :source, :reload, :stop], measurements,
+                    %{source_id: ^source_id, reason: :watch}}
+
+    assert is_integer(measurements.duration)
+
+    assert_receive {:telemetry, [:upkeep, :source, :watch], %{count: 1},
+                    %{source_id: ^source_id, assign_name: :issues, kind: :new}}
+
+    assert_receive {:telemetry, [:upkeep, :live, :assign], %{count: 1},
+                    %{assign: :issues, node_id: {:source, ^source_id}, kind: :source}}
+
+    :ets.insert(table, {{:issues, 1}, [:issue_a, :issue_b]})
+    change = updated_issue(1, 1)
+
+    socket = Live.queue_matching(socket, change)
+
+    assert_receive {:telemetry, [:upkeep, :source, :queue], %{count: 1},
+                    %{source_id: ^source_id, event: ^change}}
+
+    socket = Live.flush_refreshes(socket)
+
+    assert_receive {:telemetry, [:upkeep, :source, :reload, :start], _measurements,
+                    %{source_id: ^source_id, reason: :refresh}}
+
+    assert_receive {:telemetry, [:upkeep, :dag, :recompute, :stop], _measurements,
+                    %{
+                      changed_source_nodes: [{:source, ^source_id}],
+                      changed_derived_nodes: [{:derived, :issue_count}],
+                      recomputed_nodes: [{:derived, :issue_count}],
+                      changed_count: 1,
+                      recomputed_count: 1
+                    }}
+
+    assert_receive {:telemetry, [:upkeep, :live, :assign], %{count: 1},
+                    %{assign: :issue_count, node_id: {:derived, :issue_count}, kind: :derived}}
+
+    _socket = Live.unwatch(socket, :issues)
+
+    assert_receive {:telemetry, [:upkeep, :source, :unwatch], %{count: 1},
+                    %{source_id: ^source_id, kind: :remove}}
+  end
+
   defp new_socket, do: %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
 
   def table_value(key) do
@@ -484,5 +550,22 @@ defmodule Upkeep.LiveRefreshTest do
     |> Upkeep.Source.group_key()
     |> then(&Group.members(Upkeep.DurableSupervisor, &1))
     |> Enum.count(fn {pid, _meta} -> pid == self() end)
+  end
+
+  defp attach_telemetry(events) do
+    test_pid = self()
+    handler_id = {__MODULE__, test_pid, make_ref()}
+
+    :ok =
+      :telemetry.attach_many(
+        handler_id,
+        events,
+        fn event, measurements, metadata, _config ->
+          send(test_pid, {:telemetry, event, measurements, metadata})
+        end,
+        nil
+      )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
   end
 end
