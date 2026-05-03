@@ -3,5 +3,7 @@ defmodule Upkeep do
   Domain-reactive LiveView runtime prototype.
   """
 
-  defdelegate notify(event), to: Upkeep.Coordinator
+  defdelegate mutate(fun), to: Upkeep.Mutation
+  defdelegate mutate(repo, fun), to: Upkeep.Mutation
+  defdelegate notify(event), to: Upkeep.Mutation
 end

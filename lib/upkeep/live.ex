@@ -62,7 +62,7 @@ defmodule Upkeep.Live do
     end)
   end
 
-  def notify(event) when is_struct(event), do: Upkeep.Coordinator.notify(event)
+  def notify(event) when is_struct(event), do: Upkeep.notify(event)
 
   defp put_watch(socket, source_id, watch) do
     private = socket.private || %{}
