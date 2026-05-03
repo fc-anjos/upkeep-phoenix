@@ -1,16 +1,41 @@
 defmodule Upkeep.SourceEctoTest do
   use Upkeep.DataCase, async: false
 
+  defmodule Column do
+    use Ecto.Schema
+
+    @primary_key {:id, :integer, autogenerate: false}
+    schema "upkeep_source_ecto_test_columns" do
+      field :project_id, :integer
+      field :name, :string
+      field :position, :integer
+    end
+  end
+
   defmodule Issue do
     use Ecto.Schema
 
     @primary_key {:id, :integer, autogenerate: false}
     schema "upkeep_source_ecto_test_issues" do
       field :project_id, :integer
+      field :column_id, :integer
       field :assignee_id, :integer
       field :status, :string
       field :title, :string
       field :position, :integer
+
+      belongs_to :column, Upkeep.SourceEctoTest.Column, define_field: false
+    end
+  end
+
+  defmodule Comment do
+    use Ecto.Schema
+
+    @primary_key {:id, :integer, autogenerate: false}
+    schema "upkeep_source_ecto_test_comments" do
+      field :project_id, :integer
+      field :issue_id, :integer
+      field :body, :string
     end
   end
 
@@ -44,17 +69,135 @@ defmodule Upkeep.SourceEctoTest do
     end
   end
 
+  defmodule JoinedIssueCards do
+    use Upkeep.Source
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.{Column, Issue}
+
+    def query(%{project_id: project_id, statuses: statuses}) do
+      from i in Issue,
+        join: c in Column,
+        on: c.id == i.column_id,
+        where:
+          i.project_id == ^project_id and
+            c.project_id == ^project_id and
+            i.status in ^statuses,
+        order_by: [asc: c.position, asc: i.position],
+        select: %{id: i.id, title: i.title, column: c.name}
+    end
+  end
+
+  defmodule AssocJoinedIssueCards do
+    use Upkeep.Source
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.Issue
+
+    def query(%{project_id: project_id}) do
+      from i in Issue,
+        join: c in assoc(i, :column),
+        where: i.project_id == ^project_id and c.project_id == ^project_id,
+        select: {i.id, c.name}
+    end
+  end
+
+  defmodule JoinedColumnProjection do
+    use Upkeep.Source
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.{Column, Issue}
+
+    def query(%{project_id: project_id}) do
+      from i in Issue,
+        join: c in Column,
+        on: c.id == i.column_id,
+        where: i.project_id == ^project_id,
+        select: %{title: i.title, column: c.name}
+    end
+  end
+
+  defmodule DynamicIssues do
+    use Upkeep.Source
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.Issue
+
+    def query(%{project_id: project_id, statuses: statuses}) do
+      filters = dynamic([i], i.project_id == ^project_id and i.status in ^statuses)
+
+      from i in Issue,
+        where: ^filters
+    end
+  end
+
+  defmodule CommentedIssues do
+    use Upkeep.Source
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.{Comment, Issue}
+
+    def query(%{project_id: project_id}) do
+      commented_issue_ids =
+        from c in Comment,
+          where: c.project_id == ^project_id,
+          select: c.issue_id
+
+      from i in Issue,
+        where: i.project_id == ^project_id and i.id in subquery(commented_issue_ids)
+    end
+  end
+
+  defmodule FragmentIssues do
+    use Upkeep.Source
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.Issue
+
+    def query(%{project_id: project_id, term: term}) do
+      from i in Issue,
+        where: i.project_id == ^project_id and fragment("lower(?)", i.title) == ^term
+    end
+  end
+
   setup do
+    Repo.query!("DROP TABLE IF EXISTS upkeep_source_ecto_test_comments")
+    Repo.query!("DROP TABLE IF EXISTS upkeep_source_ecto_test_columns")
     Repo.query!("DROP TABLE IF EXISTS upkeep_source_ecto_test_issues")
 
     Repo.query!("""
     CREATE TABLE upkeep_source_ecto_test_issues (
       id INTEGER PRIMARY KEY,
       project_id INTEGER NOT NULL,
+      column_id INTEGER,
       assignee_id INTEGER,
       status TEXT NOT NULL,
       title TEXT NOT NULL,
       position INTEGER NOT NULL
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE upkeep_source_ecto_test_columns (
+      id INTEGER PRIMARY KEY,
+      project_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      position INTEGER NOT NULL
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE upkeep_source_ecto_test_comments (
+      id INTEGER PRIMARY KEY,
+      project_id INTEGER NOT NULL,
+      issue_id INTEGER NOT NULL,
+      body TEXT NOT NULL
     )
     """)
 
@@ -126,6 +269,139 @@ defmodule Upkeep.SourceEctoTest do
            )
   end
 
+  test "joined queries infer dependencies for every schema with equality filters" do
+    params = %{project_id: 1, statuses: ["open", "blocked"]}
+
+    assert JoinedIssueCards.__upkeep_interest_keys__(params) |> sort_terms() ==
+             [
+               {:upkeep_change, :inserted, Column, [project_id: 1]},
+               {:upkeep_change, :updated, Column, [project_id: 1]},
+               {:upkeep_change, :deleted, Column, [project_id: 1]},
+               {:upkeep_change, :inserted, Issue, [project_id: 1, status: "blocked"]},
+               {:upkeep_change, :inserted, Issue, [project_id: 1, status: "open"]},
+               {:upkeep_change, :updated, Issue, [project_id: 1, status: "blocked"]},
+               {:upkeep_change, :updated, Issue, [project_id: 1, status: "open"]},
+               {:upkeep_change, :deleted, Issue, [project_id: 1, status: "blocked"]},
+               {:upkeep_change, :deleted, Issue, [project_id: 1, status: "open"]}
+             ]
+             |> sort_terms()
+
+    assert JoinedIssueCards.reacts_to?(
+             issue(project_id: 1, status: "blocked") |> Upkeep.Change.updated(),
+             params
+           )
+
+    refute JoinedIssueCards.reacts_to?(
+             issue(project_id: 1, status: "closed") |> Upkeep.Change.updated(),
+             params
+           )
+
+    assert JoinedIssueCards.reacts_to?(
+             column(project_id: 1) |> Upkeep.Change.updated(),
+             params
+           )
+
+    refute JoinedIssueCards.reacts_to?(
+             column(project_id: 2) |> Upkeep.Change.updated(),
+             params
+           )
+  end
+
+  test "assoc joins infer the related schema from Ecto association metadata" do
+    params = %{project_id: 1}
+
+    assert AssocJoinedIssueCards.__upkeep_interest_keys__(params) |> sort_terms() ==
+             [
+               {:upkeep_change, :inserted, Column, [project_id: 1]},
+               {:upkeep_change, :updated, Column, [project_id: 1]},
+               {:upkeep_change, :deleted, Column, [project_id: 1]},
+               {:upkeep_change, :inserted, Issue, [project_id: 1]},
+               {:upkeep_change, :updated, Issue, [project_id: 1]},
+               {:upkeep_change, :deleted, Issue, [project_id: 1]}
+             ]
+             |> sort_terms()
+  end
+
+  test "joined projections without equality filters fall back only for that schema" do
+    params = %{project_id: 1}
+
+    assert JoinedColumnProjection.__upkeep_interest_keys__(params) |> sort_terms() ==
+             [
+               {:upkeep_change, :inserted, Column},
+               {:upkeep_change, :updated, Column},
+               {:upkeep_change, :deleted, Column},
+               {:upkeep_change, :inserted, Issue, [project_id: 1]},
+               {:upkeep_change, :updated, Issue, [project_id: 1]},
+               {:upkeep_change, :deleted, Issue, [project_id: 1]}
+             ]
+             |> sort_terms()
+  end
+
+  test "dynamic filters and in-list filters are treated as precise memberships" do
+    params = %{project_id: 1, statuses: ["open", "blocked"]}
+
+    assert DynamicIssues.__upkeep_interest_keys__(params) |> sort_terms() ==
+             [
+               {:upkeep_change, :inserted, Issue, [project_id: 1, status: "blocked"]},
+               {:upkeep_change, :inserted, Issue, [project_id: 1, status: "open"]},
+               {:upkeep_change, :updated, Issue, [project_id: 1, status: "blocked"]},
+               {:upkeep_change, :updated, Issue, [project_id: 1, status: "open"]},
+               {:upkeep_change, :deleted, Issue, [project_id: 1, status: "blocked"]},
+               {:upkeep_change, :deleted, Issue, [project_id: 1, status: "open"]}
+             ]
+             |> sort_terms()
+
+    assert DynamicIssues.reacts_to?(
+             issue(project_id: 1, status: "open") |> Upkeep.Change.updated(),
+             params
+           )
+
+    refute DynamicIssues.reacts_to?(
+             issue(project_id: 1, status: "closed") |> Upkeep.Change.updated(),
+             params
+           )
+  end
+
+  test "subqueries add dependencies for their inner schemas" do
+    params = %{project_id: 1}
+
+    assert CommentedIssues.__upkeep_interest_keys__(params) |> sort_terms() ==
+             [
+               {:upkeep_change, :inserted, Comment, [project_id: 1]},
+               {:upkeep_change, :updated, Comment, [project_id: 1]},
+               {:upkeep_change, :deleted, Comment, [project_id: 1]},
+               {:upkeep_change, :inserted, Issue, [project_id: 1]},
+               {:upkeep_change, :updated, Issue, [project_id: 1]},
+               {:upkeep_change, :deleted, Issue, [project_id: 1]}
+             ]
+             |> sort_terms()
+
+    assert CommentedIssues.reacts_to?(
+             comment(project_id: 1) |> Upkeep.Change.inserted(),
+             params
+           )
+
+    refute CommentedIssues.reacts_to?(
+             comment(project_id: 2) |> Upkeep.Change.inserted(),
+             params
+           )
+  end
+
+  test "fragments intentionally fall back to broad schema invalidation" do
+    params = %{project_id: 1, term: "issue"}
+
+    assert FragmentIssues.__upkeep_interest_keys__(params) == [
+             {:upkeep_change, :inserted, Issue},
+             {:upkeep_change, :updated, Issue},
+             {:upkeep_change, :deleted, Issue}
+           ]
+
+    assert FragmentIssues.reacts_to?(
+             issue(project_id: 2, title: "Other") |> Upkeep.Change.updated(),
+             params
+           )
+  end
+
   defp issue(attrs) do
     struct!(
       Issue,
@@ -135,4 +411,14 @@ defmodule Upkeep.SourceEctoTest do
       )
     )
   end
+
+  defp column(attrs) do
+    struct!(Column, Keyword.merge([id: 1, project_id: 1, name: "Backlog", position: 1], attrs))
+  end
+
+  defp comment(attrs) do
+    struct!(Comment, Keyword.merge([id: 1, project_id: 1, issue_id: 1, body: "Comment"], attrs))
+  end
+
+  defp sort_terms(terms), do: Enum.sort_by(terms, &inspect/1)
 end
