@@ -1,17 +1,23 @@
 defmodule Upkeep.Source do
   @moduledoc """
-  Source authoring DSL for Upkeep-style reactive reads.
+  Source authoring helpers for Upkeep-style reactive reads.
 
-  A source is a named query plus the domain notifications that can invalidate
-  it. The common path is equality over notification/source fields via
-  `invalidated_by/2`; custom predicates stay available through `reacts_to/2`.
+  A source is a module that can load a live read. Plain `load/1` functions are
+  supported directly; Ecto-backed sources can expose a Phoenix-style `query/1`
+  and let Upkeep infer common invalidation keys from the returned query.
   """
 
-  defmacro __using__(_opts) do
-    quote do
+  defmacro __using__(opts) do
+    repo =
+      opts
+      |> Keyword.get(:repo)
+      |> Macro.expand(__CALLER__)
+
+    quote bind_quoted: [repo: repo] do
       import Upkeep.Source,
         only: [query: 1, invalidated_by: 2, invalidated_by: 3, reacts_to: 2, reacts_to: 3]
 
+      @upkeep_repo repo
       Module.register_attribute(__MODULE__, :upkeep_invalidators, accumulate: true)
       Module.register_attribute(__MODULE__, :upkeep_reactors, accumulate: true)
       @before_compile Upkeep.Source
@@ -65,6 +71,9 @@ defmodule Upkeep.Source do
   defmacro __before_compile__(env) do
     invalidators = Module.get_attribute(env.module, :upkeep_invalidators)
     reactors = Module.get_attribute(env.module, :upkeep_reactors)
+    repo = Module.get_attribute(env.module, :upkeep_repo)
+    defines_load? = Module.defines?(env.module, {:load, 1})
+    defines_query? = Module.defines?(env.module, {:query, 1})
 
     invalidator_checks =
       Enum.map(invalidators, fn {notification, on, as} ->
@@ -101,17 +110,97 @@ defmodule Upkeep.Source do
 
     reacts_to_body =
       case invalidator_checks ++ reactor_checks do
-        [] -> false
-        checks -> Enum.reduce(checks, &{:or, [], [&1, &2]})
+        [] ->
+          if defines_query? do
+            quote do
+              Upkeep.Source.query_reacts_to?(__MODULE__, event, params)
+            end
+          else
+            false
+          end
+
+        checks ->
+          query_check =
+            if defines_query? do
+              quote do
+                Upkeep.Source.query_reacts_to?(__MODULE__, event, params)
+              end
+            else
+              false
+            end
+
+          Enum.reduce([query_check | checks], &{:or, [], [&1, &2]})
+      end
+
+    load_definition =
+      cond do
+        defines_load? ->
+          []
+
+        defines_query? ->
+          quote do
+            def load(params) do
+              params
+              |> __MODULE__.query()
+              |> Upkeep.Source.load_from_query(unquote(repo))
+            end
+          end
+
+        true ->
+          quote do
+            def load(_params) do
+              raise ArgumentError,
+                    "#{inspect(__MODULE__)} must define load/1 or query/1 to be used as an Upkeep source"
+            end
+          end
+      end
+
+    query_interest_keys =
+      if defines_query? do
+        quote do
+          Upkeep.Source.query_interest_keys(__MODULE__, params)
+        end
+      else
+        []
       end
 
     quote do
+      unquote(load_definition)
+
       def reacts_to?(event, params), do: unquote(reacts_to_body)
 
       def __upkeep_interest_keys__(params) do
-        [unquote_splicing(interest_keys)]
+        [unquote_splicing(interest_keys)] ++ unquote(query_interest_keys)
       end
     end
+  end
+
+  def load_from_query(%Ecto.Query{} = _query, nil) do
+    raise ArgumentError,
+          "source returned an Ecto.Query but no repo was configured; " <>
+            "use `use Upkeep.Source, repo: MyApp.Repo` or define load/1 explicitly"
+  end
+
+  def load_from_query(%Ecto.Query{} = query, repo) when is_atom(repo), do: repo.all(query)
+  def load_from_query(value, _repo), do: value
+
+  def query_interest_keys(source, params) when is_atom(source) do
+    source
+    |> source_query(params)
+    |> Upkeep.Ecto.QueryDeps.interest_keys()
+  end
+
+  def query_reacts_to?(source, event, params) when is_atom(source) and is_struct(event) do
+    deps =
+      source
+      |> source_query(params)
+      |> Upkeep.Ecto.QueryDeps.from_query()
+
+    Upkeep.Ecto.QueryDeps.matches_change?(deps, event)
+  end
+
+  defp source_query(source, params) do
+    if function_exported?(source, :query, 1), do: source.query(params), else: nil
   end
 
   def matches?(%Upkeep.Change{} = change, %{name: name, schema: schema}) do

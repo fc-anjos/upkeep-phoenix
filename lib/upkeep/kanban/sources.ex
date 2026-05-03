@@ -6,7 +6,7 @@ defmodule Upkeep.Kanban.Sources.BoardColumns do
   alias Upkeep.Kanban
   alias Upkeep.Kanban.{Column, Comment, Issue}
 
-  query(fn s -> Kanban.board_columns(s.project_id) end)
+  def load(s), do: Kanban.board_columns(s.project_id)
 
   invalidated_by(Issue, :issue_created, on: :project_id)
   invalidated_by(Issue, :issue_moved, on: :project_id)
@@ -23,7 +23,7 @@ defmodule Upkeep.Kanban.Sources.ProjectActivity do
 
   alias Upkeep.Kanban
 
-  query(fn s -> Kanban.project_activity(s.project_id) end)
+  def load(s), do: Kanban.project_activity(s.project_id)
 
   invalidated_by(:issue_created, on: :project_id)
   invalidated_by(:issue_moved, on: :project_id)
@@ -41,7 +41,7 @@ defmodule Upkeep.Kanban.Sources.MyIssues do
   alias Upkeep.Kanban
   alias Upkeep.Kanban.Issue
 
-  query(fn s -> Kanban.my_issues(s.project_id, s.user_id) end)
+  def load(s), do: Kanban.my_issues(s.project_id, s.user_id)
 
   invalidated_by(Issue, :issue_created,
     on: [:project_id, :assignee_id],
@@ -74,7 +74,7 @@ defmodule Upkeep.Kanban.Sources.IssueComments do
   alias Upkeep.Kanban
   alias Upkeep.Kanban.Comment
 
-  query(fn s -> Kanban.issue_comments(s.issue_id) end)
+  def load(s), do: Kanban.issue_comments(s.issue_id)
 
   invalidated_by(Comment, :comment_added, on: :issue_id)
 end
