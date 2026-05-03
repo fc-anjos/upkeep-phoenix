@@ -152,6 +152,25 @@ defmodule Upkeep.Kanban do
     end)
   end
 
+  def rename_issue(issue_id, title) do
+    Upkeep.mutate(fn ->
+      {old_issue, issue} =
+        Agent.get_and_update(__MODULE__, fn state ->
+          old_issue = Map.fetch!(state.issues, issue_id)
+          issue = %{old_issue | title: title}
+
+          {{old_issue, issue},
+           state
+           |> put_in([:issues, issue_id], issue)
+           |> add_activity(issue.project_id, "Renamed #{old_issue.title} to #{issue.title}")
+           |> Map.update!(:next_id, &(&1 + 1))}
+        end)
+
+      Upkeep.changed(:issue_renamed, issue, from: old_issue)
+      issue
+    end)
+  end
+
   def add_comment(issue_id, body) do
     Upkeep.mutate(fn ->
       comment =

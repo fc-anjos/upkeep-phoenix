@@ -44,6 +44,11 @@ defmodule UpkeepWeb.KanbanLive do
     {:noreply, socket}
   end
 
+  def handle_event("rename_issue", %{"issue" => %{"id" => id, "title" => title}}, socket) do
+    {:ok, _issue} = Kanban.rename_issue(to_integer(id), title |> String.trim() |> default_title())
+    {:noreply, socket}
+  end
+
   def handle_event("open_issue", %{"id" => id}, socket) do
     {:noreply, open_issue_detail(socket, to_integer(id))}
   end
@@ -133,6 +138,25 @@ defmodule UpkeepWeb.KanbanLive do
                       Me
                     </span>
                   </div>
+
+                  <.form
+                    for={%{}}
+                    as={:issue}
+                    id={"rename-issue-#{issue.id}"}
+                    phx-submit="rename_issue"
+                    class="mt-3 flex gap-1"
+                  >
+                    <input type="hidden" name="issue[id]" value={issue.id} />
+                    <input
+                      name="issue[title]"
+                      value={issue.title}
+                      aria-label="Issue title"
+                      class="min-w-0 flex-1 rounded border border-zinc-300 px-2 py-1 text-xs"
+                    />
+                    <button class="inline-flex size-7 items-center justify-center rounded border border-zinc-300">
+                      <.icon name="hero-check" class="size-3" />
+                    </button>
+                  </.form>
 
                   <div class="mt-3 flex flex-wrap gap-1">
                     <button
@@ -257,7 +281,7 @@ defmodule UpkeepWeb.KanbanLive do
     |> assign(:comment_body, "")
     |> component(:issue_detail, [:columns], fn %{columns: columns} ->
       issue = find_issue(columns, issue_id)
-      %{issue_id: issue_id, title: issue_title(issue, issue_id)}
+      %{selected_issue_title: issue_title(issue, issue_id)}
     end)
     |> watch(:comments, Sources.IssueComments, [issue_id: issue_id], under: :issue_detail)
     |> derive(:comment_count, [:comments], fn %{comments: comments} -> length(comments) end)

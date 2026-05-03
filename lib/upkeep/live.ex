@@ -270,10 +270,19 @@ defmodule Upkeep.Live do
       value = Upkeep.DAG.fetch!(dag(socket), node_id)
 
       socket
-      |> assign_names_for_node(node_id)
-      |> Enum.reduce(socket, fn assign_name, socket ->
-        assign_derived_value(socket, assign_name, value, node_id)
-      end)
+      |> assign_node_value(node_id, value)
+    end)
+  end
+
+  defp assign_node_value(socket, {:component, _component_name} = node_id, value) do
+    assign_component_value(socket, node_id, value)
+  end
+
+  defp assign_node_value(socket, node_id, value) do
+    socket
+    |> assign_names_for_node(node_id)
+    |> Enum.reduce(socket, fn assign_name, socket ->
+      assign_derived_value(socket, assign_name, value, node_id)
     end)
   end
 
@@ -593,6 +602,18 @@ defmodule Upkeep.Live do
 
     assign(socket, assign_name, value)
   end
+
+  defp assign_component_value(socket, _node_id, value) when is_map(value) do
+    Enum.reduce(value, socket, fn
+      {assign_name, assign_value}, socket when is_atom(assign_name) ->
+        assign(socket, assign_name, assign_value)
+
+      {_assign_name, _assign_value}, socket ->
+        socket
+    end)
+  end
+
+  defp assign_component_value(socket, _node_id, _value), do: socket
 
   defp watch_metadata(watch), do: watch_metadata(watch, nil, :remove)
 

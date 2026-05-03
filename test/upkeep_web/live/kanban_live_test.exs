@@ -74,6 +74,37 @@ defmodule UpkeepWeb.KanbanLiveTest do
     assert html =~ "My issues (2)"
   end
 
+  test "renaming an open detail refreshes board, detail title, my issues, and activity", %{
+    conn: conn
+  } do
+    {:ok, view, _html} = live(conn, ~p"/kanban")
+
+    view
+    |> element("button[phx-click='open_issue'][phx-value-id='10']")
+    |> render_click()
+
+    Upkeep.clear_events()
+
+    view
+    |> form("#rename-issue-10", issue: %{id: "10", title: "Polish source API"})
+    |> render_submit()
+
+    html = render(view)
+    assert html =~ "Polish source API"
+    assert html =~ "Polish source API · 1 comment"
+    assert html =~ "Renamed Shape source API to Polish source API"
+    assert html =~ "My issues (1)"
+
+    reloads =
+      Upkeep.recent_events()
+      |> Enum.filter(&(&1.event == [:upkeep, :source, :reload, :stop]))
+
+    assert Enum.any?(reloads, &(&1.metadata.source == Upkeep.Kanban.Sources.BoardColumns))
+    assert Enum.any?(reloads, &(&1.metadata.source == Upkeep.Kanban.Sources.ProjectActivity))
+    assert Enum.any?(reloads, &(&1.metadata.source == Upkeep.Kanban.Sources.MyIssues))
+    refute Enum.any?(reloads, &(&1.metadata.source == Upkeep.Kanban.Sources.IssueComments))
+  end
+
   test "comments and archive refresh their watched surfaces", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/kanban")
 

@@ -10,6 +10,7 @@ defmodule Upkeep.Kanban.Sources.BoardColumns do
 
   invalidated_by(Issue, :issue_created, on: :project_id)
   invalidated_by(Issue, :issue_moved, on: :project_id)
+  invalidated_by(Issue, :issue_renamed, on: :project_id)
   invalidated_by(Issue, :issue_archived, on: :project_id)
   invalidated_by(Column, :updated, on: :project_id)
   invalidated_by(Comment, :comment_added, on: :project_id)
@@ -27,6 +28,7 @@ defmodule Upkeep.Kanban.Sources.ProjectActivity do
   invalidated_by(:issue_created, on: :project_id)
   invalidated_by(:issue_moved, on: :project_id)
   invalidated_by(:issue_assigned, on: :project_id)
+  invalidated_by(:issue_renamed, on: :project_id)
   invalidated_by(:issue_archived, on: :project_id)
   invalidated_by(:comment_added, on: :project_id)
 end
@@ -57,6 +59,11 @@ defmodule Upkeep.Kanban.Sources.MyIssues do
       (Upkeep.Change.old(change, :assignee_id) == s.user_id or
          Upkeep.Change.new(change, :assignee_id) == s.user_id)
   end)
+
+  invalidated_by(Issue, :issue_renamed,
+    on: [:project_id, :assignee_id],
+    as: [:project_id, :user_id]
+  )
 end
 
 defmodule Upkeep.Kanban.Sources.IssueComments do
