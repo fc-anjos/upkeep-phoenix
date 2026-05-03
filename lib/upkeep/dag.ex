@@ -105,6 +105,34 @@ defmodule Upkeep.DAG do
     |> downstream_order(MapSet.new([root_id]))
   end
 
+  def affected_ids(%__MODULE__{} = dag, root_ids) when is_list(root_ids) do
+    downstream_order(dag, MapSet.new(root_ids))
+  end
+
+  def snapshot(%__MODULE__{} = dag) do
+    order = topological_order!(dag)
+
+    nodes =
+      Enum.map(order, fn id ->
+        node = Map.fetch!(dag.nodes, id)
+
+        %{
+          id: id,
+          kind: node.kind,
+          deps: Map.get(dag.deps, id, []),
+          dependents: dag.dependents |> Map.get(id, MapSet.new()) |> sort_terms(),
+          has_value?: Map.has_key?(dag.values, id),
+          value: Map.get(dag.values, id)
+        }
+      end)
+
+    %{
+      nodes: nodes,
+      edges: edges(dag, order),
+      topological_order: order
+    }
+  end
+
   defp put_node(dag, id, kind, deps, compute) do
     old_deps = Map.get(dag.deps, id, [])
 
@@ -178,6 +206,15 @@ defmodule Upkeep.DAG do
     |> Enum.reject(&MapSet.member?(seen, &1))
     |> Enum.flat_map(fn dependent ->
       [dependent | downstream_ids_depth_first(dag, dependent, MapSet.put(seen, dependent))]
+    end)
+  end
+
+  defp edges(dag, order) do
+    order
+    |> Enum.flat_map(fn id ->
+      dag.deps
+      |> Map.get(id, [])
+      |> Enum.map(fn dep -> %{from: dep, to: id} end)
     end)
   end
 

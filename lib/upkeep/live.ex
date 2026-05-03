@@ -165,6 +165,15 @@ defmodule Upkeep.Live do
     |> flush_refreshes()
   end
 
+  def graph_snapshot(socket) do
+    %{
+      dag: Upkeep.DAG.snapshot(dag(socket)),
+      assigns: assign_snapshot(socket),
+      watches: watch_snapshot(socket),
+      pending_refreshes: pending_refresh_snapshot(socket)
+    }
+  end
+
   def queue_matching(socket, event) when is_struct(event) do
     socket
     |> watches()
@@ -423,6 +432,37 @@ defmodule Upkeep.Live do
     |> Enum.map(fn {assign_name, _node_id} -> assign_name end)
   end
 
+  defp assign_snapshot(socket) do
+    socket
+    |> assign_nodes()
+    |> Enum.map(fn {assign_name, node_id} -> %{assign: assign_name, node_id: node_id} end)
+    |> sort_maps_by(:assign)
+  end
+
+  defp watch_snapshot(socket) do
+    socket
+    |> watches()
+    |> Enum.map(fn {source_id, watch} ->
+      %{
+        source_id: source_id,
+        node_id: source_node_id(source_id),
+        source: watch.source,
+        params: watch.params,
+        component: watch.component,
+        assign_names: watch.assign_names |> MapSet.to_list() |> sort_terms(),
+        interest_keys: sort_terms(watch.interest_keys)
+      }
+    end)
+    |> sort_maps_by(:source_id)
+  end
+
+  defp pending_refresh_snapshot(socket) do
+    socket
+    |> pending_refreshes()
+    |> MapSet.to_list()
+    |> sort_terms()
+  end
+
   defp source_node_id(source_id), do: {:source, source_id}
   defp derived_node_id(assign_name), do: {:derived, assign_name}
   defp component_node_id(component_name), do: {:component, component_name}
@@ -477,6 +517,9 @@ defmodule Upkeep.Live do
       _ -> %{}
     end
   end
+
+  defp sort_maps_by(maps, key), do: Enum.sort_by(maps, &inspect(Map.fetch!(&1, key)))
+  defp sort_terms(terms), do: Enum.sort_by(terms, &inspect/1)
 
   defp normalize_params(params) when is_list(params), do: Map.new(params)
   defp normalize_params(params) when is_map(params), do: params

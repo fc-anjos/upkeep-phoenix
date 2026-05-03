@@ -127,6 +127,36 @@ defmodule Upkeep.DAGTest do
     assert DAG.fetch!(dag, :comment_count) == 1
   end
 
+  test "snapshot exposes nodes, edges, and affected order" do
+    dag =
+      DAG.new()
+      |> elem_put_source(:issues, [:a])
+      |> DAG.put_derived(:visible, [:issues], fn %{issues: issues} -> issues end)
+      |> DAG.put_derived(:count, [:visible], fn %{visible: issues} -> length(issues) end)
+      |> DAG.put_derived(:badge, [:count], fn %{count: count} -> "Issues: #{count}" end)
+
+    snapshot = DAG.snapshot(dag)
+    nodes = Map.new(snapshot.nodes, fn node -> {node.id, node} end)
+
+    assert snapshot.topological_order == [:issues, :visible, :count, :badge]
+
+    assert snapshot.edges == [
+             %{from: :issues, to: :visible},
+             %{from: :visible, to: :count},
+             %{from: :count, to: :badge}
+           ]
+
+    assert nodes.issues.kind == :source
+    assert nodes.issues.dependents == [:visible]
+    assert nodes.issues.value == [:a]
+
+    assert nodes.count.kind == :derived
+    assert nodes.count.deps == [:visible]
+    assert nodes.count.value == 1
+
+    assert DAG.affected_ids(dag, [:issues]) == [:visible, :count, :badge]
+  end
+
   defp elem_put_source(dag, id, value, deps \\ []) do
     {dag, _changed?} = DAG.put_source(dag, id, value, deps)
     dag

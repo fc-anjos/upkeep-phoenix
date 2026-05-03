@@ -413,6 +413,40 @@ defmodule Upkeep.LiveRefreshTest do
     assert member_count(IssueComments, issue_id: 1) == 0
   end
 
+  test "graph snapshot exposes assigns, watches, and pending refreshes" do
+    socket =
+      new_socket()
+      |> Live.watch(:issues, ProjectIssues, project_id: 1)
+      |> Live.derive(:issue_count, [:issues], fn %{issues: issues} -> length(issues) end)
+      |> Live.component(:issue_detail, [:issues], fn %{issues: issues} ->
+        %{first_issue: List.first(issues)}
+      end)
+      |> Live.watch(:comments, IssueComments, [issue_id: 1], under: :issue_detail)
+      |> Live.derive(:comment_count, [:comments], fn %{comments: comments} -> length(comments) end)
+      |> Live.queue_matching(inserted_comment(1, 1))
+
+    snapshot = Live.graph_snapshot(socket)
+
+    issue_source_id = {ProjectIssues, %{project_id: 1}}
+    comments_source_id = {:scoped, :issue_detail, {IssueComments, %{issue_id: 1}}}
+
+    assert %{assign: :issues, node_id: {:source, ^issue_source_id}} =
+             Enum.find(snapshot.assigns, &(&1.assign == :issues))
+
+    assert %{assign: :comment_count, node_id: {:derived, :comment_count}} =
+             Enum.find(snapshot.assigns, &(&1.assign == :comment_count))
+
+    assert %{source_id: ^comments_source_id, component: :issue_detail, assign_names: [:comments]} =
+             Enum.find(snapshot.watches, &(&1.source_id == comments_source_id))
+
+    assert snapshot.pending_refreshes == [comments_source_id]
+    assert {:component, :issue_detail} in snapshot.dag.topological_order
+    assert {:source, comments_source_id} in snapshot.dag.topological_order
+
+    assert %{from: {:component, :issue_detail}, to: {:source, ^comments_source_id}} =
+             Enum.find(snapshot.dag.edges, &(&1.to == {:source, comments_source_id}))
+  end
+
   defp new_socket, do: %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
 
   def table_value(key) do
