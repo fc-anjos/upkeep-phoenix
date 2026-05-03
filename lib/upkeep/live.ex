@@ -11,7 +11,7 @@ defmodule Upkeep.Live do
 
   defmacro __using__(_opts) do
     quote do
-      import Upkeep.Live, only: [watch: 4, refresh: 4]
+      import Upkeep.Live, only: [watch: 4, unwatch: 2, unwatch: 3, refresh: 4]
 
       @impl true
       def handle_info({:upkeep_event, event}, socket) do
@@ -29,26 +29,45 @@ defmodule Upkeep.Live do
 
   def watch(socket, assign_name, source, params) when is_atom(assign_name) do
     params = normalize_params(params)
-    value = source.load(params)
     source_id = Source.source_id(source, params)
-    interest_keys = source.__upkeep_interest_keys__(params)
 
-    for key <- interest_keys do
-      :ok =
-        Group.join(@supervisor, Source.group_key(key), %{
-          assign: assign_name,
-          source: inspect(source)
+    case Map.fetch(watches(socket), source_id) do
+      {:ok, watch} ->
+        socket
+        |> put_watch_assign(source_id, assign_name)
+        |> assign(assign_name, Map.fetch!(socket.assigns, primary_assign_name(watch)))
+
+      :error ->
+        value = source.load(params)
+        interest_keys = source.__upkeep_interest_keys__(params)
+
+        join_interest(interest_keys, assign_name, source)
+
+        socket
+        |> put_watch(source_id, %{
+          assign_name: assign_name,
+          assign_names: MapSet.new([assign_name]),
+          source: source,
+          params: params,
+          interest_keys: interest_keys
         })
+        |> assign(assign_name, value)
     end
+  end
 
+  def unwatch(socket, assign_name) when is_atom(assign_name) do
     socket
-    |> put_watch(source_id, %{
-      assign_name: assign_name,
-      source: source,
-      params: params,
-      interest_keys: interest_keys
-    })
-    |> assign(assign_name, value)
+    |> watches()
+    |> Enum.filter(fn {_source_id, watch} -> MapSet.member?(watch.assign_names, assign_name) end)
+    |> Enum.reduce(socket, fn {source_id, _watch}, socket ->
+      remove_watch_assign(socket, source_id, assign_name)
+    end)
+  end
+
+  def unwatch(socket, source, params) when is_atom(source) do
+    params = normalize_params(params)
+    source_id = Source.source_id(source, params)
+    remove_watch(socket, source_id)
   end
 
   def refresh(socket, assign_name, source, params) when is_atom(assign_name) do
@@ -86,12 +105,91 @@ defmodule Upkeep.Live do
 
   def notify(event) when is_struct(event), do: Upkeep.notify(event)
 
+  defp join_interest(interest_keys, assign_name, source) do
+    for key <- interest_keys do
+      :ok =
+        Group.join(@supervisor, Source.group_key(key), %{
+          assign: assign_name,
+          source: inspect(source)
+        })
+    end
+  end
+
   defp put_watch(socket, source_id, watch) do
     private = socket.private || %{}
     watch = Map.put(watch, :source_id, source_id)
     watches = Map.put(Map.get(private, :upkeep_watches, %{}), source_id, watch)
 
     %{socket | private: Map.put(private, :upkeep_watches, watches)}
+  end
+
+  defp put_watch_assign(socket, source_id, assign_name) do
+    private = socket.private || %{}
+
+    watches =
+      Map.update!(Map.get(private, :upkeep_watches, %{}), source_id, fn watch ->
+        Map.update!(watch, :assign_names, &MapSet.put(&1, assign_name))
+      end)
+
+    %{socket | private: Map.put(private, :upkeep_watches, watches)}
+  end
+
+  defp remove_watch(socket, source_id) do
+    case Map.fetch(watches(socket), source_id) do
+      {:ok, watch} ->
+        leave_interest(watch.interest_keys)
+
+        private = socket.private || %{}
+        watches = Map.delete(Map.get(private, :upkeep_watches, %{}), source_id)
+
+        pending =
+          MapSet.delete(Map.get(private, :upkeep_pending_refreshes, MapSet.new()), source_id)
+
+        %{
+          socket
+          | private:
+              private
+              |> Map.put(:upkeep_watches, watches)
+              |> Map.put(:upkeep_pending_refreshes, pending)
+        }
+
+      :error ->
+        socket
+    end
+  end
+
+  defp remove_watch_assign(socket, source_id, assign_name) do
+    case Map.fetch(watches(socket), source_id) do
+      {:ok, watch} ->
+        assign_names = MapSet.delete(watch.assign_names, assign_name)
+
+        if Enum.empty?(assign_names) do
+          remove_watch(socket, source_id)
+        else
+          put_existing_watch(socket, source_id, %{watch | assign_names: assign_names})
+        end
+
+      :error ->
+        socket
+    end
+  end
+
+  defp put_existing_watch(socket, source_id, watch) do
+    private = socket.private || %{}
+    watches = Map.put(Map.get(private, :upkeep_watches, %{}), source_id, watch)
+
+    %{socket | private: Map.put(private, :upkeep_watches, watches)}
+  end
+
+  defp leave_interest(interest_keys) do
+    for key <- interest_keys do
+      case Group.leave(@supervisor, Source.group_key(key)) do
+        :ok -> :ok
+        {:error, :not_in_group} -> :ok
+      end
+    end
+
+    :ok
   end
 
   defp queue_refresh(socket, source_id) do
@@ -114,9 +212,17 @@ defmodule Upkeep.Live do
   end
 
   defp maybe_refresh(socket, watch) do
-    refresh(socket, watch.assign_name, watch.source, watch.params)
+    value = watch.source.load(watch.params)
+
+    Enum.reduce(watch.assign_names, socket, fn assign_name, socket ->
+      assign(socket, assign_name, value)
+    end)
   rescue
     _ -> socket
+  end
+
+  defp primary_assign_name(watch) do
+    watch.assign_name || Enum.at(watch.assign_names, 0)
   end
 
   defp watches(socket) do

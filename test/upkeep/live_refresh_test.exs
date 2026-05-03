@@ -143,6 +143,101 @@ defmodule Upkeep.LiveRefreshTest do
     assert socket_b.assigns.issues == [:issue_a]
   end
 
+  test "watch is idempotent for the same source identity" do
+    socket =
+      new_socket()
+      |> Live.watch(:issues, ProjectIssues, project_id: 1)
+      |> Live.watch(:issues, ProjectIssues, project_id: 1)
+
+    assert socket.assigns.issues == [:issue_a]
+    assert load_count(:issues) == 1
+    assert member_count(ProjectIssues, project_id: 1) == 1
+  end
+
+  test "duplicate watch can alias the same source value without duplicate membership", %{
+    table: table
+  } do
+    socket =
+      new_socket()
+      |> Live.watch(:issues, ProjectIssues, project_id: 1)
+      |> Live.watch(:other_issues, ProjectIssues, project_id: 1)
+
+    assert socket.assigns.issues == [:issue_a]
+    assert socket.assigns.other_issues == [:issue_a]
+    assert load_count(:issues) == 1
+    assert member_count(ProjectIssues, project_id: 1) == 1
+
+    :ets.insert(table, {{:issues, 1}, [:issue_b]})
+
+    socket =
+      socket
+      |> Live.queue_matching(updated_issue(1, 1))
+      |> Live.flush_refreshes()
+
+    assert socket.assigns.issues == [:issue_b]
+    assert socket.assigns.other_issues == [:issue_b]
+    assert load_count(:issues) == 2
+  end
+
+  test "unwatch by assign keeps shared source interest until last alias is removed" do
+    socket =
+      new_socket()
+      |> Live.watch(:issues, ProjectIssues, project_id: 1)
+      |> Live.watch(:other_issues, ProjectIssues, project_id: 1)
+
+    socket = Live.unwatch(socket, :other_issues)
+
+    assert member_count(ProjectIssues, project_id: 1) == 1
+
+    _socket = Live.unwatch(socket, :issues)
+
+    assert member_count(ProjectIssues, project_id: 1) == 0
+  end
+
+  test "unwatch by assign leaves interest and stops refreshes", %{table: table} do
+    socket =
+      new_socket()
+      |> Live.watch(:issues, ProjectIssues, project_id: 1)
+
+    assert member_count(ProjectIssues, project_id: 1) == 1
+
+    socket = Live.unwatch(socket, :issues)
+
+    assert member_count(ProjectIssues, project_id: 1) == 0
+
+    :ets.insert(table, {{:issues, 1}, [:issue_b]})
+
+    change = updated_issue(1, 1)
+    assert :ok = Upkeep.notify(change)
+    refute_receive {:upkeep_event, ^change}
+
+    socket =
+      socket
+      |> Live.queue_matching(change)
+      |> Live.flush_refreshes()
+
+    assert socket.assigns.issues == [:issue_a]
+    assert load_count(:issues) == 1
+  end
+
+  test "unwatch by source params clears pending refreshes", %{table: table} do
+    socket =
+      new_socket()
+      |> Live.watch(:issues, ProjectIssues, project_id: 1)
+      |> Live.queue_matching(updated_issue(1, 1))
+
+    :ets.insert(table, {{:issues, 1}, [:issue_b]})
+
+    socket =
+      socket
+      |> Live.unwatch(ProjectIssues, project_id: 1)
+      |> Live.flush_refreshes()
+
+    assert socket.assigns.issues == [:issue_a]
+    assert load_count(:issues) == 1
+    assert member_count(ProjectIssues, project_id: 1) == 0
+  end
+
   defp new_socket, do: %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
 
   def table_value(key) do
@@ -166,5 +261,15 @@ defmodule Upkeep.LiveRefreshTest do
   defp inserted_comment(project_id, issue_id) do
     %Comment{project_id: project_id, issue_id: issue_id}
     |> Upkeep.Change.inserted()
+  end
+
+  defp member_count(source, params) do
+    params = Map.new(params)
+
+    source.__upkeep_interest_keys__(params)
+    |> hd()
+    |> Upkeep.Source.group_key()
+    |> then(&Group.members(Upkeep.DurableSupervisor, &1))
+    |> Enum.count(fn {pid, _meta} -> pid == self() end)
   end
 end
