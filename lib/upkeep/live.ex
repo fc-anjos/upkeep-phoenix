@@ -15,7 +15,12 @@ defmodule Upkeep.Live do
 
       @impl true
       def handle_info({:upkeep_event, event}, socket) do
-        {:noreply, Upkeep.Live.refresh_matching(socket, event)}
+        socket =
+          socket
+          |> Upkeep.Live.queue_matching(event)
+          |> Upkeep.Live.flush_refreshes()
+
+        {:noreply, socket}
       end
 
       defoverridable handle_info: 2
@@ -52,12 +57,29 @@ defmodule Upkeep.Live do
 
   def refresh_matching(socket, event) when is_struct(event) do
     socket
+    |> queue_matching(event)
+    |> flush_refreshes()
+  end
+
+  def queue_matching(socket, event) when is_struct(event) do
+    socket
     |> watches()
     |> Enum.reduce(socket, fn {_source_id, watch}, socket ->
       if watch.source.reacts_to?(event, watch.params) do
-        refresh(socket, watch.assign_name, watch.source, watch.params)
+        queue_refresh(socket, watch.source_id)
       else
         socket
+      end
+    end)
+  end
+
+  def flush_refreshes(socket) do
+    socket
+    |> pending_refreshes()
+    |> Enum.reduce(clear_pending_refreshes(socket), fn source_id, socket ->
+      case Map.fetch(watches(socket), source_id) do
+        {:ok, watch} -> maybe_refresh(socket, watch)
+        :error -> socket
       end
     end)
   end
@@ -66,9 +88,35 @@ defmodule Upkeep.Live do
 
   defp put_watch(socket, source_id, watch) do
     private = socket.private || %{}
+    watch = Map.put(watch, :source_id, source_id)
     watches = Map.put(Map.get(private, :upkeep_watches, %{}), source_id, watch)
 
     %{socket | private: Map.put(private, :upkeep_watches, watches)}
+  end
+
+  defp queue_refresh(socket, source_id) do
+    private = socket.private || %{}
+    pending = MapSet.put(Map.get(private, :upkeep_pending_refreshes, MapSet.new()), source_id)
+
+    %{socket | private: Map.put(private, :upkeep_pending_refreshes, pending)}
+  end
+
+  defp pending_refreshes(socket) do
+    case socket.private do
+      %{upkeep_pending_refreshes: pending} -> pending
+      _ -> MapSet.new()
+    end
+  end
+
+  defp clear_pending_refreshes(socket) do
+    private = socket.private || %{}
+    %{socket | private: Map.put(private, :upkeep_pending_refreshes, MapSet.new())}
+  end
+
+  defp maybe_refresh(socket, watch) do
+    refresh(socket, watch.assign_name, watch.source, watch.params)
+  rescue
+    _ -> socket
   end
 
   defp watches(socket) do
