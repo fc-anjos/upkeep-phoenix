@@ -19,7 +19,10 @@ defmodule UpkeepWeb.KanbanLive do
      |> watch(:columns, Sources.BoardColumns, project_id: @project_id)
      |> watch(:activity, Sources.ProjectActivity, project_id: @project_id)
      |> watch(:my_issues, Sources.MyIssues, project_id: @project_id, user_id: @current_user_id)
-     |> watch(:comments, Sources.IssueComments, issue_id: @selected_issue_id)}
+     |> watch(:comments, Sources.IssueComments, issue_id: @selected_issue_id)
+     |> derive(:board_stats, [:columns], &board_stats/1)
+     |> derive(:board_badge, [:board_stats], &board_badge/1)
+     |> derive(:my_issue_count, [:my_issues], fn %{my_issues: issues} -> length(issues) end)}
   end
 
   @impl true
@@ -61,6 +64,9 @@ defmodule UpkeepWeb.KanbanLive do
           <div>
             <p class="text-sm font-semibold text-zinc-500">Upkeep demo</p>
             <h1 class="text-2xl font-bold tracking-normal">Project board</h1>
+            <p class="mt-1 text-sm text-zinc-600">
+              {@board_badge} · {@board_stats.assigned_count} assigned
+            </p>
           </div>
 
           <.form for={%{}} as={:issue} phx-submit="create_issue" class="flex w-full gap-2 md:max-w-md">
@@ -138,7 +144,7 @@ defmodule UpkeepWeb.KanbanLive do
           <aside class="flex flex-col gap-3">
             <section class="rounded border border-zinc-300 bg-white">
               <header class="border-b border-zinc-300 px-3 py-2">
-                <h2 class="text-sm font-bold">My issues</h2>
+                <h2 class="text-sm font-bold">My issues ({@my_issue_count})</h2>
               </header>
               <ul class="divide-y divide-zinc-200 text-sm">
                 <li :for={issue <- @my_issues} class="px-3 py-2">{issue.title}</li>
@@ -193,4 +199,16 @@ defmodule UpkeepWeb.KanbanLive do
 
   defp to_integer(value) when is_binary(value), do: String.to_integer(value)
   defp to_integer(value) when is_integer(value), do: value
+
+  defp board_stats(%{columns: columns}) do
+    issues = Enum.flat_map(columns, & &1.issues)
+
+    %{
+      open_count: length(issues),
+      assigned_count: Enum.count(issues, & &1.assignee_id)
+    }
+  end
+
+  defp board_badge(%{board_stats: %{open_count: 1}}), do: "1 open issue"
+  defp board_badge(%{board_stats: %{open_count: count}}), do: "#{count} open issues"
 end

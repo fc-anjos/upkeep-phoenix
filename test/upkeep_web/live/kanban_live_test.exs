@@ -16,6 +16,8 @@ defmodule UpkeepWeb.KanbanLiveTest do
     assert html =~ "Test durable fanout"
     assert html =~ "Keep the source contract boring."
     assert html =~ "Seeded project board"
+    assert html =~ "2 open issues"
+    assert html =~ "My issues (1)"
   end
 
   test "creating an issue refreshes board columns and activity", %{conn: conn} do
@@ -28,6 +30,7 @@ defmodule UpkeepWeb.KanbanLiveTest do
     html = render(view)
     assert html =~ "Wire kanban demo"
     assert html =~ "Created Wire kanban demo"
+    assert html =~ "3 open issues"
   end
 
   test "moving and assigning an issue refreshes overlapping sources", %{conn: conn} do
@@ -47,6 +50,7 @@ defmodule UpkeepWeb.KanbanLiveTest do
     html = render(view)
     assert html =~ "Assigned Test durable fanout"
     assert html =~ "Test durable fanout"
+    assert html =~ "My issues (2)"
   end
 
   test "comments and archive refresh their watched surfaces", %{conn: conn} do
@@ -69,5 +73,6 @@ defmodule UpkeepWeb.KanbanLiveTest do
     html = render(view)
     assert html =~ "Archived Shape source API"
     refute html =~ ~s(id="issue-10")
+    assert html =~ "1 open issue"
   end
 end

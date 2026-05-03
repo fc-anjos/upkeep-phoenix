@@ -57,6 +57,9 @@ defmodule Upkeep.LiveRefreshTest do
     :ets.insert(table, {{:loads, :issues, 1}, 0})
     :ets.insert(table, {{:loads, :activity, 1}, 0})
     :ets.insert(table, {{:loads, :failing, 1}, 0})
+    :ets.insert(table, {{:loads, :visible, 1}, 0})
+    :ets.insert(table, {{:loads, :issue_count, 1}, 0})
+    :ets.insert(table, {{:loads, :issue_label, 1}, 0})
 
     %{table: table}
   end
@@ -236,6 +239,89 @@ defmodule Upkeep.LiveRefreshTest do
     assert socket.assigns.issues == [:issue_a]
     assert load_count(:issues) == 1
     assert member_count(ProjectIssues, project_id: 1) == 0
+  end
+
+  test "derived assigns recompute through a real dependency chain", %{table: table} do
+    socket =
+      new_socket()
+      |> Live.watch(:issues, ProjectIssues, project_id: 1)
+      |> Live.derive(:issue_count, [:issues], fn %{issues: issues} ->
+        bump_load({:loads, :issue_count, 1})
+        length(issues)
+      end)
+      |> Live.derive(:issue_label, [:issue_count], fn %{issue_count: count} ->
+        bump_load({:loads, :issue_label, 1})
+        "#{count} issue"
+      end)
+
+    assert socket.assigns.issue_count == 1
+    assert socket.assigns.issue_label == "1 issue"
+    assert load_count(:issue_count) == 1
+    assert load_count(:issue_label) == 1
+
+    :ets.insert(table, {{:issues, 1}, [:issue_a, :issue_b]})
+
+    socket =
+      socket
+      |> Live.queue_matching(updated_issue(1, 1))
+      |> Live.flush_refreshes()
+
+    assert socket.assigns.issue_count == 2
+    assert socket.assigns.issue_label == "2 issue"
+    assert load_count(:issue_count) == 2
+    assert load_count(:issue_label) == 2
+  end
+
+  test "shared derived intermediates compute once and unrelated sources do not trigger them", %{
+    table: table
+  } do
+    socket =
+      new_socket()
+      |> Live.watch(:issues, ProjectIssues, project_id: 1)
+      |> Live.watch(:activity, ProjectActivity, project_id: 1)
+      |> Live.derive(:visible_issues, [:issues], fn %{issues: issues} ->
+        bump_load({:loads, :visible, 1})
+        issues
+      end)
+      |> Live.derive(:issue_count, [:visible_issues], fn %{visible_issues: issues} ->
+        bump_load({:loads, :issue_count, 1})
+        length(issues)
+      end)
+      |> Live.derive(:issue_label, [:visible_issues], fn %{visible_issues: issues} ->
+        bump_load({:loads, :issue_label, 1})
+        List.first(issues)
+      end)
+
+    assert socket.assigns.issue_count == 1
+    assert socket.assigns.issue_label == :issue_a
+    assert load_count(:visible) == 1
+    assert load_count(:issue_count) == 1
+    assert load_count(:issue_label) == 1
+
+    :ets.insert(table, {{:activity, 1}, [:activity_b]})
+
+    socket =
+      socket
+      |> Live.queue_matching(inserted_comment(1, 1))
+      |> Live.flush_refreshes()
+
+    assert socket.assigns.activity == [:activity_b]
+    assert load_count(:visible) == 1
+    assert load_count(:issue_count) == 1
+    assert load_count(:issue_label) == 1
+
+    :ets.insert(table, {{:issues, 1}, [:issue_a, :issue_b]})
+
+    socket =
+      socket
+      |> Live.queue_matching(updated_issue(1, 1))
+      |> Live.flush_refreshes()
+
+    assert socket.assigns.issue_count == 2
+    assert socket.assigns.issue_label == :issue_a
+    assert load_count(:visible) == 2
+    assert load_count(:issue_count) == 2
+    assert load_count(:issue_label) == 2
   end
 
   defp new_socket, do: %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
