@@ -196,6 +196,164 @@ defmodule Upkeep.RepoCaptureTest do
                     }}
   end
 
+  test "insert_all capture emits inserted changes from submitted entries" do
+    socket = watch_project(user_id: 9)
+
+    assert {:ok, {2, nil}} =
+             Upkeep.mutate(fn ->
+               Repo.insert_all(Issue, [
+                 issue_attrs(id: 1, assignee_id: 9, title: "Mine"),
+                 issue_attrs(id: 2, assignee_id: 10, title: "Other")
+               ])
+             end)
+
+    assert_receive {:upkeep_event,
+                    %Upkeep.Change{name: :inserted, schema: Issue, record: %Issue{id: 1}} =
+                      change}
+
+    refute_receive {:upkeep_event,
+                    %Upkeep.Change{name: :inserted, schema: Issue, record: %Issue{id: 2}}}
+
+    socket = Live.refresh_matching(socket, change)
+    assert Enum.map(socket.assigns.issues, & &1.title) == ["Mine"]
+  end
+
+  test "insert_all capture merges partial returning rows with submitted entries" do
+    socket = watch_project(user_id: 9)
+
+    assert {:ok, {1, [%Issue{id: 1}]}} =
+             Upkeep.mutate(fn ->
+               Repo.insert_all(
+                 Issue,
+                 [issue_attrs(id: 1, assignee_id: 9, title: "Partial")],
+                 returning: [:id]
+               )
+             end)
+
+    assert_receive {:upkeep_event,
+                    %Upkeep.Change{
+                      name: :inserted,
+                      schema: Issue,
+                      record: %Issue{id: 1, project_id: 1, assignee_id: 9, status: "open"}
+                    } = change}
+
+    socket = Live.refresh_matching(socket, change)
+    assert Enum.map(socket.assigns.issues, & &1.title) == ["Partial"]
+  end
+
+  test "update_all capture emits updated changes with before and after records" do
+    Repo.insert!(issue(id: 1, assignee_id: 10, title: "Moved"), upkeep: false)
+    Repo.insert!(issue(id: 2, assignee_id: 9, title: "Mine"), upkeep: false)
+
+    mine = watch_project(user_id: 9)
+    theirs = watch_project(user_id: 10)
+
+    assert Enum.map(mine.assigns.issues, & &1.title) == ["Mine"]
+    assert Enum.map(theirs.assigns.issues, & &1.title) == ["Moved"]
+
+    assert {:ok, {1, nil}} =
+             Upkeep.mutate(fn ->
+               Repo.update_all(
+                 from(i in Issue, where: i.project_id == 1 and i.assignee_id == 10),
+                 set: [assignee_id: 9]
+               )
+             end)
+
+    assert_receive {:upkeep_event,
+                    %Upkeep.Change{
+                      name: :updated,
+                      schema: Issue,
+                      record: %Issue{id: 1, assignee_id: 9},
+                      from: %Issue{id: 1, assignee_id: 10}
+                    } = change}
+
+    mine = Live.refresh_matching(mine, change)
+    theirs = Live.refresh_matching(theirs, change)
+
+    assert Enum.map(mine.assigns.issues, & &1.title) == ["Moved", "Mine"]
+    assert theirs.assigns.issues == []
+  end
+
+  test "bulk capture flushes after direct update_all commits" do
+    Repo.insert!(issue(id: 1, assignee_id: 10, title: "Moved"), upkeep: false)
+    watch_project(user_id: 9)
+
+    assert {1, nil} =
+             Repo.update_all(
+               from(i in Issue, where: i.project_id == 1 and i.assignee_id == 10),
+               set: [assignee_id: 9]
+             )
+
+    assert_receive {:upkeep_event,
+                    %Upkeep.Change{
+                      name: :updated,
+                      schema: Issue,
+                      record: %Issue{id: 1, assignee_id: 9},
+                      from: %Issue{id: 1, assignee_id: 10}
+                    }}
+  end
+
+  test "delete_all capture emits deleted changes from affected rows" do
+    Repo.insert!(issue(id: 1, assignee_id: 9, title: "Deleted"), upkeep: false)
+    Repo.insert!(issue(id: 2, assignee_id: 10, title: "Other"), upkeep: false)
+
+    socket = watch_project(user_id: 9)
+    assert Enum.map(socket.assigns.issues, & &1.title) == ["Deleted"]
+
+    assert {:ok, {1, nil}} =
+             Upkeep.mutate(fn ->
+               Repo.delete_all(from(i in Issue, where: i.project_id == 1 and i.assignee_id == 9))
+             end)
+
+    assert_receive {:upkeep_event,
+                    %Upkeep.Change{name: :deleted, schema: Issue, record: %Issue{id: 1}} =
+                      change}
+
+    socket = Live.refresh_matching(socket, change)
+    assert socket.assigns.issues == []
+  end
+
+  test "bulk capture discards notifications when the surrounding mutation rolls back" do
+    Repo.insert!(issue(id: 1, assignee_id: 10), upkeep: false)
+    watch_project(user_id: 9)
+
+    assert {:error, :cancelled} =
+             Upkeep.mutate(fn ->
+               Repo.update_all(
+                 from(i in Issue, where: i.id == 1),
+                 set: [assignee_id: 9]
+               )
+
+               Repo.rollback(:cancelled)
+             end)
+
+    refute_receive {:upkeep_event, %Upkeep.Change{name: :updated, schema: Issue}}
+    assert %Issue{assignee_id: 10} = Repo.get!(Issue, 1)
+  end
+
+  test "Ecto.Multi bulk operations are captured automatically" do
+    watch_project(user_id: 9)
+
+    multi =
+      Ecto.Multi.new()
+      |> Ecto.Multi.insert_all(:issues, Issue, [
+        issue_attrs(id: 1, assignee_id: 9, title: "Multi")
+      ])
+
+    assert {:ok, %{issues: {1, nil}}} = Upkeep.mutate(multi)
+
+    assert_receive {:upkeep_event,
+                    %Upkeep.Change{name: :inserted, schema: Issue, record: %Issue{id: 1}}}
+  end
+
+  test "bulk capture can be disabled" do
+    watch_project(user_id: 9)
+
+    Repo.insert_all(Issue, [issue_attrs(id: 1, assignee_id: 9)], upkeep: false)
+
+    refute_receive {:upkeep_event, %Upkeep.Change{name: :inserted, schema: Issue}}
+  end
+
   test "repo capture can be disabled for setup writes" do
     watch_project(user_id: 9)
 
@@ -214,10 +372,17 @@ defmodule Upkeep.RepoCaptureTest do
   defp issue(attrs) do
     struct!(
       Issue,
+      issue_attrs(attrs)
+    )
+  end
+
+  defp issue_attrs(attrs) do
+    attrs =
       Keyword.merge(
         [id: 1, project_id: 1, assignee_id: 9, status: "open", title: "Issue", position: 1],
         attrs
       )
-    )
+
+    Map.new(attrs)
   end
 end
