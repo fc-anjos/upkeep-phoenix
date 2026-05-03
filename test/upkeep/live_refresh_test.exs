@@ -172,6 +172,30 @@ defmodule Upkeep.LiveRefreshTest do
     assert member_count(ProjectIssues, project_id: 1) == 1
   end
 
+  test "disconnected LiveView-shaped watches load without joining source interest" do
+    socket =
+      disconnected_live_socket()
+      |> Live.watch(:issues, ProjectIssues, project_id: 1)
+
+    assert socket.assigns.issues == [:issue_a]
+    assert load_count(:issues) == 1
+    assert member_count(ProjectIssues, project_id: 1) == 0
+
+    _socket = Live.unwatch(socket, :issues)
+
+    assert member_count(ProjectIssues, project_id: 1) == 0
+  end
+
+  test "connected LiveView-shaped watches join source interest" do
+    socket =
+      connected_live_socket()
+      |> Live.watch(:issues, ProjectIssues, project_id: 1)
+
+    assert socket.assigns.issues == [:issue_a]
+    assert load_count(:issues) == 1
+    assert member_count(ProjectIssues, project_id: 1) == 1
+  end
+
   test "duplicate watch can alias the same source value without duplicate membership", %{
     table: table
   } do
@@ -514,6 +538,23 @@ defmodule Upkeep.LiveRefreshTest do
   end
 
   defp new_socket, do: %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+
+  defp disconnected_live_socket do
+    %Phoenix.LiveView.Socket{
+      endpoint: UpkeepWeb.Endpoint,
+      view: UpkeepWeb.KanbanLive,
+      assigns: %{__changed__: %{}}
+    }
+  end
+
+  defp connected_live_socket do
+    %Phoenix.LiveView.Socket{
+      endpoint: UpkeepWeb.Endpoint,
+      view: UpkeepWeb.KanbanLive,
+      transport_pid: self(),
+      assigns: %{__changed__: %{}}
+    }
+  end
 
   def table_value(key) do
     [{^key, value}] = :ets.lookup(__MODULE__, key)

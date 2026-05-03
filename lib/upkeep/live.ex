@@ -55,7 +55,11 @@ defmodule Upkeep.Live do
         value = load_source(source, params, source_id, component, :watch)
         interest_keys = source.__upkeep_interest_keys__(params)
 
-        join_interest(interest_keys, assign_name, source)
+        registered? = register_interest?(socket)
+
+        if registered? do
+          join_interest(interest_keys, assign_name, source)
+        end
 
         socket
         |> put_watch(source_id, %{
@@ -64,6 +68,7 @@ defmodule Upkeep.Live do
           source: source,
           params: params,
           component: component,
+          registered?: registered?,
           interest_keys: interest_keys
         })
         |> tap(fn _socket ->
@@ -75,6 +80,7 @@ defmodule Upkeep.Live do
             component: component,
             assign_name: assign_name,
             kind: :new,
+            registered?: registered?,
             interest_keys: interest_keys
           })
         end)
@@ -325,7 +331,11 @@ defmodule Upkeep.Live do
     case Map.fetch(current_watches, source_id) do
       {:ok, watch} ->
         watches = Map.delete(current_watches, source_id)
-        leave_interest(unused_interest_keys(watch.interest_keys, watches))
+
+        if watch.registered? do
+          leave_interest(unused_interest_keys(watch.interest_keys, watches))
+        end
+
         emit([:source, :unwatch], %{count: 1}, watch_metadata(watch))
 
         private = socket.private || %{}
@@ -600,6 +610,7 @@ defmodule Upkeep.Live do
       assign_name: assign_name,
       assign_names: watch.assign_names |> MapSet.to_list() |> sort_terms(),
       kind: kind,
+      registered?: watch.registered?,
       interest_keys: watch.interest_keys
     }
   end
@@ -625,6 +636,11 @@ defmodule Upkeep.Live do
       {result, Map.merge(metadata, stop_metadata)}
     end)
   end
+
+  defp register_interest?(%Phoenix.LiveView.Socket{endpoint: nil, view: nil}), do: true
+
+  defp register_interest?(%Phoenix.LiveView.Socket{} = socket),
+    do: Phoenix.LiveView.connected?(socket)
 
   defp normalize_params(params) when is_list(params), do: Map.new(params)
   defp normalize_params(params) when is_map(params), do: params

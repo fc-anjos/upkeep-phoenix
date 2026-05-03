@@ -5,6 +5,7 @@ defmodule UpkeepWeb.KanbanLiveTest do
 
   setup do
     Upkeep.Kanban.reset!()
+    Upkeep.clear_events()
     :ok
   end
 
@@ -18,6 +19,26 @@ defmodule UpkeepWeb.KanbanLiveTest do
     assert html =~ "Seeded project board"
     assert html =~ "2 open issues"
     assert html =~ "My issues (1)"
+  end
+
+  test "disconnected render loads data without registering source interest", %{conn: conn} do
+    html =
+      conn
+      |> get(~p"/kanban")
+      |> html_response(200)
+
+    assert html =~ "Project board"
+    assert html =~ "Shape source API"
+
+    refute Upkeep.Kanban.Sources.BoardColumns
+           |> member_pids(project_id: Upkeep.Kanban.project_id())
+           |> Enum.member?(self())
+
+    assert Enum.any?(Upkeep.recent_events(), fn event ->
+             event.event == [:upkeep, :source, :watch] and
+               event.metadata.source == Upkeep.Kanban.Sources.BoardColumns and
+               event.metadata.registered? == false
+           end)
   end
 
   test "creating an issue refreshes board columns and activity", %{conn: conn} do
@@ -85,5 +106,15 @@ defmodule UpkeepWeb.KanbanLiveTest do
     assert html =~ "No issue selected"
     refute html =~ "This proves comments source refreshes."
     assert html =~ "1 open issue"
+  end
+
+  defp member_pids(source, params) do
+    params = Map.new(params)
+
+    source.__upkeep_interest_keys__(params)
+    |> hd()
+    |> Upkeep.Source.group_key()
+    |> then(&Group.members(Upkeep.DurableSupervisor, &1))
+    |> Enum.map(fn {pid, _meta} -> pid end)
   end
 end
