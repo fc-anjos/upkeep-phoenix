@@ -54,6 +54,32 @@ defmodule UpkeepWeb.KanbanLiveTest do
     assert html =~ "3 open issues"
   end
 
+  test "external domain mutations refresh a connected LiveView", %{conn: conn} do
+    {:ok, view, html} = live(conn, ~p"/kanban")
+
+    refute html =~ "Created outside the LiveView"
+
+    Upkeep.clear_events()
+
+    assert {:ok, _issue} =
+             Upkeep.Kanban.create_issue(
+               Upkeep.Kanban.project_id(),
+               "Created outside the LiveView"
+             )
+
+    html = assert_eventually_render(view, "Created outside the LiveView")
+
+    assert html =~ "Created Created outside the LiveView"
+    assert html =~ "3 open issues"
+
+    reloads =
+      Upkeep.recent_events()
+      |> Enum.filter(&(&1.event == [:upkeep, :source, :reload, :stop]))
+
+    assert Enum.any?(reloads, &(&1.metadata.source == Upkeep.Kanban.Sources.BoardColumns))
+    assert Enum.any?(reloads, &(&1.metadata.source == Upkeep.Kanban.Sources.ProjectActivity))
+  end
+
   test "moving and assigning an issue refreshes overlapping sources", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/kanban")
 
@@ -139,6 +165,44 @@ defmodule UpkeepWeb.KanbanLiveTest do
     assert html =~ "1 open issue"
   end
 
+  test "closed issue detail removes scoped comment refreshes from connected LiveView", %{
+    conn: conn
+  } do
+    {:ok, view, _html} = live(conn, ~p"/kanban")
+
+    view
+    |> element("button[phx-click='open_issue'][phx-value-id='10']")
+    |> render_click()
+
+    html = render(view)
+    assert html =~ "Keep the source contract boring."
+    assert html =~ "Shape source API · 1 comment"
+
+    view
+    |> element("button[phx-click='close_issue']")
+    |> render_click()
+
+    html = render(view)
+    assert html =~ "No issue selected"
+
+    Upkeep.clear_events()
+
+    assert {:ok, _comment} =
+             Upkeep.Kanban.add_comment(10, "This should not refresh the closed detail.")
+
+    html = assert_eventually_render(view, "Commented on Shape source API")
+
+    assert html =~ "No issue selected"
+    refute html =~ "This should not refresh the closed detail."
+
+    reloads =
+      Upkeep.recent_events()
+      |> Enum.filter(&(&1.event == [:upkeep, :source, :reload, :stop]))
+
+    refute Enum.any?(reloads, &(&1.metadata.source == Upkeep.Kanban.Sources.IssueComments))
+    assert Enum.any?(reloads, &(&1.metadata.source == Upkeep.Kanban.Sources.ProjectActivity))
+  end
+
   defp member_pids(source, params) do
     params = Map.new(params)
 
@@ -147,5 +211,23 @@ defmodule UpkeepWeb.KanbanLiveTest do
     |> Upkeep.Source.group_key()
     |> then(&Group.members(Upkeep.DurableSupervisor, &1))
     |> Enum.map(fn {pid, _meta} -> pid end)
+  end
+
+  defp assert_eventually_render(view, expected, attempts \\ 20)
+
+  defp assert_eventually_render(view, expected, attempts) when attempts > 0 do
+    html = render(view)
+
+    if html =~ expected do
+      html
+    else
+      Process.sleep(25)
+      assert_eventually_render(view, expected, attempts - 1)
+    end
+  end
+
+  defp assert_eventually_render(view, expected, 0) do
+    html = render(view)
+    flunk("expected rendered LiveView to include #{inspect(expected)}, got:\n#{html}")
   end
 end
