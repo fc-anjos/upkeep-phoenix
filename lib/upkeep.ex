@@ -10,4 +10,6 @@ defmodule Upkeep do
   defdelegate inserted(record, opts \\ []), to: Upkeep.Mutation
   defdelegate updated(record, opts \\ []), to: Upkeep.Mutation
   defdelegate deleted(record, opts \\ []), to: Upkeep.Mutation
+  defdelegate recent_events(opts \\ []), to: Upkeep.Observability, as: :recent
+  defdelegate clear_events(), to: Upkeep.Observability, as: :clear
 end

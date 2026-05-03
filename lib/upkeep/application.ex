@@ -9,6 +9,7 @@ defmodule Upkeep.Application do
   def start(_type, _args) do
     children = [
       UpkeepWeb.Telemetry,
+      Upkeep.Observability,
       Upkeep.Repo,
       {Ecto.Migrator,
        repos: Application.fetch_env!(:upkeep, :ecto_repos), skip: skip_migrations?()},

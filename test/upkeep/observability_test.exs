@@ -1,0 +1,73 @@
+defmodule Upkeep.ObservabilityTest do
+  use ExUnit.Case, async: false
+
+  alias Upkeep.Live
+
+  defmodule Issue do
+    defstruct [:project_id]
+  end
+
+  defmodule ProjectIssues do
+    use Upkeep.Source
+
+    query(fn s ->
+      [{_key, value}] = :ets.lookup(Upkeep.ObservabilityTest, {:issues, s.project_id})
+      value
+    end)
+
+    invalidated_by(Issue, :updated, on: :project_id)
+  end
+
+  setup do
+    table = :ets.new(__MODULE__, [:set, :public, :named_table])
+    :ets.insert(table, {{:issues, 1}, [:before]})
+    Upkeep.clear_events()
+
+    on_exit(fn -> Upkeep.clear_events() end)
+
+    %{table: table}
+  end
+
+  test "stores recent runtime telemetry events", %{table: table} do
+    socket =
+      %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+      |> Live.watch(:issues, ProjectIssues, project_id: 1)
+      |> Live.derive(:issue_count, [:issues], fn %{issues: issues} -> length(issues) end)
+
+    :ets.insert(table, {{:issues, 1}, [:before, :after]})
+    change = %Issue{project_id: 1} |> Upkeep.Change.updated()
+
+    socket =
+      socket
+      |> Live.queue_matching(change)
+      |> Live.flush_refreshes()
+
+    assert socket.assigns.issue_count == 2
+
+    events = Upkeep.recent_events()
+    event_names = Enum.map(events, & &1.event)
+
+    assert [:upkeep, :source, :watch] in event_names
+    assert [:upkeep, :source, :queue] in event_names
+    assert [:upkeep, :source, :reload, :stop] in event_names
+    assert [:upkeep, :dag, :recompute, :stop] in event_names
+    assert [:upkeep, :live, :assign] in event_names
+
+    assert Enum.all?(events, &is_integer(&1.at))
+
+    assert Enum.any?(events, fn event ->
+             event.event == [:upkeep, :source, :queue] and
+               event.measurements == %{count: 1} and
+               event.metadata.source == ProjectIssues
+           end)
+  end
+
+  test "can clear stored events" do
+    %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+    |> Live.watch(:issues, ProjectIssues, project_id: 1)
+
+    assert Upkeep.recent_events() != []
+    assert :ok = Upkeep.clear_events()
+    assert Upkeep.recent_events() == []
+  end
+end
