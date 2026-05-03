@@ -38,6 +38,30 @@ defmodule Upkeep.Mutation do
     end
   end
 
+  def changed(name, payload, opts \\ []) when is_atom(name) do
+    name
+    |> Upkeep.Change.changed(payload, opts)
+    |> notify()
+  end
+
+  def inserted(record, opts \\ []) when is_struct(record) do
+    record
+    |> Upkeep.Change.inserted(opts)
+    |> notify()
+  end
+
+  def updated(record, opts \\ []) when is_struct(record) do
+    record
+    |> Upkeep.Change.updated(opts)
+    |> notify()
+  end
+
+  def deleted(record, opts \\ []) when is_struct(record) do
+    record
+    |> Upkeep.Change.deleted(opts)
+    |> notify()
+  end
+
   defp run_outer_mutation(repo, fun) do
     previous = Process.get(@journal_key, :upkeep_no_journal)
     put_journal([])

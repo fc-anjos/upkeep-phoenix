@@ -3,11 +3,11 @@ defmodule Upkeep.LiveRefreshTest do
 
   alias Upkeep.Live
 
-  defmodule IssueMoved do
+  defmodule Issue do
     defstruct [:project_id, :issue_id]
   end
 
-  defmodule CommentCreated do
+  defmodule Comment do
     defstruct [:project_id, :issue_id]
   end
 
@@ -19,7 +19,7 @@ defmodule Upkeep.LiveRefreshTest do
       Upkeep.LiveRefreshTest.table_value({:issues, s.project_id})
     end)
 
-    invalidated_by(IssueMoved, on: :project_id)
+    invalidated_by(Issue, :updated, on: :project_id)
   end
 
   defmodule ProjectActivity do
@@ -30,8 +30,8 @@ defmodule Upkeep.LiveRefreshTest do
       Upkeep.LiveRefreshTest.table_value({:activity, s.project_id})
     end)
 
-    invalidated_by(IssueMoved, on: :project_id)
-    invalidated_by(CommentCreated, on: :project_id)
+    invalidated_by(Issue, :updated, on: :project_id)
+    invalidated_by(Comment, :inserted, on: :project_id)
   end
 
   defmodule FailingIssues do
@@ -46,7 +46,7 @@ defmodule Upkeep.LiveRefreshTest do
       end
     end)
 
-    invalidated_by(IssueMoved, on: :project_id)
+    invalidated_by(Issue, :updated, on: :project_id)
   end
 
   setup do
@@ -61,7 +61,7 @@ defmodule Upkeep.LiveRefreshTest do
     %{table: table}
   end
 
-  test "many events for one source reload once per flush", %{table: table} do
+  test "many changes for one source reload once per flush", %{table: table} do
     socket =
       new_socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
@@ -72,9 +72,9 @@ defmodule Upkeep.LiveRefreshTest do
 
     socket =
       socket
-      |> Live.queue_matching(%IssueMoved{project_id: 1, issue_id: 1})
-      |> Live.queue_matching(%IssueMoved{project_id: 1, issue_id: 2})
-      |> Live.queue_matching(%IssueMoved{project_id: 1, issue_id: 3})
+      |> Live.queue_matching(updated_issue(1, 1))
+      |> Live.queue_matching(updated_issue(1, 2))
+      |> Live.queue_matching(updated_issue(1, 3))
       |> Live.flush_refreshes()
 
     assert socket.assigns.issues == [:issue_b]
@@ -95,8 +95,8 @@ defmodule Upkeep.LiveRefreshTest do
 
     socket =
       socket
-      |> Live.queue_matching(%IssueMoved{project_id: 1, issue_id: 1})
-      |> Live.queue_matching(%CommentCreated{project_id: 1, issue_id: 1})
+      |> Live.queue_matching(updated_issue(1, 1))
+      |> Live.queue_matching(inserted_comment(1, 1))
       |> Live.flush_refreshes()
 
     assert socket.assigns.issues == [:issue_b]
@@ -117,7 +117,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     socket =
       socket
-      |> Live.queue_matching(%IssueMoved{project_id: 1, issue_id: 1})
+      |> Live.queue_matching(updated_issue(1, 1))
       |> Live.flush_refreshes()
 
     assert socket.assigns.issues == [:stable]
@@ -136,7 +136,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     socket_a =
       socket_a
-      |> Live.queue_matching(%IssueMoved{project_id: 1, issue_id: 1})
+      |> Live.queue_matching(updated_issue(1, 1))
       |> Live.flush_refreshes()
 
     assert socket_a.assigns.issues == [:issue_b]
@@ -156,5 +156,15 @@ defmodule Upkeep.LiveRefreshTest do
 
   defp load_count(source) do
     table_value({:loads, source, 1})
+  end
+
+  defp updated_issue(project_id, issue_id) do
+    %Issue{project_id: project_id, issue_id: issue_id}
+    |> Upkeep.Change.updated()
+  end
+
+  defp inserted_comment(project_id, issue_id) do
+    %Comment{project_id: project_id, issue_id: issue_id}
+    |> Upkeep.Change.inserted()
   end
 end

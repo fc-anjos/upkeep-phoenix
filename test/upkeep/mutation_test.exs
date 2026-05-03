@@ -3,7 +3,7 @@ defmodule Upkeep.MutationTest do
 
   alias Upkeep.Live
 
-  defmodule IssueMoved do
+  defmodule Issue do
     defstruct [:project_id, :issue_id]
   end
 
@@ -15,7 +15,7 @@ defmodule Upkeep.MutationTest do
       value
     end)
 
-    invalidated_by(IssueMoved, on: :project_id)
+    invalidated_by(Issue, :updated, on: :project_id)
   end
 
   setup do
@@ -34,14 +34,16 @@ defmodule Upkeep.MutationTest do
     result =
       Upkeep.mutate(fn ->
         :ets.insert(table, {{:issues, 777}, [:after]})
-        Upkeep.notify(%IssueMoved{project_id: 777, issue_id: 1})
+        Upkeep.updated(issue(777, 1))
         :moved
       end)
 
     assert {:ok, :moved} = result
-    assert_receive {:upkeep_event, %IssueMoved{project_id: 777}}
 
-    refreshed = Live.refresh_matching(socket, %IssueMoved{project_id: 777, issue_id: 1})
+    assert_receive {:upkeep_event,
+                    %Upkeep.Change{name: :updated, record: %Issue{project_id: 777}} = change}
+
+    refreshed = Live.refresh_matching(socket, change)
     assert refreshed.assigns.issues == [:after]
   end
 
@@ -50,12 +52,12 @@ defmodule Upkeep.MutationTest do
 
     result =
       Upkeep.mutate(fn ->
-        Upkeep.notify(%IssueMoved{project_id: 778, issue_id: 1})
+        Upkeep.updated(issue(778, 1))
         Upkeep.Repo.rollback(:cancelled)
       end)
 
     assert {:error, :cancelled} = result
-    refute_receive {:upkeep_event, %IssueMoved{project_id: 778}}
+    refute_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 778}}}
   end
 
   test "mutate discards notifications when the mutation raises" do
@@ -63,12 +65,12 @@ defmodule Upkeep.MutationTest do
 
     assert_raise RuntimeError, "boom", fn ->
       Upkeep.mutate(fn ->
-        Upkeep.notify(%IssueMoved{project_id: 779, issue_id: 1})
+        Upkeep.updated(issue(779, 1))
         raise "boom"
       end)
     end
 
-    refute_receive {:upkeep_event, %IssueMoved{project_id: 779}}
+    refute_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 779}}}
   end
 
   test "mutate preserves notification order after commit" do
@@ -76,14 +78,14 @@ defmodule Upkeep.MutationTest do
 
     result =
       Upkeep.mutate(fn ->
-        Upkeep.notify(%IssueMoved{project_id: 780, issue_id: 1})
-        Upkeep.notify(%IssueMoved{project_id: 780, issue_id: 2})
+        Upkeep.updated(issue(780, 1))
+        Upkeep.updated(issue(780, 2))
         :ok
       end)
 
     assert {:ok, :ok} = result
-    assert_receive {:upkeep_event, %IssueMoved{project_id: 780, issue_id: 1}}
-    assert_receive {:upkeep_event, %IssueMoved{project_id: 780, issue_id: 2}}
+    assert_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 780, issue_id: 1}}}
+    assert_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 780, issue_id: 2}}}
   end
 
   test "nested mutate joins the outer journal and flushes once" do
@@ -93,16 +95,16 @@ defmodule Upkeep.MutationTest do
       Upkeep.mutate(fn ->
         assert {:ok, :inner} =
                  Upkeep.mutate(fn ->
-                   Upkeep.notify(%IssueMoved{project_id: 777, issue_id: 1})
+                   Upkeep.updated(issue(777, 1))
                    :inner
                  end)
 
-        refute_received {:upkeep_event, %IssueMoved{project_id: 777}}
+        refute_received {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 777}}}
         :outer
       end)
 
     assert {:ok, :outer} = result
-    assert_receive {:upkeep_event, %IssueMoved{project_id: 777, issue_id: 1}}
+    assert_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 777, issue_id: 1}}}
   end
 
   test "Ecto.Multi flushes notifications after commit" do
@@ -111,12 +113,12 @@ defmodule Upkeep.MutationTest do
     multi =
       Ecto.Multi.new()
       |> Ecto.Multi.run(:move, fn _repo, _changes ->
-        Upkeep.notify(%IssueMoved{project_id: 777, issue_id: 1})
+        Upkeep.updated(issue(777, 1))
         {:ok, :moved}
       end)
 
     assert {:ok, %{move: :moved}} = Upkeep.mutate(multi)
-    assert_receive {:upkeep_event, %IssueMoved{project_id: 777, issue_id: 1}}
+    assert_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 777, issue_id: 1}}}
   end
 
   test "Ecto.Multi discards notifications on rollback" do
@@ -125,12 +127,12 @@ defmodule Upkeep.MutationTest do
     multi =
       Ecto.Multi.new()
       |> Ecto.Multi.run(:move, fn _repo, _changes ->
-        Upkeep.notify(%IssueMoved{project_id: 778, issue_id: 1})
+        Upkeep.updated(issue(778, 1))
         {:error, :cancelled}
       end)
 
     assert {:error, :move, :cancelled, %{}} = Upkeep.mutate(multi)
-    refute_receive {:upkeep_event, %IssueMoved{project_id: 778}}
+    refute_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 778}}}
   end
 
   test "Ecto.Multi preserves notification order after commit" do
@@ -139,17 +141,17 @@ defmodule Upkeep.MutationTest do
     multi =
       Ecto.Multi.new()
       |> Ecto.Multi.run(:first, fn _repo, _changes ->
-        Upkeep.notify(%IssueMoved{project_id: 779, issue_id: 1})
+        Upkeep.updated(issue(779, 1))
         {:ok, :first}
       end)
       |> Ecto.Multi.run(:second, fn _repo, _changes ->
-        Upkeep.notify(%IssueMoved{project_id: 779, issue_id: 2})
+        Upkeep.updated(issue(779, 2))
         {:ok, :second}
       end)
 
     assert {:ok, %{first: :first, second: :second}} = Upkeep.mutate(multi)
-    assert_receive {:upkeep_event, %IssueMoved{project_id: 779, issue_id: 1}}
-    assert_receive {:upkeep_event, %IssueMoved{project_id: 779, issue_id: 2}}
+    assert_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 779, issue_id: 1}}}
+    assert_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 779, issue_id: 2}}}
   end
 
   test "nested Ecto.Multi rollback rolls back the outer mutation and discards all events" do
@@ -157,12 +159,12 @@ defmodule Upkeep.MutationTest do
 
     result =
       Upkeep.mutate(fn ->
-        Upkeep.notify(%IssueMoved{project_id: 780, issue_id: 1})
+        Upkeep.updated(issue(780, 1))
 
         multi =
           Ecto.Multi.new()
           |> Ecto.Multi.run(:inner, fn _repo, _changes ->
-            Upkeep.notify(%IssueMoved{project_id: 780, issue_id: 2})
+            Upkeep.updated(issue(780, 2))
             {:error, :cancelled}
           end)
 
@@ -171,12 +173,14 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:error, :rollback} = result
-    refute_receive {:upkeep_event, %IssueMoved{project_id: 780, issue_id: 1}}
-    refute_receive {:upkeep_event, %IssueMoved{project_id: 780, issue_id: 2}}
+    refute_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 780, issue_id: 1}}}
+    refute_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 780, issue_id: 2}}}
   end
 
   defp watch_project(project_id) do
     %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
     |> Live.watch(:issues, ProjectIssues, project_id: project_id)
   end
+
+  defp issue(project_id, issue_id), do: %Issue{project_id: project_id, issue_id: issue_id}
 end

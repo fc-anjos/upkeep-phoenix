@@ -2,15 +2,15 @@ defmodule Upkeep.Source do
   @moduledoc """
   Source authoring DSL for Upkeep-style reactive reads.
 
-  A source is a named query plus the domain facts that can invalidate it. The
-  common path is equality over event/source fields via `invalidated_by/2`; custom
-  predicates stay available through `reacts_to/2`.
+  A source is a named query plus the domain notifications that can invalidate
+  it. The common path is equality over notification/source fields via
+  `invalidated_by/2`; custom predicates stay available through `reacts_to/2`.
   """
 
   defmacro __using__(_opts) do
     quote do
       import Upkeep.Source,
-        only: [query: 1, invalidated_by: 2, reacts_to: 2]
+        only: [query: 1, invalidated_by: 2, invalidated_by: 3, reacts_to: 2, reacts_to: 3]
 
       Module.register_attribute(__MODULE__, :upkeep_invalidators, accumulate: true)
       Module.register_attribute(__MODULE__, :upkeep_reactors, accumulate: true)
@@ -24,8 +24,16 @@ defmodule Upkeep.Source do
     end
   end
 
-  defmacro invalidated_by(event, opts) do
-    event = Macro.expand(event, __CALLER__)
+  defmacro invalidated_by(notification, opts) do
+    build_invalidated_by(normalize_notification(notification, __CALLER__), opts)
+  end
+
+  defmacro invalidated_by(schema, action, opts) do
+    notification = normalize_notification(schema, action, __CALLER__)
+    build_invalidated_by(notification, opts)
+  end
+
+  defp build_invalidated_by(notification, opts) do
     on = Keyword.fetch!(opts, :on) |> List.wrap()
     as = Keyword.get(opts, :as, on) |> List.wrap()
 
@@ -33,16 +41,24 @@ defmodule Upkeep.Source do
       raise ArgumentError, "`:on` and `:as` must name the same number of fields"
     end
 
-    quote bind_quoted: [event: event, on: on, as: as] do
-      @upkeep_invalidators {event, on, as}
+    quote bind_quoted: [notification: Macro.escape(notification), on: on, as: as] do
+      @upkeep_invalidators {notification, on, as}
     end
   end
 
-  defmacro reacts_to(event, fun) do
-    event = Macro.expand(event, __CALLER__)
+  defmacro reacts_to(notification, fun) do
+    notification = normalize_notification(notification, __CALLER__)
 
-    quote bind_quoted: [event: event, fun: Macro.escape(fun)] do
-      @upkeep_reactors {event, fun}
+    quote bind_quoted: [notification: Macro.escape(notification), fun: Macro.escape(fun)] do
+      @upkeep_reactors {notification, fun}
+    end
+  end
+
+  defmacro reacts_to(schema, action, fun) do
+    notification = normalize_notification(schema, action, __CALLER__)
+
+    quote bind_quoted: [notification: Macro.escape(notification), fun: Macro.escape(fun)] do
+      @upkeep_reactors {notification, fun}
     end
   end
 
@@ -51,29 +67,35 @@ defmodule Upkeep.Source do
     reactors = Module.get_attribute(env.module, :upkeep_reactors)
 
     invalidator_checks =
-      Enum.map(invalidators, fn {event, on, as} ->
+      Enum.map(invalidators, fn {notification, on, as} ->
         quote do
-          match?(%unquote(event){}, event) and
+          Upkeep.Source.matches?(event, unquote(Macro.escape(notification))) and
             Upkeep.Source.equal_fields?(event, params, unquote(on), unquote(as))
         end
       end)
 
     reactor_checks =
-      Enum.map(reactors, fn {event, fun} ->
+      Enum.map(reactors, fn {notification, fun} ->
         quote do
-          match?(%unquote(event){}, event) and unquote(fun).(event, params)
+          Upkeep.Source.matches?(event, unquote(Macro.escape(notification))) and
+            unquote(fun).(event, params)
         end
       end)
 
     interest_keys =
-      Enum.map(invalidators, fn {event, on, as} ->
+      Enum.map(invalidators, fn {notification, on, as} ->
         quote do
-          Upkeep.Source.interest_key(unquote(event), unquote(on), unquote(as), params)
+          Upkeep.Source.interest_key(
+            unquote(Macro.escape(notification)),
+            unquote(on),
+            unquote(as),
+            params
+          )
         end
       end) ++
-        Enum.map(reactors, fn {event, _fun} ->
+        Enum.map(reactors, fn {notification, _fun} ->
           quote do
-            Upkeep.Source.event_key(unquote(event))
+            Upkeep.Source.notification_key(unquote(Macro.escape(notification)))
           end
         end)
 
@@ -92,16 +114,36 @@ defmodule Upkeep.Source do
     end
   end
 
-  def equal_fields?(event, params, event_fields, source_fields) do
-    event = Map.from_struct(event)
+  def matches?(%Upkeep.Change{} = change, %{name: name, schema: schema}) do
+    change.name == name and schema_matches?(change.schema, schema)
+  end
 
-    Enum.zip(event_fields, source_fields)
-    |> Enum.all?(fn {event_field, source_field} ->
-      Map.fetch!(event, event_field) == Map.fetch!(params, source_field)
+  def matches?(event, %{legacy: event_module}) when is_struct(event) do
+    match?(%{__struct__: ^event_module}, event)
+  end
+
+  def equal_fields?(%Upkeep.Change{} = change, params, event_fields, source_fields) do
+    change
+    |> Upkeep.Change.field_sets()
+    |> Enum.any?(fn fields ->
+      equal_field_set?(fields, params, event_fields, source_fields)
     end)
   end
 
-  def interest_key(event, event_fields, source_fields, params) do
+  def equal_fields?(event, params, event_fields, source_fields) when is_struct(event) do
+    event
+    |> Map.from_struct()
+    |> equal_field_set?(params, event_fields, source_fields)
+  end
+
+  defp equal_field_set?(fields, params, event_fields, source_fields) do
+    Enum.zip(event_fields, source_fields)
+    |> Enum.all?(fn {event_field, source_field} ->
+      Map.fetch!(fields, event_field) == Map.fetch!(params, source_field)
+    end)
+  end
+
+  def interest_key(notification, event_fields, source_fields, params) do
     values =
       Enum.zip(event_fields, source_fields)
       |> Enum.map(fn {event_field, source_field} ->
@@ -109,10 +151,16 @@ defmodule Upkeep.Source do
       end)
       |> Enum.sort()
 
-    {:upkeep_event, event, values}
+    notification_key(notification, values)
   end
 
-  def event_key(event), do: {:upkeep_event, event}
+  def notification_key(%{legacy: event}), do: {:upkeep_event, event}
+  def notification_key(%{name: name, schema: schema}), do: {:upkeep_change, name, schema}
+
+  def notification_key(%{legacy: event}, values), do: {:upkeep_event, event, values}
+
+  def notification_key(%{name: name, schema: schema}, values),
+    do: {:upkeep_change, name, schema, values}
 
   def source_id(source, params) when is_atom(source) and is_map(params), do: {source, params}
 
@@ -125,7 +173,31 @@ defmodule Upkeep.Source do
     "upkeep/source-interest/" <> encoded
   end
 
-  def event_keys(event) do
+  def event_keys(%Upkeep.Change{} = change) do
+    field_keys =
+      change
+      |> Upkeep.Change.field_sets()
+      |> Enum.flat_map(fn fields ->
+        fields
+        |> Map.to_list()
+        |> non_empty_subsets()
+        |> Enum.flat_map(fn values ->
+          [
+            notification_key(%{name: change.name, schema: change.schema}, values),
+            notification_key(%{name: change.name, schema: :_}, values)
+          ]
+        end)
+      end)
+
+    [
+      notification_key(%{name: change.name, schema: change.schema}),
+      notification_key(%{name: change.name, schema: :_})
+      | field_keys
+    ]
+    |> Enum.uniq()
+  end
+
+  def event_keys(event) when is_struct(event) do
     event_module = event.__struct__
     fields = Map.from_struct(event)
 
@@ -135,8 +207,19 @@ defmodule Upkeep.Source do
       |> non_empty_subsets()
       |> Enum.map(fn values -> {:upkeep_event, event_module, values} end)
 
-    [event_key(event_module) | field_keys]
+    [notification_key(%{legacy: event_module}) | field_keys]
   end
+
+  defp normalize_notification(name, _caller) when is_atom(name), do: %{name: name, schema: :_}
+  defp normalize_notification(event, caller), do: %{legacy: Macro.expand(event, caller)}
+
+  defp normalize_notification(schema, action, caller) when is_atom(action) do
+    %{name: action, schema: Macro.expand(schema, caller)}
+  end
+
+  defp schema_matches?(_actual, :_), do: true
+  defp schema_matches?(schema, schema), do: true
+  defp schema_matches?(_actual, _expected), do: false
 
   defp non_empty_subsets(fields) do
     Enum.reduce(fields, [], fn field, subsets ->
