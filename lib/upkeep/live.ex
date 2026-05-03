@@ -11,7 +11,17 @@ defmodule Upkeep.Live do
 
   defmacro __using__(_opts) do
     quote do
-      import Upkeep.Live, only: [watch: 4, derive: 4, unwatch: 2, unwatch: 3, refresh: 4]
+      import Upkeep.Live,
+        only: [
+          watch: 4,
+          watch: 5,
+          component: 4,
+          remove_component: 2,
+          derive: 4,
+          unwatch: 2,
+          unwatch: 3,
+          refresh: 4
+        ]
 
       @impl true
       def handle_info({:upkeep_event, event}, socket) do
@@ -27,9 +37,10 @@ defmodule Upkeep.Live do
     end
   end
 
-  def watch(socket, assign_name, source, params) when is_atom(assign_name) do
+  def watch(socket, assign_name, source, params, opts \\ []) when is_atom(assign_name) do
     params = normalize_params(params)
-    source_id = Source.source_id(source, params)
+    component = Keyword.get(opts, :under)
+    source_id = scoped_source_id(source, params, component)
 
     case Map.fetch(watches(socket), source_id) do
       {:ok, watch} ->
@@ -50,27 +61,59 @@ defmodule Upkeep.Live do
           assign_names: MapSet.new([assign_name]),
           source: source,
           params: params,
+          component: component,
           interest_keys: interest_keys
         })
-        |> put_dag_source(source_id, value)
+        |> put_dag_source(source_id, value, source_deps(component))
         |> put_assign_node(assign_name, source_node_id(source_id))
         |> assign(assign_name, value)
     end
   end
 
+  def component(socket, component_name, deps, fun)
+      when is_atom(component_name) and is_list(deps) and is_function(fun, 1) do
+    {dep_node_ids, dep_pairs} = dependency_nodes(socket, deps)
+    node_id = component_node_id(component_name)
+
+    compute = fn node_values ->
+      dep_pairs
+      |> Map.new(fn {dep, dep_node_id} -> {dep, Map.fetch!(node_values, dep_node_id)} end)
+      |> fun.()
+    end
+
+    dag =
+      socket
+      |> dag()
+      |> Upkeep.DAG.put_component(node_id, dep_node_ids, compute)
+
+    put_dag(socket, dag)
+  end
+
+  def remove_component(socket, component_name) when is_atom(component_name) do
+    node_id = component_node_id(component_name)
+    removed_node_ids = [node_id | Upkeep.DAG.downstream_ids(dag(socket), node_id)]
+
+    socket =
+      socket
+      |> watches()
+      |> Enum.filter(fn {_source_id, watch} ->
+        Enum.member?(removed_node_ids, source_node_id(watch.source_id))
+      end)
+      |> Enum.reduce(socket, fn {source_id, _watch}, socket -> remove_watch(socket, source_id) end)
+
+    dag =
+      socket
+      |> dag()
+      |> Upkeep.DAG.remove_subgraph(node_id)
+
+    removed_node_ids
+    |> Enum.flat_map(&assign_names_for_node(socket, &1))
+    |> Enum.reduce(put_dag(socket, dag), &delete_assign_node(&2, &1))
+  end
+
   def derive(socket, assign_name, deps, fun)
       when is_atom(assign_name) and is_list(deps) and is_function(fun, 1) do
-    {dep_node_ids, dep_pairs} =
-      deps
-      |> Enum.map(fn dep ->
-        node_id =
-          Map.get(assign_nodes(socket), dep) ||
-            raise ArgumentError, "unknown Upkeep dependency assign #{inspect(dep)}"
-
-        {node_id, {dep, node_id}}
-      end)
-      |> Enum.unzip()
-
+    {dep_node_ids, dep_pairs} = dependency_nodes(socket, deps)
     node_id = derived_node_id(assign_name)
 
     compute = fn node_values ->
@@ -103,8 +146,13 @@ defmodule Upkeep.Live do
 
   def unwatch(socket, source, params) when is_atom(source) do
     params = normalize_params(params)
-    source_id = Source.source_id(source, params)
-    remove_watch(socket, source_id)
+
+    socket
+    |> watches()
+    |> Enum.filter(fn {_source_id, watch} ->
+      watch.source == source and watch.params == params
+    end)
+    |> Enum.reduce(socket, fn {source_id, _watch}, socket -> remove_watch(socket, source_id) end)
   end
 
   def refresh(socket, assign_name, source, params) when is_atom(assign_name) do
@@ -147,7 +195,9 @@ defmodule Upkeep.Live do
     value = watch.source.load(watch.params)
 
     socket = assign_watch(socket, watch, value)
-    {socket, changed?} = put_dag_value(socket, watch.source_id, value)
+
+    {socket, changed?} =
+      put_dag_value(socket, watch.source_id, value, source_deps(watch.component))
 
     changed =
       if changed? do
@@ -222,12 +272,14 @@ defmodule Upkeep.Live do
   end
 
   defp remove_watch(socket, source_id) do
-    case Map.fetch(watches(socket), source_id) do
+    current_watches = watches(socket)
+
+    case Map.fetch(current_watches, source_id) do
       {:ok, watch} ->
-        leave_interest(watch.interest_keys)
+        watches = Map.delete(current_watches, source_id)
+        leave_interest(unused_interest_keys(watch.interest_keys, watches))
 
         private = socket.private || %{}
-        watches = Map.delete(Map.get(private, :upkeep_watches, %{}), source_id)
 
         pending =
           MapSet.delete(Map.get(private, :upkeep_pending_refreshes, MapSet.new()), source_id)
@@ -248,6 +300,16 @@ defmodule Upkeep.Live do
       :error ->
         socket
     end
+  end
+
+  defp unused_interest_keys(interest_keys, watches) do
+    remaining_keys =
+      watches
+      |> Map.values()
+      |> Enum.flat_map(& &1.interest_keys)
+      |> MapSet.new()
+
+    Enum.reject(interest_keys, &MapSet.member?(remaining_keys, &1))
   end
 
   defp remove_watch_assign(socket, source_id, assign_name) do
@@ -286,20 +348,20 @@ defmodule Upkeep.Live do
     :ok
   end
 
-  defp put_dag_source(socket, source_id, value) do
+  defp put_dag_source(socket, source_id, value, deps) do
     {dag, _changed?} =
       socket
       |> dag()
-      |> Upkeep.DAG.put_source(source_node_id(source_id), value)
+      |> Upkeep.DAG.put_source(source_node_id(source_id), value, deps)
 
     put_dag(socket, dag)
   end
 
-  defp put_dag_value(socket, source_id, value) do
+  defp put_dag_value(socket, source_id, value, deps) do
     {dag, changed?} =
       socket
       |> dag()
-      |> Upkeep.DAG.put_source(source_node_id(source_id), value)
+      |> Upkeep.DAG.put_source(source_node_id(source_id), value, deps)
 
     {put_dag(socket, dag), changed?}
   end
@@ -363,6 +425,28 @@ defmodule Upkeep.Live do
 
   defp source_node_id(source_id), do: {:source, source_id}
   defp derived_node_id(assign_name), do: {:derived, assign_name}
+  defp component_node_id(component_name), do: {:component, component_name}
+
+  defp source_deps(nil), do: []
+  defp source_deps(component), do: [component_node_id(component)]
+
+  defp scoped_source_id(source, params, nil), do: Source.source_id(source, params)
+
+  defp scoped_source_id(source, params, component) when is_atom(component) do
+    {:scoped, component, Source.source_id(source, params)}
+  end
+
+  defp dependency_nodes(socket, deps) do
+    deps
+    |> Enum.map(fn dep ->
+      node_id =
+        Map.get(assign_nodes(socket), dep) ||
+          raise ArgumentError, "unknown Upkeep dependency assign #{inspect(dep)}"
+
+      {node_id, {dep, node_id}}
+    end)
+    |> Enum.unzip()
+  end
 
   defp queue_refresh(socket, source_id) do
     private = socket.private || %{}

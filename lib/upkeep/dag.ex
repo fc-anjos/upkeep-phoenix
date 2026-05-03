@@ -11,10 +11,36 @@ defmodule Upkeep.DAG do
 
   def new, do: %__MODULE__{}
 
-  def put_source(%__MODULE__{} = dag, id, value) do
+  def put_source(%__MODULE__{} = dag, id, value, deps \\ []) when is_list(deps) do
+    missing = Enum.reject(deps, &Map.has_key?(dag.nodes, &1))
+
+    unless missing == [] do
+      raise ArgumentError, "unknown DAG dependencies for #{inspect(id)}: #{inspect(missing)}"
+    end
+
     dag
-    |> put_node(id, :source, [], nil)
+    |> put_node(id, :source, deps, nil)
+    |> ensure_acyclic!()
     |> put_value(id, value)
+  end
+
+  def put_component(%__MODULE__{} = dag, id, deps, compute)
+      when is_list(deps) and is_function(compute, 1) do
+    missing = Enum.reject(deps, &Map.has_key?(dag.nodes, &1))
+
+    unless missing == [] do
+      raise ArgumentError, "unknown DAG dependencies for #{inspect(id)}: #{inspect(missing)}"
+    end
+
+    dag =
+      dag
+      |> put_node(id, :component, deps, compute)
+      |> ensure_acyclic!()
+
+    value = compute_dep_values(dag, id)
+    {dag, _changed?} = put_value(dag, id, value)
+
+    dag
   end
 
   def put_derived(%__MODULE__{} = dag, id, deps, compute)
@@ -45,8 +71,9 @@ defmodule Upkeep.DAG do
     {dag, changed, recomputed} =
       Enum.reduce(order, {dag, changed_ids, []}, fn id, {dag, changed, recomputed} ->
         deps = Map.fetch!(dag.deps, id)
+        node = Map.fetch!(dag.nodes, id)
 
-        if Enum.any?(deps, &MapSet.member?(changed, &1)) do
+        if node.kind != :source and Enum.any?(deps, &MapSet.member?(changed, &1)) do
           value = compute_dep_values(dag, id)
           {dag, value_changed?} = put_value(dag, id, value)
           changed = if value_changed?, do: MapSet.put(changed, id), else: changed

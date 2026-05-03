@@ -81,8 +81,54 @@ defmodule Upkeep.DAGTest do
     end
   end
 
-  defp elem_put_source(dag, id, value) do
-    {dag, _changed?} = DAG.put_source(dag, id, value)
+  test "component nodes can own conditional source subgraphs" do
+    dag =
+      DAG.new()
+      |> elem_put_source(:selected_issue_id, 1)
+      |> DAG.put_component(:issue_detail, [:selected_issue_id], fn %{selected_issue_id: id} ->
+        %{issue_id: id}
+      end)
+      |> elem_put_source(:comments, [:first], [:issue_detail])
+      |> DAG.put_derived(:comment_count, [:comments], fn %{comments: comments} ->
+        length(comments)
+      end)
+
+    assert DAG.fetch!(dag, :issue_detail) == %{issue_id: 1}
+    assert DAG.fetch!(dag, :comment_count) == 1
+    assert DAG.downstream_ids(dag, :issue_detail) == [:comments, :comment_count]
+
+    dag = DAG.remove_subgraph(dag, :issue_detail)
+
+    assert_raise KeyError, fn -> DAG.fetch!(dag, :issue_detail) end
+    assert_raise KeyError, fn -> DAG.fetch!(dag, :comments) end
+    assert_raise KeyError, fn -> DAG.fetch!(dag, :comment_count) end
+    assert DAG.fetch!(dag, :selected_issue_id) == 1
+  end
+
+  test "owned source nodes are not recomputed as pure nodes" do
+    dag =
+      DAG.new()
+      |> elem_put_source(:selected_issue_id, 1)
+      |> DAG.put_component(:issue_detail, [:selected_issue_id], fn %{selected_issue_id: id} ->
+        %{issue_id: id}
+      end)
+      |> elem_put_source(:comments, [:first], [:issue_detail])
+      |> DAG.put_derived(:comment_count, [:comments], fn %{comments: comments} ->
+        length(comments)
+      end)
+
+    {dag, true} = DAG.put_source(dag, :selected_issue_id, 2)
+    {dag, changed, recomputed} = DAG.recompute(dag, [:selected_issue_id])
+
+    assert changed == [:issue_detail]
+    assert recomputed == [:issue_detail]
+    assert DAG.fetch!(dag, :issue_detail) == %{issue_id: 2}
+    assert DAG.fetch!(dag, :comments) == [:first]
+    assert DAG.fetch!(dag, :comment_count) == 1
+  end
+
+  defp elem_put_source(dag, id, value, deps \\ []) do
+    {dag, _changed?} = DAG.put_source(dag, id, value, deps)
     dag
   end
 end

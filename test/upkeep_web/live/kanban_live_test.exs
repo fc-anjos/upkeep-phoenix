@@ -14,7 +14,7 @@ defmodule UpkeepWeb.KanbanLiveTest do
     assert html =~ "Project board"
     assert html =~ "Shape source API"
     assert html =~ "Test durable fanout"
-    assert html =~ "Keep the source contract boring."
+    assert html =~ "No issue selected"
     assert html =~ "Seeded project board"
     assert html =~ "2 open issues"
     assert html =~ "My issues (1)"
@@ -57,6 +57,14 @@ defmodule UpkeepWeb.KanbanLiveTest do
     {:ok, view, _html} = live(conn, ~p"/kanban")
 
     view
+    |> element("button[phx-click='open_issue'][phx-value-id='10']")
+    |> render_click()
+
+    html = render(view)
+    assert html =~ "Keep the source contract boring."
+    assert html =~ "1 comment"
+
+    view
     |> form("form[phx-submit='add_comment']",
       comment: %{body: "This proves comments source refreshes."}
     )
@@ -65,6 +73,7 @@ defmodule UpkeepWeb.KanbanLiveTest do
     html = render(view)
     assert html =~ "This proves comments source refreshes."
     assert html =~ "Commented on Shape source API"
+    assert html =~ "2 comments"
 
     view
     |> element("button[phx-click='archive_issue'][phx-value-id='10']")
@@ -73,6 +82,8 @@ defmodule UpkeepWeb.KanbanLiveTest do
     html = render(view)
     assert html =~ "Archived Shape source API"
     refute html =~ ~s(id="issue-10")
+    assert html =~ "No issue selected"
+    refute html =~ "This proves comments source refreshes."
     assert html =~ "1 open issue"
   end
 end

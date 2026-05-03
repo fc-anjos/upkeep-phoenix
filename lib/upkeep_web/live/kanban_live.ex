@@ -7,7 +7,6 @@ defmodule UpkeepWeb.KanbanLive do
 
   @project_id Kanban.project_id()
   @current_user_id Kanban.current_user_id()
-  @selected_issue_id 10
 
   @impl true
   def mount(_params, _session, socket) do
@@ -15,11 +14,13 @@ defmodule UpkeepWeb.KanbanLive do
      socket
      |> assign(:new_issue_title, "")
      |> assign(:comment_body, "")
-     |> assign(:selected_issue_id, @selected_issue_id)
+     |> assign(:selected_issue_id, nil)
+     |> assign(:selected_issue_title, nil)
+     |> assign(:comments, [])
+     |> assign(:comment_count, 0)
      |> watch(:columns, Sources.BoardColumns, project_id: @project_id)
      |> watch(:activity, Sources.ProjectActivity, project_id: @project_id)
      |> watch(:my_issues, Sources.MyIssues, project_id: @project_id, user_id: @current_user_id)
-     |> watch(:comments, Sources.IssueComments, issue_id: @selected_issue_id)
      |> derive(:board_stats, [:columns], &board_stats/1)
      |> derive(:board_badge, [:board_stats], &board_badge/1)
      |> derive(:my_issue_count, [:my_issues], fn %{my_issues: issues} -> length(issues) end)}
@@ -43,9 +44,31 @@ defmodule UpkeepWeb.KanbanLive do
     {:noreply, socket}
   end
 
+  def handle_event("open_issue", %{"id" => id}, socket) do
+    {:noreply, open_issue_detail(socket, to_integer(id))}
+  end
+
+  def handle_event("close_issue", _params, socket) do
+    {:noreply, close_issue_detail(socket)}
+  end
+
   def handle_event("archive_issue", %{"id" => id}, socket) do
-    {:ok, _issue} = Kanban.archive_issue(to_integer(id))
+    {:ok, issue} = Kanban.archive_issue(to_integer(id))
+
+    socket =
+      if socket.assigns.selected_issue_id == issue.id,
+        do: close_issue_detail(socket),
+        else: socket
+
     {:noreply, socket}
+  end
+
+  def handle_event(
+        "add_comment",
+        %{"comment" => %{"body" => _body}},
+        %{assigns: %{selected_issue_id: nil}} = socket
+      ) do
+    {:noreply, assign(socket, :comment_body, "")}
   end
 
   def handle_event("add_comment", %{"comment" => %{"body" => body}}, socket) do
@@ -129,6 +152,13 @@ defmodule UpkeepWeb.KanbanLive do
                       <.icon name="hero-user-plus" class="size-3" /> Assign
                     </button>
                     <button
+                      phx-click="open_issue"
+                      phx-value-id={issue.id}
+                      class="inline-flex items-center gap-1 rounded border border-zinc-300 px-2 py-1 text-xs font-semibold"
+                    >
+                      <.icon name="hero-eye" class="size-3" /> Details
+                    </button>
+                    <button
                       phx-click="archive_issue"
                       phx-value-id={issue.id}
                       class="inline-flex items-center gap-1 rounded border border-zinc-300 px-2 py-1 text-xs font-semibold"
@@ -152,28 +182,48 @@ defmodule UpkeepWeb.KanbanLive do
             </section>
 
             <section class="rounded border border-zinc-300 bg-white">
-              <header class="border-b border-zinc-300 px-3 py-2">
-                <h2 class="text-sm font-bold">Issue comments</h2>
-              </header>
-              <ul class="divide-y divide-zinc-200 text-sm">
-                <li :for={comment <- @comments} class="px-3 py-2">{comment.body}</li>
-              </ul>
-              <.form
-                for={%{}}
-                as={:comment}
-                phx-submit="add_comment"
-                class="flex gap-2 border-t border-zinc-300 p-2"
-              >
-                <input
-                  name="comment[body]"
-                  value={@comment_body}
-                  placeholder="Comment"
-                  class="min-w-0 flex-1 rounded border border-zinc-300 px-2 py-1 text-sm"
-                />
-                <button class="inline-flex items-center gap-1 rounded bg-zinc-900 px-2 py-1 text-sm font-semibold text-white">
-                  <.icon name="hero-chat-bubble-left" class="size-4" /> Add
+              <header class="flex items-start justify-between gap-3 border-b border-zinc-300 px-3 py-2">
+                <div>
+                  <h2 class="text-sm font-bold">Issue comments</h2>
+                  <p :if={@selected_issue_title} class="mt-0.5 text-xs text-zinc-500">
+                    {@selected_issue_title} · {comment_badge(@comment_count)}
+                  </p>
+                </div>
+                <button
+                  :if={@selected_issue_id}
+                  type="button"
+                  phx-click="close_issue"
+                  class="inline-flex size-7 items-center justify-center rounded border border-zinc-300 text-zinc-600"
+                  aria-label="Close issue"
+                >
+                  <.icon name="hero-x-mark" class="size-4" />
                 </button>
-              </.form>
+              </header>
+              <div :if={@selected_issue_id}>
+                <ul class="divide-y divide-zinc-200 text-sm">
+                  <li :for={comment <- @comments} class="px-3 py-2">{comment.body}</li>
+                  <li :if={@comments == []} class="px-3 py-2 text-zinc-500">No comments</li>
+                </ul>
+                <.form
+                  for={%{}}
+                  as={:comment}
+                  phx-submit="add_comment"
+                  class="flex gap-2 border-t border-zinc-300 p-2"
+                >
+                  <input
+                    name="comment[body]"
+                    value={@comment_body}
+                    placeholder="Comment"
+                    class="min-w-0 flex-1 rounded border border-zinc-300 px-2 py-1 text-sm"
+                  />
+                  <button class="inline-flex items-center gap-1 rounded bg-zinc-900 px-2 py-1 text-sm font-semibold text-white">
+                    <.icon name="hero-chat-bubble-left" class="size-4" /> Add
+                  </button>
+                </.form>
+              </div>
+              <p :if={is_nil(@selected_issue_id)} class="px-3 py-6 text-sm text-zinc-500">
+                No issue selected
+              </p>
             </section>
 
             <section class="rounded border border-zinc-300 bg-white">
@@ -196,6 +246,44 @@ defmodule UpkeepWeb.KanbanLive do
 
   defp default_comment(""), do: "No details yet."
   defp default_comment(body), do: body
+
+  defp open_issue_detail(socket, issue_id) do
+    issue = find_issue(socket.assigns.columns, issue_id)
+
+    socket
+    |> close_issue_detail()
+    |> assign(:selected_issue_id, issue_id)
+    |> assign(:selected_issue_title, issue_title(issue, issue_id))
+    |> assign(:comment_body, "")
+    |> component(:issue_detail, [:columns], fn %{columns: columns} ->
+      issue = find_issue(columns, issue_id)
+      %{issue_id: issue_id, title: issue_title(issue, issue_id)}
+    end)
+    |> watch(:comments, Sources.IssueComments, [issue_id: issue_id], under: :issue_detail)
+    |> derive(:comment_count, [:comments], fn %{comments: comments} -> length(comments) end)
+  end
+
+  defp close_issue_detail(socket) do
+    socket
+    |> remove_component(:issue_detail)
+    |> assign(:selected_issue_id, nil)
+    |> assign(:selected_issue_title, nil)
+    |> assign(:comments, [])
+    |> assign(:comment_count, 0)
+    |> assign(:comment_body, "")
+  end
+
+  defp find_issue(columns, issue_id) do
+    columns
+    |> Enum.flat_map(& &1.issues)
+    |> Enum.find(&(&1.id == issue_id))
+  end
+
+  defp issue_title(nil, issue_id), do: "Issue #{issue_id}"
+  defp issue_title(issue, _issue_id), do: issue.title
+
+  defp comment_badge(1), do: "1 comment"
+  defp comment_badge(count), do: "#{count} comments"
 
   defp to_integer(value) when is_binary(value), do: String.to_integer(value)
   defp to_integer(value) when is_integer(value), do: value

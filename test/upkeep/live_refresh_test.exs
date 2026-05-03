@@ -49,14 +49,29 @@ defmodule Upkeep.LiveRefreshTest do
     invalidated_by(Issue, :updated, on: :project_id)
   end
 
+  defmodule IssueComments do
+    use Upkeep.Source
+
+    query(fn s ->
+      Upkeep.LiveRefreshTest.bump_load({:loads, :comments, s.issue_id})
+      Upkeep.LiveRefreshTest.table_value({:comments, s.issue_id})
+    end)
+
+    invalidated_by(Comment, :inserted, on: :issue_id)
+  end
+
   setup do
     table = :ets.new(__MODULE__, [:set, :public, :named_table])
     :ets.insert(table, {{:issues, 1}, [:issue_a]})
     :ets.insert(table, {{:activity, 1}, [:activity_a]})
     :ets.insert(table, {{:failing, 1}, [:stable]})
+    :ets.insert(table, {{:comments, 1}, [:comment_a]})
+    :ets.insert(table, {{:comments, 2}, [:comment_b]})
     :ets.insert(table, {{:loads, :issues, 1}, 0})
     :ets.insert(table, {{:loads, :activity, 1}, 0})
     :ets.insert(table, {{:loads, :failing, 1}, 0})
+    :ets.insert(table, {{:loads, :comments, 1}, 0})
+    :ets.insert(table, {{:loads, :comments, 2}, 0})
     :ets.insert(table, {{:loads, :visible, 1}, 0})
     :ets.insert(table, {{:loads, :issue_count, 1}, 0})
     :ets.insert(table, {{:loads, :issue_label, 1}, 0})
@@ -324,6 +339,80 @@ defmodule Upkeep.LiveRefreshTest do
     assert load_count(:issue_label) == 2
   end
 
+  test "component-scoped sources enter and leave the graph with downstream derived nodes", %{
+    table: table
+  } do
+    socket =
+      new_socket()
+      |> Live.component(:issue_detail, [], fn %{} -> %{issue_id: 1} end)
+      |> Live.watch(:comments, IssueComments, [issue_id: 1], under: :issue_detail)
+      |> Live.derive(:comment_count, [:comments], fn %{comments: comments} -> length(comments) end)
+
+    assert socket.assigns.comments == [:comment_a]
+    assert socket.assigns.comment_count == 1
+    assert load_count(:comments, 1) == 1
+    assert member_count(IssueComments, issue_id: 1) == 1
+
+    socket = Live.remove_component(socket, :issue_detail)
+
+    assert member_count(IssueComments, issue_id: 1) == 0
+
+    :ets.insert(table, {{:comments, 1}, [:comment_a, :comment_c]})
+
+    socket =
+      socket
+      |> Live.queue_matching(inserted_comment(1, 1))
+      |> Live.flush_refreshes()
+
+    assert socket.assigns.comments == [:comment_a]
+    assert socket.assigns.comment_count == 1
+    assert load_count(:comments, 1) == 1
+
+    socket =
+      socket
+      |> Live.component(:issue_detail, [], fn %{} -> %{issue_id: 2} end)
+      |> Live.watch(:comments, IssueComments, [issue_id: 2], under: :issue_detail)
+      |> Live.derive(:comment_count, [:comments], fn %{comments: comments} -> length(comments) end)
+
+    assert socket.assigns.comments == [:comment_b]
+    assert socket.assigns.comment_count == 1
+    assert member_count(IssueComments, issue_id: 1) == 0
+    assert member_count(IssueComments, issue_id: 2) == 1
+  end
+
+  test "removing component-scoped source preserves shared source interest", %{table: table} do
+    socket =
+      new_socket()
+      |> Live.watch(:comments, IssueComments, issue_id: 1)
+      |> Live.component(:issue_detail, [], fn %{} -> %{issue_id: 1} end)
+      |> Live.watch(:detail_comments, IssueComments, [issue_id: 1], under: :issue_detail)
+
+    assert member_count(IssueComments, issue_id: 1) == 1
+    assert load_count(:comments, 1) == 2
+
+    socket = Live.remove_component(socket, :issue_detail)
+
+    assert member_count(IssueComments, issue_id: 1) == 1
+
+    change = inserted_comment(1, 1)
+    assert :ok = Upkeep.notify(change)
+    assert_receive {:upkeep_event, ^change}
+
+    :ets.insert(table, {{:comments, 1}, [:comment_a, :comment_c]})
+
+    socket =
+      socket
+      |> Live.queue_matching(change)
+      |> Live.flush_refreshes()
+
+    assert socket.assigns.comments == [:comment_a, :comment_c]
+    assert load_count(:comments, 1) == 3
+
+    _socket = Live.unwatch(socket, :comments)
+
+    assert member_count(IssueComments, issue_id: 1) == 0
+  end
+
   defp new_socket, do: %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
 
   def table_value(key) do
@@ -337,6 +426,10 @@ defmodule Upkeep.LiveRefreshTest do
 
   defp load_count(source) do
     table_value({:loads, source, 1})
+  end
+
+  defp load_count(source, id) do
+    table_value({:loads, source, id})
   end
 
   defp updated_issue(project_id, issue_id) do
