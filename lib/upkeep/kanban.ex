@@ -1,6 +1,6 @@
 defmodule Upkeep.Kanban do
   @moduledoc """
-  Small in-memory kanban domain used to pressure-test Upkeep's LiveView runtime.
+  Small in-memory kanban domain used by Upkeep's LiveView reference app.
   """
 
   use Agent

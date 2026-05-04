@@ -1,6 +1,6 @@
 # Upkeep
 
-Upkeep is a Phoenix/LiveView experiment in domain-reactive server UI: rendered
+Upkeep is a Phoenix/LiveView runtime for domain-reactive server UI: rendered
 views watch named sources, mutations emit domain facts, and sources own their
 invalidation semantics.
 

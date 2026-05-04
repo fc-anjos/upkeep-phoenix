@@ -3,6 +3,6 @@ defmodule UpkeepWeb.PageControllerTest do
 
   test "GET /", %{conn: conn} do
     conn = get(conn, ~p"/")
-    assert html_response(conn, 200) =~ "Peace of mind from prototype to production"
+    assert html_response(conn, 200) =~ "Peace of mind for production Phoenix applications"
   end
 end

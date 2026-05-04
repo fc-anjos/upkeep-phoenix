@@ -90,7 +90,7 @@ defmodule UpkeepWeb.KanbanLive do
       <div class="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
         <header class="flex flex-col gap-3 border-b border-zinc-300 pb-4 md:flex-row md:items-end md:justify-between">
           <div>
-            <p class="text-sm font-semibold text-zinc-500">Upkeep demo</p>
+            <p class="text-sm font-semibold text-zinc-500">Upkeep reference app</p>
             <h1 class="text-2xl font-bold tracking-normal">Project board</h1>
             <p class="mt-1 text-sm text-zinc-600">
               {@board_badge} · {@board_stats.assigned_count} assigned

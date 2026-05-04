@@ -45,12 +45,12 @@ defmodule UpkeepWeb.KanbanLiveTest do
     {:ok, view, _html} = live(conn, ~p"/kanban")
 
     view
-    |> form("form[phx-submit='create_issue']", issue: %{title: "Wire kanban demo"})
+    |> form("form[phx-submit='create_issue']", issue: %{title: "Wire kanban board"})
     |> render_submit()
 
     html = render(view)
-    assert html =~ "Wire kanban demo"
-    assert html =~ "Created Wire kanban demo"
+    assert html =~ "Wire kanban board"
+    assert html =~ "Created Wire kanban board"
     assert html =~ "3 open issues"
   end
 
@@ -144,12 +144,12 @@ defmodule UpkeepWeb.KanbanLiveTest do
 
     view
     |> form("form[phx-submit='add_comment']",
-      comment: %{body: "This proves comments source refreshes."}
+      comment: %{body: "This confirms comments source refreshes."}
     )
     |> render_submit()
 
     html = render(view)
-    assert html =~ "This proves comments source refreshes."
+    assert html =~ "This confirms comments source refreshes."
     assert html =~ "Commented on Shape source API"
     assert html =~ "2 comments"
 
@@ -161,7 +161,7 @@ defmodule UpkeepWeb.KanbanLiveTest do
     assert html =~ "Archived Shape source API"
     refute html =~ ~s(id="issue-10")
     assert html =~ "No issue selected"
-    refute html =~ "This proves comments source refreshes."
+    refute html =~ "This confirms comments source refreshes."
     assert html =~ "1 open issue"
   end
 

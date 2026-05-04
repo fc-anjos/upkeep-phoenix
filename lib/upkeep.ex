@@ -1,6 +1,6 @@
 defmodule Upkeep do
   @moduledoc """
-  Domain-reactive LiveView runtime prototype.
+  Domain-reactive LiveView runtime.
   """
 
   defdelegate mutate(fun), to: Upkeep.Mutation
