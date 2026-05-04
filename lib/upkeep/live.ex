@@ -90,10 +90,10 @@ defmodule Upkeep.Live do
     end
   end
 
-  def component(socket, component_name, deps, fun)
-      when is_atom(component_name) and is_list(deps) and is_function(fun, 1) do
+  def component(socket, component_id, deps, fun)
+      when not is_nil(component_id) and is_list(deps) and is_function(fun, 1) do
     {dep_node_ids, dep_pairs} = dependency_nodes(socket, deps)
-    node_id = component_node_id(component_name)
+    node_id = component_node_id(component_id)
 
     compute = fn node_values ->
       dep_pairs
@@ -106,11 +106,17 @@ defmodule Upkeep.Live do
       |> dag()
       |> Upkeep.DAG.put_component(node_id, dep_node_ids, compute)
 
-    put_dag(socket, dag)
+    value = Upkeep.DAG.fetch!(dag, node_id)
+    dag = put_component_assign_nodes(dag, component_id, value)
+
+    socket
+    |> put_dag(dag)
+    |> assign_component_value(node_id, value)
+    |> assign_component_assign_values(component_id, value)
   end
 
-  def remove_component(socket, component_name) when is_atom(component_name) do
-    node_id = component_node_id(component_name)
+  def remove_component(socket, component_id) when not is_nil(component_id) do
+    node_id = component_node_id(component_id)
     removed_node_ids = [node_id | Upkeep.DAG.downstream_ids(dag(socket), node_id)]
 
     socket =
@@ -262,8 +268,58 @@ defmodule Upkeep.Live do
 
     socket
     |> put_dag(dag)
+    |> remove_changed_component_watches(changed_derived_nodes)
     |> assign_derived_nodes(changed_derived_nodes)
   end
+
+  defp remove_changed_component_watches(socket, node_ids) do
+    node_ids
+    |> Enum.filter(&component_node?/1)
+    |> Enum.map(fn {:component, component_id} -> component_id end)
+    |> Enum.reduce(socket, fn component_id, socket ->
+      socket
+      |> watches()
+      |> Enum.filter(fn {_source_id, watch} -> watch.component == component_id end)
+      |> Enum.reduce(socket, fn {source_id, _watch}, socket -> remove_watch(socket, source_id) end)
+    end)
+  end
+
+  defp component_node?({:component, _component_id}), do: true
+  defp component_node?(_node_id), do: false
+
+  defp put_component_assign_nodes(dag, component_id, value) when is_map(value) do
+    component_node_id = component_node_id(component_id)
+
+    Enum.reduce(value, dag, fn
+      {assign_name, _assign_value}, dag when is_atom(assign_name) ->
+        assign_node_id = component_assign_node_id(component_id, assign_name)
+
+        Upkeep.DAG.put_derived(dag, assign_node_id, [component_node_id], fn node_values ->
+          node_values
+          |> Map.fetch!(component_node_id)
+          |> Map.fetch!(assign_name)
+        end)
+
+      {_assign_name, _assign_value}, dag ->
+        dag
+    end)
+  end
+
+  defp put_component_assign_nodes(dag, _component_id, _value), do: dag
+
+  defp assign_component_assign_values(socket, component_id, value) when is_map(value) do
+    Enum.reduce(value, socket, fn
+      {assign_name, assign_value}, socket when is_atom(assign_name) ->
+        socket
+        |> put_assign_node(assign_name, component_assign_node_id(component_id, assign_name))
+        |> assign(assign_name, assign_value)
+
+      {_assign_name, _assign_value}, socket ->
+        socket
+    end)
+  end
+
+  defp assign_component_assign_values(socket, _component_id, _value), do: socket
 
   defp assign_derived_nodes(socket, node_ids) do
     Enum.reduce(node_ids, socket, fn node_id, socket ->
@@ -528,12 +584,15 @@ defmodule Upkeep.Live do
   defp derived_node_id(assign_name), do: {:derived, assign_name}
   defp component_node_id(component_name), do: {:component, component_name}
 
+  defp component_assign_node_id(component_name, assign_name),
+    do: {:component_assign, component_name, assign_name}
+
   defp source_deps(nil), do: []
   defp source_deps(component), do: [component_node_id(component)]
 
   defp scoped_source_id(source, params, nil), do: Source.source_id(source, params)
 
-  defp scoped_source_id(source, params, component) when is_atom(component) do
+  defp scoped_source_id(source, params, component) when not is_nil(component) do
     {:scoped, component, Source.source_id(source, params)}
   end
 

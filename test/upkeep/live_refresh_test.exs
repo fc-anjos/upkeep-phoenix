@@ -404,6 +404,108 @@ defmodule Upkeep.LiveRefreshTest do
     assert member_count(IssueComments, issue_id: 2) == 1
   end
 
+  test "function component identity can scope sources without an Upkeep frame", %{table: table} do
+    component_id = {__MODULE__.IssueComponents, :issue_card, 1}
+
+    socket =
+      new_socket()
+      |> Live.component(component_id, [], fn %{} -> %{issue_id: 1} end)
+      |> Live.watch(:issue_card_comments, IssueComments, [issue_id: 1], under: component_id)
+      |> Live.derive(:issue_card_comment_count, [:issue_card_comments], fn %{
+                                                                             issue_card_comments:
+                                                                               comments
+                                                                           } ->
+        length(comments)
+      end)
+
+    assert socket.assigns.issue_card_comments == [:comment_a]
+    assert socket.assigns.issue_card_comment_count == 1
+    assert member_count(IssueComments, issue_id: 1) == 1
+
+    snapshot = Live.graph_snapshot(socket)
+    source_id = {:scoped, component_id, {IssueComments, %{issue_id: 1}}}
+
+    assert %{id: {:component, ^component_id}, kind: :component} =
+             Enum.find(snapshot.dag.nodes, &(&1.id == {:component, component_id}))
+
+    assert %{from: {:component, ^component_id}, to: {:source, ^source_id}} =
+             Enum.find(snapshot.dag.edges, &(&1.to == {:source, source_id}))
+
+    socket = Live.remove_component(socket, component_id)
+
+    assert member_count(IssueComments, issue_id: 1) == 0
+
+    :ets.insert(table, {{:comments, 1}, [:comment_a, :comment_c]})
+
+    socket =
+      socket
+      |> Live.queue_matching(inserted_comment(1, 1))
+      |> Live.flush_refreshes()
+
+    assert socket.assigns.issue_card_comments == [:comment_a]
+    assert socket.assigns.issue_card_comment_count == 1
+    assert load_count(:comments, 1) == 1
+  end
+
+  test "function component input changes remove stale scoped source reads", %{table: table} do
+    component_id = {__MODULE__.IssueComponents, :issue_card, 1}
+    :ets.insert(table, {{:issues, 1}, [1]})
+
+    socket =
+      new_socket()
+      |> Live.watch(:issues, ProjectIssues, project_id: 1)
+      |> Live.component(component_id, [:issues], fn %{issues: [issue_id | _]} ->
+        %{issue_id: issue_id}
+      end)
+      |> Live.derive(:issue_label, [:issue_id], fn %{issue_id: issue_id} ->
+        "issue #{issue_id}"
+      end)
+      |> Live.watch(:issue_card_comments, IssueComments, [issue_id: 1], under: component_id)
+
+    assert socket.assigns.issue_id == 1
+    assert socket.assigns.issue_label == "issue 1"
+    assert socket.assigns.issue_card_comments == [:comment_a]
+    assert member_count(IssueComments, issue_id: 1) == 1
+
+    :ets.insert(table, {{:issues, 1}, [1, :unchanged_component_value]})
+
+    socket =
+      socket
+      |> Live.queue_matching(updated_issue(1, 1))
+      |> Live.flush_refreshes()
+
+    assert socket.assigns.issue_id == 1
+    assert socket.assigns.issue_label == "issue 1"
+    assert member_count(IssueComments, issue_id: 1) == 1
+
+    :ets.insert(table, {{:issues, 1}, [2]})
+
+    socket =
+      socket
+      |> Live.queue_matching(updated_issue(1, 1))
+      |> Live.flush_refreshes()
+
+    assert socket.assigns.issue_id == 2
+    assert socket.assigns.issue_label == "issue 2"
+    assert member_count(IssueComments, issue_id: 1) == 0
+
+    :ets.insert(table, {{:comments, 1}, [:comment_a, :comment_c]})
+
+    socket =
+      socket
+      |> Live.queue_matching(inserted_comment(1, 1))
+      |> Live.flush_refreshes()
+
+    assert socket.assigns.issue_card_comments == [:comment_a]
+    assert load_count(:comments, 1) == 1
+
+    socket =
+      Live.watch(socket, :issue_card_comments, IssueComments, [issue_id: 2], under: component_id)
+
+    assert socket.assigns.issue_card_comments == [:comment_b]
+    assert member_count(IssueComments, issue_id: 2) == 1
+  end
+
   test "removing component-scoped source preserves shared source interest", %{table: table} do
     socket =
       new_socket()
