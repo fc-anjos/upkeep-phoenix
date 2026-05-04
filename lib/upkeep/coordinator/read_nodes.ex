@@ -25,6 +25,7 @@ defmodule Upkeep.Coordinator.ReadNodes do
   the `Upkeep.Coordinator.Graph` supervisor and share its lifecycle.
   """
 
+  alias Upkeep.Coordinator.ReadNodes.Coalescer
   alias Upkeep.Ecto.QueryDeps
 
   @values :upkeep_read_node_values
@@ -58,15 +59,26 @@ defmodule Upkeep.Coordinator.ReadNodes do
         value
 
       [] ->
-        deps = QueryDeps.from_query(query)
-        value = repo.all(query)
-        :ets.insert(@values, {node_id, value})
+        Coalescer.coalesce(node_id, fn ->
+          # Re-check ETS inside the single-flight critical section: a
+          # concurrent caller may have settled while we waited to be the
+          # loader.
+          case :ets.lookup(@values, node_id) do
+            [{^node_id, value}] ->
+              value
 
-        Enum.each(coarse_keys(deps), fn key ->
-          :ets.insert(@index, {key, {node_id, deps}})
+            [] ->
+              deps = QueryDeps.from_query(query)
+              value = repo.all(query)
+              :ets.insert(@values, {node_id, value})
+
+              Enum.each(coarse_keys(deps), fn key ->
+                :ets.insert(@index, {key, {node_id, deps}})
+              end)
+
+              value
+          end
         end)
-
-        value
     end
   end
 

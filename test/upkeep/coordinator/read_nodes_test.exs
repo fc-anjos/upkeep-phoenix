@@ -115,4 +115,100 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
 
     assert ReadNodes.count() == 0
   end
+
+  test "concurrent fetch_or_load for the same query collapses into one DB hit" do
+    for id <- 1..50, do: Repo.insert!(%Project{id: id, name: "p#{id}"})
+
+    counter = :counters.new(1, [])
+    handler_id = {__MODULE__, :coalesce_test}
+
+    :telemetry.attach(
+      handler_id,
+      [:upkeep, :repo, :query],
+      fn _event, _measurements, _meta, _config -> :counters.add(counter, 1, 1) end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    parent = self()
+    barrier = make_ref()
+    n = 25
+
+    pids =
+      for i <- 1..n do
+        spawn_link(fn ->
+          # Each task builds the query in its own process to mimic
+          # independent LV mounts that don't share Ecto state.
+          q = from(p in Project, where: p.id <= 50)
+          send(parent, {:ready, i})
+
+          receive do
+            {^barrier, :go} -> :ok
+          end
+
+          rows = ReadNodes.fetch_or_load(Repo, q)
+          send(parent, {:done, i, length(rows)})
+        end)
+      end
+
+    for i <- 1..n, do: assert_receive({:ready, ^i}, 5_000)
+    Enum.each(pids, fn pid -> send(pid, {barrier, :go}) end)
+
+    for i <- 1..n, do: assert_receive({:done, ^i, 50}, 10_000)
+
+    assert :counters.get(counter, 1) == 1
+    assert ReadNodes.count() == 1
+  end
+
+  test "loader exception propagates to all waiters and clears pending state" do
+    parent = self()
+    barrier = make_ref()
+    n = 5
+
+    # Replace the fetch_or_load body with a function that throws by
+    # talking to the coalescer directly — keeps this test independent of
+    # ReadNodes' real load path.
+    bad_node = {:read, :test_repo, :erlang.unique_integer()}
+
+    spawner = fn ->
+      for i <- 1..n do
+        spawn_link(fn ->
+          send(parent, {:ready, i})
+
+          receive do
+            {^barrier, :go} -> :ok
+          end
+
+          try do
+            Upkeep.Coordinator.ReadNodes.Coalescer.coalesce(bad_node, fn ->
+              if i == 1 do
+                raise "boom"
+              else
+                :unreachable
+              end
+            end)
+
+            send(parent, {:done, i, :ok})
+          rescue
+            e -> send(parent, {:done, i, {:error, Exception.message(e)}})
+          end
+        end)
+      end
+    end
+
+    pids = spawner.()
+    for i <- 1..n, do: assert_receive({:ready, ^i}, 5_000)
+    Enum.each(pids, fn pid -> send(pid, {barrier, :go}) end)
+
+    results =
+      for _ <- 1..n do
+        assert_receive({:done, _i, outcome}, 5_000)
+        outcome
+      end
+
+    # All callers got :error (loader raised, waiters re-raise the same).
+    assert Enum.all?(results, &match?({:error, "boom"}, &1))
+    refute Upkeep.Coordinator.ReadNodes.Coalescer.pending?(bad_node)
+  end
 end

@@ -363,6 +363,7 @@ defmodule Upkeep.Coordinator.Graph do
     Enum.each(ReadNodes.table_specs(), fn {name, opts} -> ensure_table(name, opts) end)
 
     children = [
+      Upkeep.Coordinator.ReadNodes.Coalescer,
       {Task.Supervisor, name: task_sup()}
       | for idx <- 0..(shards - 1) do
           Supervisor.child_spec(
