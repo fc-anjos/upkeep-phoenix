@@ -424,44 +424,60 @@ defmodule Upkeep.Coordinator.GraphTest do
       Graph.unregister(source_id)
     end
 
-    test "raises when deps span multiple shards" do
+    test "raises with a dependency plan when deps span multiple shards" do
       shards = Graph.shard_count()
 
-      # Find two source ids whose phash2 lands on different shards.
-      [src_a, src_b] = pick_split_pair(shards)
+      [src_a, src_b, src_c] = pick_colocated_split_triple(shards)
 
       keys_a = [narrow_key(%Ev{id: 1, tenant_id: 1})]
       keys_b = [narrow_key(%Ev{id: 2, tenant_id: 1})]
+      keys_c = [narrow_key(%Ev{id: 3, tenant_id: 1})]
 
       :ok = Graph.register_loader(src_a, keys_a, fn -> {nil, keys_a} end)
       :ok = Graph.register_loader(src_b, keys_b, fn -> {nil, keys_b} end)
+      :ok = Graph.register_loader(src_c, keys_c, fn -> {nil, keys_c} end)
 
-      assert_raise ArgumentError, ~r/split across shards/, fn ->
-        Graph.register_derived(
-          {:der_split, System.unique_integer()},
-          [src_a, src_b],
-          fn _ -> :unreachable end
-        )
-      end
+      error =
+        assert_raise ArgumentError, fn ->
+          Graph.register_derived(
+            {:der_split, System.unique_integer()},
+            [src_a, src_b, src_c],
+            fn _ -> :unreachable end
+          )
+        end
+
+      message = Exception.message(error)
+
+      assert message =~ "deps split across shards"
+      assert message =~ "largest colocated dependency group"
+      assert message =~ inspect(src_a)
+      assert message =~ inspect(src_c)
+      assert message =~ "cross-shard recompute is not implemented"
 
       Graph.unregister(src_a)
       Graph.unregister(src_b)
+      Graph.unregister(src_c)
     end
   end
 
-  defp pick_split_pair(shards) when shards >= 2 do
-    a = {:src_a, System.unique_integer()}
+  defp pick_colocated_split_triple(shards) when shards >= 2 do
+    candidates = Stream.map(1..10_000, &{:src, &1, System.unique_integer()})
 
-    b =
-      Stream.iterate(1, &(&1 + 1))
-      |> Enum.find_value(fn n ->
-        candidate = {:src_b, n}
+    groups =
+      candidates
+      |> Enum.take(10_000)
+      |> Enum.group_by(&generic_node_shard(&1, shards))
 
-        if :erlang.phash2(candidate, shards) != :erlang.phash2(a, shards),
-          do: candidate
-      end)
+    {same_shard, [a, c | _]} = Enum.find(groups, fn {_shard, ids} -> length(ids) >= 2 end)
 
-    [a, b]
+    {_other_shard, [b | _]} =
+      Enum.find(groups, fn {shard, ids} -> shard != same_shard and ids != [] end)
+
+    [a, b, c]
+  end
+
+  defp generic_node_shard(node_id, shards) do
+    :erlang.phash2({:node, node_id}, shards)
   end
 
   defp start_subscribers(count, register_fn) do

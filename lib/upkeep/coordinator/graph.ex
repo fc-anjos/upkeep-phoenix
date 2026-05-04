@@ -158,7 +158,9 @@ defmodule Upkeep.Coordinator.Graph do
   end
 
   defp derived_shard!(node_id, dep_node_ids) do
-    case dep_node_ids |> Enum.map(&shard_of_node/1) |> Enum.uniq() do
+    plan = dependency_shard_plan(dep_node_ids)
+
+    case Enum.map(plan, & &1.shard) do
       [shard] ->
         shard
 
@@ -169,9 +171,45 @@ defmodule Upkeep.Coordinator.Graph do
       multiple ->
         raise ArgumentError,
               "register_derived/3 for #{inspect(node_id)} has deps split across shards " <>
-                "#{inspect(multiple)}. Reshape node_ids so all deps share a shard, or " <>
-                "wait for cross-shard recompute support."
+                "#{inspect(multiple)}. #{dependency_plan_message(plan)} " <>
+                "cross-shard recompute is not implemented yet."
     end
+  end
+
+  @doc false
+  def dependency_shard_plan(dep_node_ids) when is_list(dep_node_ids) do
+    dep_node_ids
+    |> Enum.group_by(&shard_of_node/1)
+    |> Enum.map(fn {shard, node_ids} ->
+      %{
+        shard: shard,
+        node_ids: node_ids,
+        count: length(node_ids),
+        node_partitions: Enum.map(node_ids, &{&1, node_partition(&1)})
+      }
+    end)
+    |> Enum.sort_by(&{-&1.count, &1.shard})
+  end
+
+  defp dependency_plan_message(plan) do
+    largest_count =
+      plan
+      |> Enum.map(& &1.count)
+      |> Enum.max(fn -> 0 end)
+
+    largest_groups = Enum.filter(plan, &(&1.count == largest_count))
+
+    "The largest colocated dependency group is " <>
+      format_dependency_groups(largest_groups) <>
+      ". Reshape the derived node around the largest group, or keep this compute local. "
+  end
+
+  defp format_dependency_groups(groups) do
+    groups
+    |> Enum.map(fn group ->
+      "shard #{group.shard} with #{group.count} dep(s): #{inspect(group.node_ids)}"
+    end)
+    |> Enum.join("; ")
   end
 
   @doc """
