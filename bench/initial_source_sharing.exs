@@ -6,7 +6,7 @@
 # coordinator API. Concurrent same `{source, params}` identities should share one
 # in-flight load. Distinct params should still load independently.
 
-Application.ensure_all_started(:upkeep)
+Code.require_file("support/initial_sharing.exs", __DIR__)
 
 defmodule Bench.InitialSourceSharing.Event do
   defstruct [:scope]
@@ -17,7 +17,7 @@ defmodule Bench.InitialSourceSharing.Source do
 
   def load(params) do
     if Map.get(params, :block?) do
-      send(params.test_pid, {:bench_load_started, self()})
+      send(params.test_pid, {:bench_load_started, self(), params.run_id})
 
       receive do
         :continue -> :ok
@@ -26,7 +26,7 @@ defmodule Bench.InitialSourceSharing.Source do
       end
     end
 
-    :counters.add(params.counter, 1, 1)
+    Bench.InitialSharingSupport.bump(params.counter)
     params.value
   end
 
@@ -39,71 +39,37 @@ defmodule Bench.InitialSourceSharing do
 
   def run(watches) do
     test_pid = self()
-    same_counter = :counters.new(1, [:atomics])
-    distinct_counter = :counters.new(1, [:atomics])
+    same_counter = Bench.InitialSharingSupport.counter()
+    distinct_counter = Bench.InitialSharingSupport.counter()
     run_id = System.unique_integer([:positive])
 
     {same_us, same_loads} =
-      timed(fn ->
-        first =
-          Task.async(fn ->
-            socket()
-            |> Live.watch(:value, Source,
-              scope: {:same, run_id},
-              counter: same_counter,
-              value: {:shared_value, run_id},
-              block?: true,
-              test_pid: test_pid
-            )
-          end)
+      Bench.InitialSharingSupport.timed(fn ->
+        {loader_pid, tasks} =
+          Bench.InitialSharingSupport.start_first_and_joiners(
+            watches,
+            fn -> watch_same(run_id, same_counter, test_pid) end,
+            fn -> Bench.InitialSharingSupport.wait_for_started(:bench_load_started, run_id) end
+          )
 
-        loader_pid =
-          receive do
-            {:bench_load_started, loader_pid} -> loader_pid
-          after
-            5_000 -> raise "benchmark initial load did not start"
-          end
-
-        loader_pid
-        |> then(fn loader_pid ->
-          tasks =
-            for _ <- 2..watches do
-              Task.async(fn ->
-                socket()
-                |> Live.watch(:value, Source,
-                  scope: {:same, run_id},
-                  counter: same_counter,
-                  value: {:shared_value, run_id},
-                  block?: true,
-                  test_pid: test_pid
-                )
-              end)
-            end
-
-          # Give the spawned connected watches time to join the in-flight load.
-          # This benchmark intentionally measures single-flight behavior, not
-          # sequential cache reuse.
-          Process.sleep(250)
-          send(loader_pid, :continue)
-          Task.await(first, 10_000)
-          Enum.each(tasks, &Task.await(&1, 10_000))
-        end)
-
-        :counters.get(same_counter, 1)
+        Bench.InitialSharingSupport.release(loader_pid)
+        Bench.InitialSharingSupport.await_all(tasks)
+        Bench.InitialSharingSupport.counter_value(same_counter)
       end)
 
     {distinct_us, distinct_loads} =
-      timed(fn ->
+      Bench.InitialSharingSupport.timed(fn ->
         Enum.each(1..watches, fn idx ->
-          socket()
+          Bench.InitialSharingSupport.socket()
           |> Live.watch(:value, Source,
             scope: {:distinct, run_id, idx},
+            run_id: run_id,
             counter: distinct_counter,
             value: {:distinct_value, run_id, idx}
           )
         end)
 
-        :counters.get(distinct_counter, 1)
+        Bench.InitialSharingSupport.counter_value(distinct_counter)
       end)
 
     %{
@@ -115,55 +81,41 @@ defmodule Bench.InitialSourceSharing do
     }
   end
 
-  defp timed(fun) do
-    {us, loads} = :timer.tc(fun)
-    {us, loads}
-  end
-
-  defp socket do
-    %Phoenix.LiveView.Socket{
-      endpoint: UpkeepWeb.Endpoint,
-      view: UpkeepWeb.KanbanLive,
-      transport_pid: self(),
-      assigns: %{__changed__: %{}}
-    }
+  defp watch_same(run_id, counter, test_pid) do
+    Bench.InitialSharingSupport.socket()
+    |> Live.watch(:value, Source,
+      scope: {:same, run_id},
+      run_id: run_id,
+      counter: counter,
+      value: {:shared_value, run_id},
+      block?: true,
+      test_pid: test_pid
+    )
   end
 end
 
-watches = 1_000
+watches = Bench.InitialSharingSupport.default_watches()
 result = Bench.InitialSourceSharing.run(watches)
 
-IO.puts("connected_watches=#{result.watches}")
-IO.puts("")
-IO.puts("#{String.pad_trailing("case", 12)} #{String.pad_trailing("loads", 8)} elapsed_ms")
-
-IO.puts(
+Bench.InitialSharingSupport.print_table(
+  "connected_watches=#{result.watches}",
+  ["loads"],
   [
-    String.pad_trailing("same", 12),
-    String.pad_trailing(Integer.to_string(result.same_loads), 8),
-    :erlang.float_to_binary(result.same_us / 1_000, decimals: 2)
+    {"same", [result.same_loads], result.same_us},
+    {"distinct", [result.distinct_loads], result.distinct_us}
   ]
-  |> Enum.join(" ")
 )
 
-IO.puts(
-  [
-    String.pad_trailing("distinct", 12),
-    String.pad_trailing(Integer.to_string(result.distinct_loads), 8),
-    :erlang.float_to_binary(result.distinct_us / 1_000, decimals: 2)
-  ]
-  |> Enum.join(" ")
+Bench.InitialSharingSupport.assert_equal!(
+  result.same_loads,
+  1,
+  "same source identity loaded #{result.same_loads} times"
 )
 
-cond do
-  result.same_loads != 1 ->
-    IO.puts("\nFAIL: same source identity loaded #{result.same_loads} times")
-    System.halt(1)
+Bench.InitialSharingSupport.assert_equal!(
+  result.distinct_loads,
+  watches,
+  "distinct source identities loaded #{result.distinct_loads} times"
+)
 
-  result.distinct_loads != watches ->
-    IO.puts("\nFAIL: distinct source identities loaded #{result.distinct_loads} times")
-    System.halt(1)
-
-  true ->
-    IO.puts("\nOK")
-end
+Bench.InitialSharingSupport.ok()

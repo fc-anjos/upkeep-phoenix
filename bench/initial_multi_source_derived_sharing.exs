@@ -12,7 +12,7 @@
 # dashboard compute. Distinct source identities should still compute
 # independently.
 
-Application.ensure_all_started(:upkeep)
+Code.require_file("support/initial_sharing.exs", __DIR__)
 
 defmodule Bench.InitialMultiSourceDerivedSharing.Event do
   defstruct [:scope]
@@ -31,7 +31,7 @@ defmodule Bench.InitialMultiSourceDerivedSharing.Compute do
 
   def dashboard(%{stats: %{run_id: run_id, stats: stats}, activity: activity}) do
     [{_, counter}] = :ets.lookup(@table, {:counter, run_id, :dashboard})
-    :counters.add(counter, 1, 1)
+    Bench.InitialSharingSupport.bump(counter)
 
     case :ets.lookup(@table, {:test_pid, run_id}) do
       [{_, test_pid}] ->
@@ -58,59 +58,44 @@ defmodule Bench.InitialMultiSourceDerivedSharing do
   @table Bench.InitialMultiSourceDerivedSharing.Table
 
   def run(watches) do
-    ensure_table()
+    Bench.InitialSharingSupport.ensure_table(@table)
 
     test_pid = self()
-    same_dashboard_counter = :counters.new(1, [:atomics])
-    distinct_dashboard_counter = :counters.new(1, [:atomics])
+    same_dashboard_counter = Bench.InitialSharingSupport.counter()
+    distinct_dashboard_counter = Bench.InitialSharingSupport.counter()
     same_run_id = System.unique_integer([:positive])
     :ets.insert(@table, {{:counter, same_run_id, :dashboard}, same_dashboard_counter})
     :ets.insert(@table, {{:test_pid, same_run_id}, test_pid})
 
     {same_us, same_dashboard_computes} =
-      timed(fn ->
-        first =
-          Task.async(fn ->
-            socket()
-            |> watch_dashboard_sources(same_run_id, {:same, same_run_id})
-            |> Live.derive(:dashboard_model, [:stats, :activity], &Compute.dashboard/1)
-          end)
+      Bench.InitialSharingSupport.timed(fn ->
+        {dashboard_pid, tasks} =
+          Bench.InitialSharingSupport.start_first_and_joiners(
+            watches,
+            fn -> watch_dashboard(same_run_id, {:same, same_run_id}) end,
+            fn ->
+              Bench.InitialSharingSupport.wait_for_started(
+                :bench_dashboard_started,
+                same_run_id
+              )
+            end
+          )
 
-        dashboard_pid =
-          receive do
-            {:bench_dashboard_started, dashboard_pid, ^same_run_id} -> dashboard_pid
-          after
-            5_000 -> raise "benchmark dashboard derive did not start"
-          end
-
-        tasks =
-          for _ <- 2..watches do
-            Task.async(fn ->
-              socket()
-              |> watch_dashboard_sources(same_run_id, {:same, same_run_id})
-              |> Live.derive(:dashboard_model, [:stats, :activity], &Compute.dashboard/1)
-            end)
-          end
-
-        Process.sleep(250)
-        send(dashboard_pid, :continue)
-        Task.await(first, 10_000)
-        Enum.each(tasks, &Task.await(&1, 10_000))
-        :counters.get(same_dashboard_counter, 1)
+        Bench.InitialSharingSupport.release(dashboard_pid)
+        Bench.InitialSharingSupport.await_all(tasks)
+        Bench.InitialSharingSupport.counter_value(same_dashboard_counter)
       end)
 
     {distinct_us, distinct_dashboard_computes} =
-      timed(fn ->
+      Bench.InitialSharingSupport.timed(fn ->
         Enum.each(1..watches, fn idx ->
           run_id = System.unique_integer([:positive])
           :ets.insert(@table, {{:counter, run_id, :dashboard}, distinct_dashboard_counter})
 
-          socket()
-          |> watch_dashboard_sources(run_id, {:distinct, idx})
-          |> Live.derive(:dashboard_model, [:stats, :activity], &Compute.dashboard/1)
+          watch_dashboard(run_id, {:distinct, idx})
         end)
 
-        :counters.get(distinct_dashboard_counter, 1)
+        Bench.InitialSharingSupport.counter_value(distinct_dashboard_counter)
       end)
 
     %{
@@ -120,6 +105,12 @@ defmodule Bench.InitialMultiSourceDerivedSharing do
       distinct_us: distinct_us,
       distinct_dashboard_computes: distinct_dashboard_computes
     }
+  end
+
+  defp watch_dashboard(run_id, scope) do
+    Bench.InitialSharingSupport.socket()
+    |> watch_dashboard_sources(run_id, scope)
+    |> Live.derive(:dashboard_model, [:stats, :activity], &Compute.dashboard/1)
   end
 
   defp watch_dashboard_sources(socket, run_id, scope) do
@@ -133,70 +124,30 @@ defmodule Bench.InitialMultiSourceDerivedSharing do
       value: %{run_id: run_id, items: [:deploy, :comment]}
     )
   end
-
-  defp timed(fun) do
-    {us, result} = :timer.tc(fun)
-    {us, result}
-  end
-
-  defp ensure_table do
-    case :ets.info(@table) do
-      :undefined -> :ets.new(@table, [:set, :public, :named_table])
-      _ -> :ets.delete_all_objects(@table)
-    end
-  end
-
-  defp socket do
-    %Phoenix.LiveView.Socket{
-      endpoint: UpkeepWeb.Endpoint,
-      view: UpkeepWeb.KanbanLive,
-      transport_pid: self(),
-      assigns: %{__changed__: %{}}
-    }
-  end
 end
 
-watches = 1_000
+watches = Bench.InitialSharingSupport.default_watches()
 result = Bench.InitialMultiSourceDerivedSharing.run(watches)
 
-IO.puts("connected_multi_source_derives=#{result.watches}")
-IO.puts("")
-
-IO.puts("#{String.pad_trailing("case", 12)} #{String.pad_trailing("dashboard", 10)} elapsed_ms")
-
-IO.puts(
+Bench.InitialSharingSupport.print_table(
+  "connected_multi_source_derives=#{result.watches}",
+  ["dashboard"],
   [
-    String.pad_trailing("same", 12),
-    String.pad_trailing(Integer.to_string(result.same_dashboard_computes), 10),
-    :erlang.float_to_binary(result.same_us / 1_000, decimals: 2)
+    {"same", [result.same_dashboard_computes], result.same_us},
+    {"distinct", [result.distinct_dashboard_computes], result.distinct_us}
   ]
-  |> Enum.join(" ")
 )
 
-IO.puts(
-  [
-    String.pad_trailing("distinct", 12),
-    String.pad_trailing(Integer.to_string(result.distinct_dashboard_computes), 10),
-    :erlang.float_to_binary(result.distinct_us / 1_000, decimals: 2)
-  ]
-  |> Enum.join(" ")
+Bench.InitialSharingSupport.assert_equal!(
+  result.same_dashboard_computes,
+  1,
+  "same multi-source derived identity computed #{result.same_dashboard_computes} times"
 )
 
-cond do
-  result.same_dashboard_computes != 1 ->
-    IO.puts(
-      "\nFAIL: same multi-source derived identity computed #{result.same_dashboard_computes} times"
-    )
+Bench.InitialSharingSupport.assert_equal!(
+  result.distinct_dashboard_computes,
+  watches,
+  "distinct multi-source derived identities computed #{result.distinct_dashboard_computes} times"
+)
 
-    System.halt(1)
-
-  result.distinct_dashboard_computes != watches ->
-    IO.puts(
-      "\nFAIL: distinct multi-source derived identities computed #{result.distinct_dashboard_computes} times"
-    )
-
-    System.halt(1)
-
-  true ->
-    IO.puts("\nOK")
-end
+Bench.InitialSharingSupport.ok()

@@ -7,7 +7,7 @@
 # share one in-flight initial derived compute. Distinct source params should
 # still compute independently.
 
-Application.ensure_all_started(:upkeep)
+Code.require_file("support/initial_sharing.exs", __DIR__)
 
 defmodule Bench.InitialDerivedSharing.Event do
   defstruct [:scope]
@@ -26,7 +26,7 @@ defmodule Bench.InitialDerivedSharing.Compute do
 
   def count(%{issues: [{run_id, _issue} | _] = issues}) do
     [{_, counter}] = :ets.lookup(@table, {:counter, run_id, :count})
-    :counters.add(counter, 1, 1)
+    Bench.InitialSharingSupport.bump(counter)
 
     case :ets.lookup(@table, {:test_pid, run_id}) do
       [{_, test_pid}] ->
@@ -47,7 +47,7 @@ defmodule Bench.InitialDerivedSharing.Compute do
 
   def label(%{issue_count: %{run_id: run_id, count: count}}) do
     [{_, counter}] = :ets.lookup(@table, {:counter, run_id, :label})
-    :counters.add(counter, 1, 1)
+    Bench.InitialSharingSupport.bump(counter)
 
     case :ets.lookup(@table, {:test_pid, run_id}) do
       [{_, test_pid}] ->
@@ -74,85 +74,57 @@ defmodule Bench.InitialDerivedSharing do
   @table Bench.InitialDerivedSharing.Table
 
   def run(watches) do
-    ensure_table()
+    Bench.InitialSharingSupport.ensure_table(@table)
 
     test_pid = self()
-    same_count_counter = :counters.new(1, [:atomics])
-    same_label_counter = :counters.new(1, [:atomics])
-    distinct_count_counter = :counters.new(1, [:atomics])
-    distinct_label_counter = :counters.new(1, [:atomics])
+    same_count_counter = Bench.InitialSharingSupport.counter()
+    same_label_counter = Bench.InitialSharingSupport.counter()
+    distinct_count_counter = Bench.InitialSharingSupport.counter()
+    distinct_label_counter = Bench.InitialSharingSupport.counter()
     same_run_id = System.unique_integer([:positive])
     :ets.insert(@table, {{:counter, same_run_id, :count}, same_count_counter})
     :ets.insert(@table, {{:counter, same_run_id, :label}, same_label_counter})
     :ets.insert(@table, {{:test_pid, same_run_id}, test_pid})
 
     {same_us, {same_count_computes, same_label_computes}} =
-      timed(fn ->
-        first =
-          Task.async(fn ->
-            socket()
-            |> Live.watch(:issues, Source,
-              scope: {:same, same_run_id},
-              value: [{same_run_id, :issue}]
-            )
-            |> Live.derive(:issue_count, [:issues], &Compute.count/1)
-            |> Live.derive(:issue_label, [:issue_count], &Compute.label/1)
-          end)
+      Bench.InitialSharingSupport.timed(fn ->
+        {count_pid, tasks} =
+          Bench.InitialSharingSupport.start_first_and_joiners(
+            watches,
+            fn -> watch_chain(same_run_id) end,
+            fn ->
+              Bench.InitialSharingSupport.wait_for_started(:bench_count_started, same_run_id)
+            end
+          )
 
-        count_pid =
-          receive do
-            {:bench_count_started, count_pid, ^same_run_id} -> count_pid
-          after
-            5_000 -> raise "benchmark initial derive did not start"
-          end
+        Bench.InitialSharingSupport.release(count_pid)
 
-        tasks =
-          for _ <- 2..watches do
-            Task.async(fn ->
-              socket()
-              |> Live.watch(:issues, Source,
-                scope: {:same, same_run_id},
-                value: [{same_run_id, :issue}]
-              )
-              |> Live.derive(:issue_count, [:issues], &Compute.count/1)
-              |> Live.derive(:issue_label, [:issue_count], &Compute.label/1)
-            end)
-          end
+        same_run_id
+        |> then(&Bench.InitialSharingSupport.wait_for_started(:bench_label_started, &1))
+        |> Bench.InitialSharingSupport.release()
 
-        Process.sleep(250)
-        send(count_pid, :continue)
+        Bench.InitialSharingSupport.await_all(tasks)
 
-        label_pid =
-          receive do
-            {:bench_label_started, label_pid, ^same_run_id} -> label_pid
-          after
-            5_000 -> raise "benchmark chained derive did not start"
-          end
-
-        Process.sleep(250)
-        send(label_pid, :continue)
-        Task.await(first, 10_000)
-        Enum.each(tasks, &Task.await(&1, 10_000))
-        {:counters.get(same_count_counter, 1), :counters.get(same_label_counter, 1)}
+        {
+          Bench.InitialSharingSupport.counter_value(same_count_counter),
+          Bench.InitialSharingSupport.counter_value(same_label_counter)
+        }
       end)
 
     {distinct_us, {distinct_count_computes, distinct_label_computes}} =
-      timed(fn ->
+      Bench.InitialSharingSupport.timed(fn ->
         Enum.each(1..watches, fn idx ->
           run_id = System.unique_integer([:positive])
           :ets.insert(@table, {{:counter, run_id, :count}, distinct_count_counter})
           :ets.insert(@table, {{:counter, run_id, :label}, distinct_label_counter})
 
-          socket()
-          |> Live.watch(:issues, Source,
-            scope: {:distinct, idx},
-            value: [{run_id, :issue}]
-          )
-          |> Live.derive(:issue_count, [:issues], &Compute.count/1)
-          |> Live.derive(:issue_label, [:issue_count], &Compute.label/1)
+          watch_chain(run_id, {:distinct, idx})
         end)
 
-        {:counters.get(distinct_count_counter, 1), :counters.get(distinct_label_counter, 1)}
+        {
+          Bench.InitialSharingSupport.counter_value(distinct_count_counter),
+          Bench.InitialSharingSupport.counter_value(distinct_label_counter)
+        }
       end)
 
     %{
@@ -166,73 +138,44 @@ defmodule Bench.InitialDerivedSharing do
     }
   end
 
-  defp timed(fun) do
-    {us, result} = :timer.tc(fun)
-    {us, result}
-  end
+  defp watch_chain(run_id, scope \\ nil)
 
-  defp ensure_table do
-    case :ets.info(@table) do
-      :undefined -> :ets.new(@table, [:set, :public, :named_table])
-      _ -> :ets.delete_all_objects(@table)
-    end
-  end
+  defp watch_chain(run_id, nil), do: watch_chain(run_id, {:same, run_id})
 
-  defp socket do
-    %Phoenix.LiveView.Socket{
-      endpoint: UpkeepWeb.Endpoint,
-      view: UpkeepWeb.KanbanLive,
-      transport_pid: self(),
-      assigns: %{__changed__: %{}}
-    }
+  defp watch_chain(run_id, scope) do
+    Bench.InitialSharingSupport.socket()
+    |> Live.watch(:issues, Source,
+      scope: scope,
+      value: [{run_id, :issue}]
+    )
+    |> Live.derive(:issue_count, [:issues], &Compute.count/1)
+    |> Live.derive(:issue_label, [:issue_count], &Compute.label/1)
   end
 end
 
-watches = 1_000
+watches = Bench.InitialSharingSupport.default_watches()
 result = Bench.InitialDerivedSharing.run(watches)
 
-IO.puts("connected_derives=#{result.watches}")
-IO.puts("")
-
-IO.puts(
-  "#{String.pad_trailing("case", 12)} #{String.pad_trailing("count", 8)} #{String.pad_trailing("label", 8)} elapsed_ms"
-)
-
-IO.puts(
+Bench.InitialSharingSupport.print_table(
+  "connected_derives=#{result.watches}",
+  ["count", "label"],
   [
-    String.pad_trailing("same", 12),
-    String.pad_trailing(Integer.to_string(result.same_count_computes), 8),
-    String.pad_trailing(Integer.to_string(result.same_label_computes), 8),
-    :erlang.float_to_binary(result.same_us / 1_000, decimals: 2)
+    {"same", [result.same_count_computes, result.same_label_computes], result.same_us},
+    {"distinct", [result.distinct_count_computes, result.distinct_label_computes],
+     result.distinct_us}
   ]
-  |> Enum.join(" ")
 )
 
-IO.puts(
-  [
-    String.pad_trailing("distinct", 12),
-    String.pad_trailing(Integer.to_string(result.distinct_count_computes), 8),
-    String.pad_trailing(Integer.to_string(result.distinct_label_computes), 8),
-    :erlang.float_to_binary(result.distinct_us / 1_000, decimals: 2)
-  ]
-  |> Enum.join(" ")
+Bench.InitialSharingSupport.assert_equal!(
+  {result.same_count_computes, result.same_label_computes},
+  {1, 1},
+  "same derived chain computed count=#{result.same_count_computes} label=#{result.same_label_computes} times"
 )
 
-cond do
-  result.same_count_computes != 1 or result.same_label_computes != 1 ->
-    IO.puts(
-      "\nFAIL: same derived chain computed count=#{result.same_count_computes} label=#{result.same_label_computes} times"
-    )
+Bench.InitialSharingSupport.assert_equal!(
+  {result.distinct_count_computes, result.distinct_label_computes},
+  {watches, watches},
+  "distinct derived chains computed count=#{result.distinct_count_computes} label=#{result.distinct_label_computes} times"
+)
 
-    System.halt(1)
-
-  result.distinct_count_computes != watches or result.distinct_label_computes != watches ->
-    IO.puts(
-      "\nFAIL: distinct derived chains computed count=#{result.distinct_count_computes} label=#{result.distinct_label_computes} times"
-    )
-
-    System.halt(1)
-
-  true ->
-    IO.puts("\nOK")
-end
+Bench.InitialSharingSupport.ok()
