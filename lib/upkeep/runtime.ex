@@ -16,6 +16,33 @@ defmodule Upkeep.Runtime do
   alias Upkeep.Runtime.State
   alias Upkeep.Runtime.Subscriptions
 
+  def sync_current_scope(socket) do
+    case Map.fetch(socket.assigns, :current_scope) do
+      {:ok, current_scope} ->
+        node_id = Ids.scope_node_id(:current_scope)
+
+        {dag, changed?} =
+          socket
+          |> State.dag()
+          |> Upkeep.DAG.put_source(node_id, current_scope, [])
+
+        socket =
+          socket
+          |> State.put_dag(dag)
+          |> State.put_assign_node(:current_scope, node_id)
+
+        if changed? do
+          {socket, effects} = recompute_derived(socket, [node_id])
+          {:ok, socket, effects}
+        else
+          {:ok, socket, []}
+        end
+
+      :error ->
+        {:ok, socket, []}
+    end
+  end
+
   def mount(socket, %NodeSpec{kind: :source, producer: %Producer.Source{} = producer} = spec) do
     %Materializer.Assign{assign_name: assign_name} = single_materializer(spec)
     source_id = producer.source_id

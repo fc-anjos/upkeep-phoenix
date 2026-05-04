@@ -504,6 +504,116 @@ defmodule Upkeep.LiveRefreshTest do
                     }}
   end
 
+  test "private derives receive current_scope implicitly and recompute when it changes", %{
+    table: table
+  } do
+    user_a = System.unique_integer([:positive])
+    user_b = System.unique_integer([:positive])
+    :ets.insert(table, {{:issues, user_a}, [:user_a_issue]})
+    :ets.insert(table, {{:loads, :issues, user_a}, 0})
+
+    socket =
+      connected_live_socket(%{user_id: user_a})
+      |> Live.watch(:issues, ProjectIssues, project_id: user_a)
+      |> Live.derive(:viewer_issue_count, [:issues], fn %{
+                                                          issues: issues,
+                                                          current_scope: current_scope
+                                                        } ->
+        {current_scope.user_id, length(issues)}
+      end)
+
+    assert socket.assigns.viewer_issue_count == {user_a, 1}
+
+    socket =
+      socket
+      |> Phoenix.Component.assign(:current_scope, %{user_id: user_b})
+      |> Live.flush_refreshes()
+
+    assert socket.assigns.viewer_issue_count == {user_b, 1}
+  end
+
+  test "capturing socket scope raises under strict policy before sharing data", %{table: table} do
+    with_captured_scope_policy(:raise, fn ->
+      user_id = System.unique_integer([:positive])
+      :ets.insert(table, {{:issues, user_id}, [:user_issue]})
+      :ets.insert(table, {{:loads, :issues, user_id}, 0})
+      :ets.insert(table, {{:loads, :captured_scope_label, user_id}, 0})
+
+      socket =
+        connected_live_socket(%{user_id: user_id})
+        |> Live.watch(:issues, ProjectIssues, project_id: user_id)
+
+      assert_raise Upkeep.ImplicitScopeError, ~r/captures :socket/, fn ->
+        Live.derive(socket, :captured_scope_label, [:issues], fn %{issues: issues} ->
+          bump_load({:loads, :captured_scope_label, user_id})
+          {socket.assigns.current_scope.user_id, issues}
+        end)
+      end
+
+      assert load_count(:captured_scope_label, user_id) == 0
+    end)
+  end
+
+  test "capturing socket scope stays local with error telemetry in production policy", %{
+    table: table
+  } do
+    with_captured_scope_policy(:telemetry, fn ->
+      attach_telemetry([[:upkeep, :derive, :sharing]])
+
+      user_a = System.unique_integer([:positive])
+      user_b = System.unique_integer([:positive])
+      :ets.insert(table, {{:issues, user_a}, [:shared_project_issue]})
+      :ets.insert(table, {{:loads, :issues, user_a}, 0})
+      :ets.insert(table, {{:loads, :captured_scope_label, user_a}, 0})
+      :ets.insert(table, {{:loads, :captured_scope_label, user_b}, 0})
+
+      base_a =
+        connected_live_socket(%{user_id: user_a})
+        |> Live.watch(:issues, ProjectIssues, project_id: user_a)
+
+      base_b =
+        connected_live_socket(%{user_id: user_b})
+        |> Live.watch(:issues, ProjectIssues, project_id: user_a)
+
+      socket_a =
+        Live.derive(base_a, :captured_scope_label, [:issues], fn %{issues: issues} ->
+          current_user_id = base_a.assigns.current_scope.user_id
+          bump_load({:loads, :captured_scope_label, current_user_id})
+          {current_user_id, issues}
+        end)
+
+      socket_b =
+        Live.derive(base_b, :captured_scope_label, [:issues], fn %{issues: issues} ->
+          current_user_id = base_b.assigns.current_scope.user_id
+          bump_load({:loads, :captured_scope_label, current_user_id})
+          {current_user_id, issues}
+        end)
+
+      assert socket_a.assigns.captured_scope_label == {user_a, [:shared_project_issue]}
+      assert socket_b.assigns.captured_scope_label == {user_b, [:shared_project_issue]}
+      assert load_count(:captured_scope_label, user_a) == 1
+      assert load_count(:captured_scope_label, user_b) == 1
+
+      assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
+                      %{
+                        assign_name: :captured_scope_label,
+                        result: :local,
+                        reason: :captured_scope,
+                        severity: :error,
+                        scope_capture: :socket
+                      }}
+
+      assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
+                      %{
+                        assign_name: :captured_scope_label,
+                        result: :local,
+                        reason: :captured_scope,
+                        severity: :error,
+                        scope_capture: :socket
+                      }}
+    end)
+  end
+
   test "graph snapshot exposes derive sharing diagnostics", %{table: table} do
     user_id = System.unique_integer([:positive])
     put_scoped_user(table, user_id, [{user_id, :user_issue}])
@@ -1455,6 +1565,11 @@ defmodule Upkeep.LiveRefreshTest do
     }
   end
 
+  defp connected_live_socket(current_scope) do
+    connected_live_socket()
+    |> Phoenix.Component.assign(:current_scope, current_scope)
+  end
+
   def table_value(key) do
     [{^key, value}] = :ets.lookup(__MODULE__, key)
     value
@@ -1656,5 +1771,19 @@ defmodule Upkeep.LiveRefreshTest do
       )
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
+  end
+
+  defp with_captured_scope_policy(policy, fun) do
+    previous = Application.get_env(:upkeep, :captured_scope_policy, :__missing__)
+    Application.put_env(:upkeep, :captured_scope_policy, policy)
+
+    try do
+      fun.()
+    after
+      case previous do
+        :__missing__ -> Application.delete_env(:upkeep, :captured_scope_policy)
+        value -> Application.put_env(:upkeep, :captured_scope_policy, value)
+      end
+    end
   end
 end

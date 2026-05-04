@@ -7,6 +7,8 @@ defmodule Upkeep.Live do
 
   defmacro __using__(_opts) do
     quote do
+      Phoenix.LiveView.on_mount(Upkeep.Live.ScopeHook)
+
       import Upkeep.Live,
         only: [
           watch: 4,
@@ -32,53 +34,49 @@ defmodule Upkeep.Live do
     params = normalize_params(params)
     component = Keyword.get(opts, :under)
 
-    socket
-    |> Upkeep.Runtime.mount(Specs.source(assign_name, source, params, component))
-    |> RuntimeResult.to_socket()
+    with_current_scope(socket, fn socket ->
+      Upkeep.Runtime.mount(socket, Specs.source(assign_name, source, params, component))
+    end)
   end
 
   def component(socket, component_id, deps, fun)
       when not is_nil(component_id) and is_list(deps) and is_function(fun, 1) do
-    socket
-    |> Upkeep.Runtime.mount(Specs.component(socket, component_id, deps, fun))
-    |> RuntimeResult.to_socket()
+    with_current_scope(socket, fn socket ->
+      Upkeep.Runtime.mount(socket, Specs.component(socket, component_id, deps, fun))
+    end)
   end
 
   def remove_component(socket, component_id) when not is_nil(component_id) do
-    socket
-    |> Upkeep.Runtime.remove_component(component_id)
-    |> RuntimeResult.to_socket()
+    with_current_scope(socket, &Upkeep.Runtime.remove_component(&1, component_id))
   end
 
   def derive(socket, assign_name, deps, fun)
       when is_atom(assign_name) and is_list(deps) and is_function(fun, 1) do
-    socket
-    |> Upkeep.Runtime.mount(Specs.derived(socket, assign_name, deps, fun))
-    |> RuntimeResult.to_socket()
+    with_current_scope(socket, fn socket ->
+      Upkeep.Runtime.mount(socket, Specs.derived(socket, assign_name, deps, fun))
+    end)
   end
 
   def unwatch(socket, assign_name) when is_atom(assign_name) do
-    socket
-    |> Upkeep.Runtime.unwatch_assign(assign_name)
-    |> RuntimeResult.to_socket()
+    with_current_scope(socket, &Upkeep.Runtime.unwatch_assign(&1, assign_name))
   end
 
   def unwatch(socket, source, params) when is_atom(source) do
-    socket
-    |> Upkeep.Runtime.unwatch_source(source, normalize_params(params))
-    |> RuntimeResult.to_socket()
+    with_current_scope(
+      socket,
+      &Upkeep.Runtime.unwatch_source(&1, source, normalize_params(params))
+    )
   end
 
   def refresh(socket, assign_name, source, params) when is_atom(assign_name) do
-    socket
-    |> Upkeep.Runtime.refresh(assign_name, source, normalize_params(params))
-    |> RuntimeResult.to_socket()
+    with_current_scope(
+      socket,
+      &Upkeep.Runtime.refresh(&1, assign_name, source, normalize_params(params))
+    )
   end
 
   def refresh_matching(socket, event) when is_struct(event) do
-    socket
-    |> Upkeep.Runtime.refresh_matching(event)
-    |> RuntimeResult.to_socket()
+    with_current_scope(socket, &Upkeep.Runtime.refresh_matching(&1, event))
   end
 
   def graph_snapshot(socket) do
@@ -86,15 +84,11 @@ defmodule Upkeep.Live do
   end
 
   def queue_matching(socket, event) when is_struct(event) do
-    socket
-    |> Upkeep.Runtime.queue_matching(event)
-    |> RuntimeResult.to_socket()
+    with_current_scope(socket, &Upkeep.Runtime.queue_matching(&1, event))
   end
 
   def flush_refreshes(socket) do
-    socket
-    |> Upkeep.Runtime.flush_refreshes()
-    |> RuntimeResult.to_socket()
+    with_current_scope(socket, &Upkeep.Runtime.flush_refreshes/1)
   end
 
   def notify(event) when is_struct(event), do: Upkeep.notify(event)
@@ -104,9 +98,7 @@ defmodule Upkeep.Live do
   Reduces subscriber-side wakeups to one handle_info per shard flush.
   """
   def apply_dag_values(socket, pairs) when is_list(pairs) do
-    socket
-    |> Upkeep.Runtime.apply_dag_values(pairs)
-    |> RuntimeResult.to_socket()
+    with_current_scope(socket, &Upkeep.Runtime.apply_dag_values(&1, pairs))
   end
 
   @doc """
@@ -114,9 +106,13 @@ defmodule Upkeep.Live do
   the source.load step — the coordinator already ran it once for everyone.
   """
   def apply_dag_value(socket, source_id, value) do
-    socket
-    |> Upkeep.Runtime.apply_dag_value(source_id, value)
-    |> RuntimeResult.to_socket()
+    with_current_scope(socket, &Upkeep.Runtime.apply_dag_value(&1, source_id, value))
+  end
+
+  defp with_current_scope(socket, fun) do
+    {:ok, socket, scope_effects} = Upkeep.Runtime.sync_current_scope(socket)
+    {:ok, socket, effects} = fun.(socket)
+    RuntimeResult.to_socket({:ok, socket, scope_effects ++ effects})
   end
 
   defp normalize_params(params) when is_list(params), do: Map.new(params)

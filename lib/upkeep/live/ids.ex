@@ -6,6 +6,7 @@ defmodule Upkeep.Live.Ids do
   def source_node_id(source_id), do: {:source, source_id}
   def derived_node_id(assign_name), do: {:derived, assign_name}
   def component_node_id(component_id), do: {:component, component_id}
+  def scope_node_id(assign_name), do: {:scope, assign_name}
 
   def component_assign_node_id(component_id, assign_name),
     do: {:component_assign, component_id, assign_name}

@@ -6,6 +6,7 @@ defmodule Upkeep.Live.Specs do
   alias Upkeep.Runtime.NodeSpec
   alias Upkeep.Runtime.Materializer
   alias Upkeep.Runtime.Producer
+  alias Upkeep.Runtime.State
 
   def source(assign_name, source, params, component)
       when is_atom(assign_name) and is_map(params) do
@@ -55,6 +56,8 @@ defmodule Upkeep.Live.Specs do
 
   def derived(socket, assign_name, deps, fun)
       when is_atom(assign_name) and is_list(deps) and is_function(fun, 1) do
+    identity = external_fun_identity(fun)
+    deps = maybe_add_implicit_scope_dep(socket, deps, identity)
     {dep_node_ids, dep_pairs} = DAGOperations.dependency_nodes(socket, deps)
     node_id = Ids.derived_node_id(assign_name)
 
@@ -66,7 +69,7 @@ defmodule Upkeep.Live.Specs do
         deps: dep_node_ids,
         dep_pairs: dep_pairs,
         fun: fun,
-        identity: external_fun_identity(fun)
+        identity: identity
       },
       scope: :local_or_shared,
       materializers: [
@@ -89,4 +92,14 @@ defmodule Upkeep.Live.Specs do
       _ -> nil
     end
   end
+
+  defp maybe_add_implicit_scope_dep(socket, deps, nil) do
+    if Map.has_key?(State.assign_nodes(socket), :current_scope) and :current_scope not in deps do
+      deps ++ [:current_scope]
+    else
+      deps
+    end
+  end
+
+  defp maybe_add_implicit_scope_dep(_socket, deps, _identity), do: deps
 end

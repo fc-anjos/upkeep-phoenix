@@ -66,9 +66,38 @@ defmodule Upkeep.Runtime.Execution.Shared do
       :not_external_fun ->
         local_initial_value(socket, dep_node_ids, compute, base_metadata, :local_fun)
 
+      {:captured_scope_fun, fun_identity, scope_capture} ->
+        metadata =
+          base_metadata
+          |> Map.merge(%{
+            result: :local,
+            reason: :captured_scope,
+            severity: :error,
+            fun: fun_identity,
+            scope_capture: scope_capture,
+            implicit_scope: :current_scope,
+            scope_present?: Map.has_key?(socket.assigns, :current_scope)
+          })
+
+        case captured_scope_policy() do
+          :raise ->
+            raise Upkeep.ImplicitScopeError,
+                  "Upkeep derive #{inspect(assign_name)} captures #{inspect(scope_capture)}. " <>
+                    "Use an external function that receives current_scope from the dependency map " <>
+                    "instead of closing over socket/session/current_scope values."
+
+          :telemetry ->
+            {compute_initial_value(socket, dep_node_ids, compute), nil, metadata}
+        end
+
       {:captured_fun, fun_identity} ->
         metadata =
-          Map.merge(base_metadata, %{result: :local, reason: :captured_fun, fun: fun_identity})
+          Map.merge(base_metadata, %{
+            result: :local,
+            reason: :captured_fun,
+            fun: fun_identity,
+            implicit_scope: implicit_scope_metadata(socket, dep_node_ids)
+          })
 
         {compute_initial_value(socket, dep_node_ids, compute), nil, metadata}
 
@@ -153,7 +182,10 @@ defmodule Upkeep.Runtime.Execution.Shared do
       {:ok, {module, name, arity}}
     else
       {:env, env} when is_list(env) and env != [] ->
-        {:captured_fun, fun_identity_from_info(info)}
+        case scope_like_capture(env) do
+          nil -> {:captured_fun, fun_identity_from_info(info)}
+          scope_capture -> {:captured_scope_fun, fun_identity_from_info(info), scope_capture}
+        end
 
       _ ->
         :not_external_fun
@@ -174,6 +206,65 @@ defmodule Upkeep.Runtime.Execution.Shared do
       dep_node_ids: dep_node_ids
     }
   end
+
+  defp implicit_scope_metadata(socket, dep_node_ids) do
+    cond do
+      not Map.has_key?(socket.assigns, :current_scope) ->
+        :missing
+
+      Upkeep.Live.Ids.scope_node_id(:current_scope) in dep_node_ids ->
+        :dependency
+
+      true ->
+        :available
+    end
+  end
+
+  defp captured_scope_policy do
+    Application.get_env(:upkeep, :captured_scope_policy) || default_captured_scope_policy()
+  end
+
+  defp default_captured_scope_policy do
+    case runtime_env() do
+      :dev -> :raise
+      :prod -> :telemetry
+      _other -> :telemetry
+    end
+  end
+
+  defp runtime_env do
+    if Code.ensure_loaded?(Mix) and function_exported?(Mix, :env, 0) do
+      Mix.env()
+    else
+      :prod
+    end
+  end
+
+  defp scope_like_capture(values) do
+    Enum.find_value(values, &scope_like_value/1)
+  end
+
+  defp scope_like_value(%Phoenix.LiveView.Socket{}), do: :socket
+  defp scope_like_value(%{assigns: %{current_scope: _}}), do: :socket
+  defp scope_like_value(%{current_scope: _}), do: :current_scope
+  defp scope_like_value(%{current_user: _}), do: :current_user
+  defp scope_like_value(%{"current_scope" => _}), do: :current_scope
+  defp scope_like_value(%{"current_user" => _}), do: :current_user
+
+  defp scope_like_value(map) when is_map(map) do
+    map
+    |> Map.values()
+    |> scope_like_capture()
+  end
+
+  defp scope_like_value(tuple) when is_tuple(tuple) do
+    tuple
+    |> Tuple.to_list()
+    |> scope_like_capture()
+  end
+
+  defp scope_like_value(list) when is_list(list), do: scope_like_capture(list)
+  defp scope_like_value(_value), do: nil
 
   defp compute_initial_value(socket, dep_node_ids, compute) do
     socket
