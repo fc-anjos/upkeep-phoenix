@@ -251,7 +251,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     change = updated_issue(1, 1)
     assert :ok = Upkeep.notify(change)
-    refute_receive {:upkeep_event, ^change}
+    refute_receive {:dag_value, _, _}
 
     socket =
       socket
@@ -520,16 +520,14 @@ defmodule Upkeep.LiveRefreshTest do
 
     assert member_count(IssueComments, issue_id: 1) == 1
 
-    change = inserted_comment(1, 1)
-    assert :ok = Upkeep.notify(change)
-    assert_receive {:upkeep_event, ^change}
-
     :ets.insert(table, {{:comments, 1}, [:comment_a, :comment_c]})
 
-    socket =
-      socket
-      |> Live.queue_matching(change)
-      |> Live.flush_refreshes()
+    change = inserted_comment(1, 1)
+    source_id = {IssueComments, %{issue_id: 1}}
+    assert :ok = Upkeep.notify(change)
+    assert_receive {:dag_value, ^source_id, [:comment_a, :comment_c]}
+
+    socket = Live.apply_dag_value(socket, source_id, [:comment_a, :comment_c])
 
     assert socket.assigns.comments == [:comment_a, :comment_c]
     assert load_count(:comments, 1) == 3
@@ -687,10 +685,21 @@ defmodule Upkeep.LiveRefreshTest do
 
   defp member_count(source, params) do
     params = Map.new(params)
-    source_id = Upkeep.Live.Ids.scoped_source_id(source, params, nil)
 
-    if Upkeep.Coordinator.NodeDAG.subscribed?(source_id, self()), do: 1, else: 0
+    subscribed? =
+      Upkeep.Coordinator.NodeDAG.nodes_table()
+      |> :ets.tab2list()
+      |> Enum.any?(fn {node_id, _node} ->
+        source_id_matches?(node_id, source, params) and
+          Upkeep.Coordinator.NodeDAG.subscribed?(node_id, self())
+      end)
+
+    if subscribed?, do: 1, else: 0
   end
+
+  defp source_id_matches?({source, params}, source, params), do: true
+  defp source_id_matches?({:scoped, _component, {source, params}}, source, params), do: true
+  defp source_id_matches?(_, _, _), do: false
 
   defp attach_telemetry(events) do
     test_pid = self()

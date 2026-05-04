@@ -21,9 +21,13 @@ defmodule UpkeepWeb.KanbanLive do
      |> watch(:columns, Sources.BoardColumns, project_id: @project_id)
      |> watch(:activity, Sources.ProjectActivity, project_id: @project_id)
      |> watch(:my_issues, Sources.MyIssues, project_id: @project_id, user_id: @current_user_id)
+     |> watch(:archived_issues, Sources.ArchivedIssues, project_id: @project_id)
      |> derive(:board_stats, [:columns], &board_stats/1)
      |> derive(:board_badge, [:board_stats], &board_badge/1)
-     |> derive(:my_issue_count, [:my_issues], fn %{my_issues: issues} -> length(issues) end)}
+     |> derive(:my_issue_count, [:my_issues], fn %{my_issues: issues} -> length(issues) end)
+     |> derive(:archived_issue_count, [:archived_issues], fn %{archived_issues: issues} ->
+       length(issues)
+     end)}
   end
 
   @impl true
@@ -65,6 +69,11 @@ defmodule UpkeepWeb.KanbanLive do
         do: close_issue_detail(socket),
         else: socket
 
+    {:noreply, socket}
+  end
+
+  def handle_event("restore_issue", %{"id" => id, "column" => column_id}, socket) do
+    {:ok, _issue} = Kanban.restore_issue(to_integer(id), to_integer(column_id))
     {:noreply, socket}
   end
 
@@ -170,13 +179,14 @@ defmodule UpkeepWeb.KanbanLive do
 
                   <div class="mt-3 flex flex-wrap gap-1">
                     <button
-                      :if={column.id != 3}
+                      :for={target_column <- move_targets(@columns, column.id)}
                       phx-click="move_issue"
                       phx-value-id={issue.id}
-                      phx-value-column={column.id + 1}
+                      phx-value-column={target_column.id}
                       class="inline-flex items-center gap-1 rounded border border-zinc-300 px-2 py-1 text-xs font-semibold"
                     >
-                      <.icon name="hero-arrow-right" class="size-3" /> Move
+                      <.icon name={move_icon(column.position, target_column.position)} class="size-3" />
+                      {target_column.name}
                     </button>
                     <button
                       phx-click="assign_issue"
@@ -213,6 +223,43 @@ defmodule UpkeepWeb.KanbanLive do
               <ul class="divide-y divide-zinc-200 text-sm">
                 <li :for={issue <- @my_issues} class="px-3 py-2">{issue.title}</li>
               </ul>
+            </section>
+
+            <section id="archived-issues-panel" class="rounded border border-zinc-300 bg-white">
+              <header class="flex items-center justify-between border-b border-zinc-300 px-3 py-2">
+                <h2 class="text-sm font-bold">Archived ({@archived_issue_count})</h2>
+                <span class="rounded bg-zinc-100 px-2 py-1 text-xs font-semibold text-zinc-600">
+                  Hidden
+                </span>
+              </header>
+              <div class="divide-y divide-zinc-200 text-sm">
+                <div
+                  :for={issue <- @archived_issues}
+                  id={"archived-issue-#{issue.id}"}
+                  class="px-3 py-2"
+                >
+                  <div class="flex items-start justify-between gap-2">
+                    <p class="font-semibold text-zinc-800">{issue.title}</p>
+                    <span class="rounded bg-zinc-100 px-2 py-1 text-xs font-semibold text-zinc-500">
+                      Archived
+                    </span>
+                  </div>
+                  <div class="mt-2 flex flex-wrap gap-1">
+                    <button
+                      :for={column <- @columns}
+                      phx-click="restore_issue"
+                      phx-value-id={issue.id}
+                      phx-value-column={column.id}
+                      class="inline-flex items-center gap-1 rounded border border-zinc-300 px-2 py-1 text-xs font-semibold"
+                    >
+                      <.icon name="hero-arrow-uturn-left" class="size-3" /> {column.name}
+                    </button>
+                  </div>
+                </div>
+                <p :if={@archived_issues == []} class="px-3 py-4 text-sm text-zinc-500">
+                  No archived issues
+                </p>
+              </div>
             </section>
 
             <section class="rounded border border-zinc-300 bg-white">
@@ -315,6 +362,15 @@ defmodule UpkeepWeb.KanbanLive do
 
   defp issue_title(nil, issue_id), do: "Issue #{issue_id}"
   defp issue_title(issue, _issue_id), do: issue.title
+
+  defp move_targets(columns, current_column_id) do
+    Enum.reject(columns, &(&1.id == current_column_id))
+  end
+
+  defp move_icon(current_position, target_position) when target_position < current_position,
+    do: "hero-arrow-left"
+
+  defp move_icon(_current_position, _target_position), do: "hero-arrow-right"
 
   defp comment_badge(1), do: "1 comment"
   defp comment_badge(count), do: "#{count} comments"

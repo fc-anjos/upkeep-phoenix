@@ -49,8 +49,13 @@ defmodule Upkeep.Live do
         |> assign(assign_name, Map.fetch!(socket.assigns, primary_assign_name(watch)))
 
       :error ->
-        value = load_source(source, params, source_id, component, :watch)
-        interest_keys = source.__upkeep_interest_keys__(params)
+        {value, tracked_deps} = load_source(source, params, source_id, component, :watch)
+
+        interest_keys =
+          (source.__upkeep_interest_keys__(params) ++
+             Upkeep.Source.deps_interest_keys(tracked_deps))
+          |> Enum.uniq()
+
         registered? = Subscriptions.register_interest?(socket)
 
         if registered? do
@@ -65,7 +70,8 @@ defmodule Upkeep.Live do
           params: params,
           component: component,
           registered?: registered?,
-          interest_keys: interest_keys
+          interest_keys: interest_keys,
+          tracked_deps: tracked_deps
         })
         |> tap(fn _socket ->
           Telemetry.emit([:source, :watch], %{count: 1}, %{
@@ -178,7 +184,8 @@ defmodule Upkeep.Live do
   end
 
   def refresh(socket, assign_name, source, params) when is_atom(assign_name) do
-    assign(socket, assign_name, source.load(params))
+    {value, _tracked_deps} = Upkeep.Source.load(source, normalize_params(params))
+    assign(socket, assign_name, value)
   end
 
   def refresh_matching(socket, event) when is_struct(event) do
@@ -200,7 +207,7 @@ defmodule Upkeep.Live do
     socket
     |> State.watches()
     |> Enum.reduce(socket, fn {_source_id, watch}, socket ->
-      if watch.source.reacts_to?(event, watch.params) do
+      if reacts_to?(watch, event) do
         Telemetry.emit(
           [:source, :queue],
           %{count: 1},
@@ -255,7 +262,9 @@ defmodule Upkeep.Live do
   end
 
   defp maybe_refresh(socket, watch, changed) do
-    value = load_source(watch, :refresh)
+    {value, tracked_deps} = load_source(watch, :refresh)
+    watch = update_watch_deps(watch, tracked_deps)
+    socket = State.put_existing_watch(socket, watch.source_id, watch)
     socket = assign_watch(socket, watch, value)
 
     {socket, changed?} =
@@ -343,10 +352,24 @@ defmodule Upkeep.Live do
       [:source, :reload],
       Telemetry.source_metadata(source, params, source_id, component, reason),
       fn ->
-        value = source.load(params)
-        {value, %{changed?: nil}}
+        {value, tracked_deps} = Upkeep.Source.load(source, params)
+        {{value, tracked_deps}, %{changed?: nil, tracked_deps: length(tracked_deps)}}
       end
     )
+  end
+
+  defp reacts_to?(watch, event) do
+    Upkeep.Source.deps_react_to?(Map.get(watch, :tracked_deps, []), event) or
+      watch.source.reacts_to?(event, watch.params)
+  end
+
+  defp update_watch_deps(watch, tracked_deps) do
+    interest_keys =
+      (watch.source.__upkeep_interest_keys__(watch.params) ++
+         Upkeep.Source.deps_interest_keys(tracked_deps))
+      |> Enum.uniq()
+
+    %{watch | interest_keys: interest_keys, tracked_deps: tracked_deps}
   end
 
   defp remove_watch(socket, source_id) do

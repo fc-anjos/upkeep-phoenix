@@ -1,80 +1,61 @@
 defmodule Upkeep.Kanban.Sources.BoardColumns do
   @moduledoc false
 
-  use Upkeep.Source
+  use Upkeep.Source, repo: Upkeep.Repo
 
   alias Upkeep.Kanban
-  alias Upkeep.Kanban.{Column, Comment, Issue}
 
-  def load(s), do: Kanban.board_columns(s.project_id)
+  def load(s) do
+    columns = Upkeep.read(Kanban.columns_query(s.project_id))
 
-  invalidated_by(Issue, :issue_created, on: :project_id)
-  invalidated_by(Issue, :issue_moved, on: :project_id)
-  invalidated_by(Issue, :issue_renamed, on: :project_id)
-  invalidated_by(Issue, :issue_archived, on: :project_id)
-  invalidated_by(Column, :updated, on: :project_id)
-  invalidated_by(Comment, :comment_added, on: :project_id)
+    issues =
+      s.project_id
+      |> Kanban.open_issues_query()
+      |> Upkeep.read()
+      |> Enum.group_by(& &1.column_id)
+
+    Enum.map(columns, fn column ->
+      Map.put(column, :issues, Map.get(issues, column.id, []))
+    end)
+  end
 end
 
 defmodule Upkeep.Kanban.Sources.ProjectActivity do
   @moduledoc false
 
-  use Upkeep.Source
+  use Upkeep.Source, repo: Upkeep.Repo
 
   alias Upkeep.Kanban
 
-  def load(s), do: Kanban.project_activity(s.project_id)
-
-  invalidated_by(:issue_created, on: :project_id)
-  invalidated_by(:issue_moved, on: :project_id)
-  invalidated_by(:issue_assigned, on: :project_id)
-  invalidated_by(:issue_renamed, on: :project_id)
-  invalidated_by(:issue_archived, on: :project_id)
-  invalidated_by(:comment_added, on: :project_id)
+  def query(s), do: Kanban.activity_query(s.project_id)
 end
 
 defmodule Upkeep.Kanban.Sources.MyIssues do
   @moduledoc false
 
-  use Upkeep.Source
+  use Upkeep.Source, repo: Upkeep.Repo
 
   alias Upkeep.Kanban
-  alias Upkeep.Kanban.Issue
 
-  def load(s), do: Kanban.my_issues(s.project_id, s.user_id)
+  def query(s), do: Kanban.my_issues_query(s.project_id, s.user_id)
+end
 
-  invalidated_by(Issue, :issue_created,
-    on: [:project_id, :assignee_id],
-    as: [:project_id, :user_id]
-  )
+defmodule Upkeep.Kanban.Sources.ArchivedIssues do
+  @moduledoc false
 
-  reacts_to(Issue, :issue_assigned, fn change, s ->
-    change.record.project_id == s.project_id and
-      (Upkeep.Change.old(change, :assignee_id) == s.user_id or
-         Upkeep.Change.new(change, :assignee_id) == s.user_id)
-  end)
+  use Upkeep.Source, repo: Upkeep.Repo
 
-  reacts_to(Issue, :issue_archived, fn change, s ->
-    change.record.project_id == s.project_id and
-      (Upkeep.Change.old(change, :assignee_id) == s.user_id or
-         Upkeep.Change.new(change, :assignee_id) == s.user_id)
-  end)
+  alias Upkeep.Kanban
 
-  invalidated_by(Issue, :issue_renamed,
-    on: [:project_id, :assignee_id],
-    as: [:project_id, :user_id]
-  )
+  def query(s), do: Kanban.archived_issues_query(s.project_id)
 end
 
 defmodule Upkeep.Kanban.Sources.IssueComments do
   @moduledoc false
 
-  use Upkeep.Source
+  use Upkeep.Source, repo: Upkeep.Repo
 
   alias Upkeep.Kanban
-  alias Upkeep.Kanban.Comment
 
-  def load(s), do: Kanban.issue_comments(s.issue_id)
-
-  invalidated_by(Comment, :comment_added, on: :issue_id)
+  def query(s), do: Kanban.comments_query(s.issue_id)
 end

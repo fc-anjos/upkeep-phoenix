@@ -191,6 +191,35 @@ defmodule Upkeep.SourceEctoTest do
     end
   end
 
+  defmodule BoardViewModel do
+    use Upkeep.Source, repo: Upkeep.Repo
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.{Column, Issue}
+
+    def load(%{project_id: project_id}) do
+      columns =
+        Upkeep.read(
+          from c in Column,
+            where: c.project_id == ^project_id,
+            order_by: [asc: c.position]
+        )
+
+      issues =
+        Upkeep.read(
+          from i in Issue,
+            where: i.project_id == ^project_id and i.status == "open",
+            order_by: [asc: i.position]
+        )
+        |> Enum.group_by(& &1.column_id)
+
+      Enum.map(columns, fn column ->
+        %{column: column.name, issues: Map.get(issues, column.id, [])}
+      end)
+    end
+  end
+
   setup do
     Repo.query!("DROP TABLE IF EXISTS upkeep_source_ecto_test_comments")
     Repo.query!("DROP TABLE IF EXISTS upkeep_source_ecto_test_columns")
@@ -237,6 +266,31 @@ defmodule Upkeep.SourceEctoTest do
     issues = ProjectIssues.load(%{project_id: 1, user_id: 9})
 
     assert Enum.map(issues, & &1.title) == ["First", "Mine"]
+  end
+
+  test "custom load/1 tracks each Upkeep.read query as the reactive surface" do
+    Repo.insert!(%Column{id: 1, project_id: 1, name: "Backlog", position: 1})
+    Repo.insert!(issue(id: 1, project_id: 1, column_id: 1, title: "Open", position: 1))
+    Repo.insert!(issue(id: 2, project_id: 1, column_id: 1, status: "archived", title: "Archived"))
+
+    {board, deps} = Upkeep.Source.load(BoardViewModel, %{project_id: 1})
+
+    assert [%{column: "Backlog", issues: [%Issue{title: "Open"}]}] = board
+
+    interest_keys = Upkeep.Source.deps_interest_keys(deps)
+
+    assert {:upkeep_change, :inserted, Column, [project_id: 1]} in interest_keys
+    assert {:upkeep_change, :updated, Issue, [project_id: 1, status: "open"]} in interest_keys
+
+    assert Upkeep.Source.deps_react_to?(
+             deps,
+             issue(project_id: 1, column_id: 1, status: "open") |> Upkeep.Change.inserted()
+           )
+
+    refute Upkeep.Source.deps_react_to?(
+             deps,
+             issue(project_id: 1, column_id: 1, status: "archived") |> Upkeep.Change.inserted()
+           )
   end
 
   test "plain query/1 sources infer field-indexed interest keys from Ecto where clauses" do

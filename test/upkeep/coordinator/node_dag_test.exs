@@ -8,13 +8,7 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
   end
 
   setup tags do
-    if pid = Process.whereis(NodeDAG) do
-      Process.exit(pid, :shutdown)
-      Process.sleep(20)
-    end
-
-    shards = Map.get(tags, :shards, 4)
-    {:ok, _} = NodeDAG.start_link(shards: shards)
+    _ = Map.get(tags, :shards, 4)
     :ok
   end
 
@@ -25,7 +19,11 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
   describe "source nodes" do
     test "load_fn runs once per coalesced event; subscribers receive {:dag_value, ...}" do
       counter = :counters.new(1, [:atomics])
-      load_fn = fn -> :counters.add(counter, 1, 1); :loaded_value end
+
+      load_fn = fn ->
+        :counters.add(counter, 1, 1)
+        :loaded_value
+      end
 
       node_id = {:test_source, System.unique_integer()}
       :ok = NodeDAG.register_source(node_id, [narrow_key(%Ev{id: 1, tenant_id: 1})], load_fn)
@@ -70,8 +68,8 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
 
       # Single-shard run so derived and source colocate. Cross-shard derived
       # routing is a known prototype limitation; documented in NodeDAG docs.
-      source_id = {:src, 1}
-      derived_id = {:der, 1}
+      source_id = {:src, System.unique_integer()}
+      derived_id = same_shard_id({:der, source_id}, source_id)
 
       load_fn = fn ->
         :counters.add(source_loads, 1, 1)
@@ -105,5 +103,16 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
       NodeDAG.unregister(derived_id)
       NodeDAG.unregister(source_id)
     end
+  end
+
+  defp same_shard_id(prefix, source_id) do
+    shards = :persistent_term.get({NodeDAG, :shards})
+    target = :erlang.phash2(source_id, shards)
+
+    Stream.iterate(1, &(&1 + 1))
+    |> Enum.find_value(fn idx ->
+      candidate = {prefix, idx}
+      if :erlang.phash2(candidate, shards) == target, do: candidate
+    end)
   end
 end

@@ -2,10 +2,12 @@ defmodule Upkeep.Source do
   @moduledoc """
   Source authoring helpers for Upkeep-style reactive reads.
 
-  A source is a module that can load a live read. Plain `load/1` functions are
-  supported directly; Ecto-backed sources can expose a Phoenix-style `query/1`
-  and let Upkeep infer common invalidation keys from the returned query.
+  A source is a module that can load a live read. Ecto-backed sources should
+  perform database reads through `Upkeep.read/1`; those reads are tracked as
+  the source's reactive surface.
   """
+
+  @context_key {__MODULE__, :read_context}
 
   defmacro __using__(opts) do
     repo =
@@ -142,7 +144,7 @@ defmodule Upkeep.Source do
             def load(params) do
               params
               |> __MODULE__.query()
-              |> Upkeep.Source.load_from_query(unquote(repo))
+              |> Upkeep.read(repo: unquote(repo))
             end
           end
 
@@ -167,6 +169,8 @@ defmodule Upkeep.Source do
     quote do
       unquote(load_definition)
 
+      def __upkeep_repo__, do: unquote(repo)
+
       def reacts_to?(event, params), do: unquote(reacts_to_body)
 
       def __upkeep_interest_keys__(params) do
@@ -183,6 +187,42 @@ defmodule Upkeep.Source do
 
   def load_from_query(%Ecto.Query{} = query, repo) when is_atom(repo), do: repo.all(query)
   def load_from_query(value, _repo), do: value
+
+  def load(source, params) when is_atom(source) do
+    repo = source.__upkeep_repo__()
+
+    with_read_context(repo, fn ->
+      value = source.load(params)
+      {value, tracked_deps()}
+    end)
+  end
+
+  def read(query, opts \\ [])
+
+  def read(%Ecto.Query{} = query, opts) do
+    repo = Keyword.get(opts, :repo) || current_repo()
+
+    unless repo do
+      raise ArgumentError,
+            "Upkeep.read/1 needs a source repo context; " <>
+              "use `use Upkeep.Source, repo: MyApp.Repo` or pass `repo: MyApp.Repo`"
+    end
+
+    track_query(query)
+    repo.all(query)
+  end
+
+  def read(value, _opts), do: value
+
+  def deps_interest_keys(deps) do
+    deps
+    |> Enum.flat_map(&Upkeep.Ecto.QueryDeps.interest_keys/1)
+    |> Enum.uniq()
+  end
+
+  def deps_react_to?(deps, event) do
+    Enum.any?(deps, &Upkeep.Ecto.QueryDeps.matches_change?(&1, event))
+  end
 
   def query_interest_keys(source, params) when is_atom(source) do
     source
@@ -201,6 +241,45 @@ defmodule Upkeep.Source do
 
   defp source_query(source, params) do
     if function_exported?(source, :query, 1), do: source.query(params), else: nil
+  end
+
+  defp with_read_context(repo, fun) do
+    previous = Process.get(@context_key)
+    Process.put(@context_key, %{repo: repo, deps: []})
+
+    try do
+      fun.()
+    after
+      restore_read_context(previous)
+    end
+  end
+
+  defp restore_read_context(nil), do: Process.delete(@context_key)
+  defp restore_read_context(previous), do: Process.put(@context_key, previous)
+
+  defp current_repo do
+    case Process.get(@context_key) do
+      %{repo: repo} -> repo
+      _context -> nil
+    end
+  end
+
+  defp track_query(query) do
+    case Process.get(@context_key) do
+      %{deps: deps} = context ->
+        deps = [Upkeep.Ecto.QueryDeps.from_query(query) | deps]
+        Process.put(@context_key, %{context | deps: deps})
+
+      _context ->
+        :ok
+    end
+  end
+
+  defp tracked_deps do
+    case Process.get(@context_key) do
+      %{deps: deps} -> Enum.reverse(deps)
+      _context -> []
+    end
   end
 
   def matches?(%Upkeep.Change{} = change, %{name: name, schema: schema}) do

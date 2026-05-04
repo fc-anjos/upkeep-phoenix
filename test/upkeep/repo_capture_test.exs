@@ -97,11 +97,7 @@ defmodule Upkeep.RepoCaptureTest do
                :created
              end)
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{name: :inserted, schema: Issue, record: %Issue{id: 1}} =
-                      change}
-
-    socket = Live.refresh_matching(socket, change)
+    socket = assert_project_issues(socket, 9, ["Created"])
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Created"]
   end
 
@@ -121,16 +117,8 @@ defmodule Upkeep.RepoCaptureTest do
 
     assert {:ok, %Issue{assignee_id: 9}} = Upkeep.mutate(fn -> Repo.update!(issue) end)
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{
-                      name: :updated,
-                      schema: Issue,
-                      record: %Issue{assignee_id: 9},
-                      from: %Issue{assignee_id: 10}
-                    } = change}
-
-    mine = Live.refresh_matching(mine, change)
-    theirs = Live.refresh_matching(theirs, change)
+    mine = assert_project_issues(mine, 9, ["Moved"])
+    theirs = assert_project_issues(theirs, 10, [])
 
     assert Enum.map(mine.assigns.issues, & &1.title) == ["Moved"]
     assert theirs.assigns.issues == []
@@ -149,11 +137,7 @@ defmodule Upkeep.RepoCaptureTest do
                |> Repo.delete!()
              end)
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{name: :deleted, schema: Issue, record: %Issue{id: 1}} =
-                      change}
-
-    socket = Live.refresh_matching(socket, change)
+    socket = assert_project_issues(socket, 9, [])
     assert socket.assigns.issues == []
   end
 
@@ -166,7 +150,7 @@ defmodule Upkeep.RepoCaptureTest do
                Repo.rollback(:cancelled)
              end)
 
-    refute_receive {:upkeep_event, %Upkeep.Change{name: :inserted, schema: Issue}}
+    refute_receive {:dag_value, _, _}
     refute Repo.get(Issue, 1)
   end
 
@@ -179,8 +163,7 @@ defmodule Upkeep.RepoCaptureTest do
                :created
              end)
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{name: :inserted, schema: Issue, record: %Issue{id: 1}}}
+    assert_project_issues(9, ["Issue"])
   end
 
   test "repo transaction capture discards direct transaction rollbacks" do
@@ -192,7 +175,7 @@ defmodule Upkeep.RepoCaptureTest do
                Repo.rollback(:cancelled)
              end)
 
-    refute_receive {:upkeep_event, %Upkeep.Change{name: :inserted, schema: Issue}}
+    refute_receive {:dag_value, _, _}
     refute Repo.get(Issue, 1)
   end
 
@@ -205,8 +188,7 @@ defmodule Upkeep.RepoCaptureTest do
 
     assert {:ok, %{issue: %Issue{id: 1}}} = Upkeep.mutate(multi)
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{name: :inserted, schema: Issue, record: %Issue{id: 1}}}
+    assert_project_issues(9, ["Issue"])
   end
 
   test "insert_or_update capture chooses inserted or updated from schema state" do
@@ -216,21 +198,14 @@ defmodule Upkeep.RepoCaptureTest do
     |> Changeset.change()
     |> Repo.insert_or_update!()
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{name: :inserted, schema: Issue, record: %Issue{id: 1}}}
+    assert_project_issues(9, ["Issue"])
 
     Issue
     |> Repo.get!(1)
     |> Changeset.change(title: "Updated")
     |> Repo.insert_or_update!()
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{
-                      name: :updated,
-                      schema: Issue,
-                      record: %Issue{title: "Updated"},
-                      from: %Issue{title: "Issue"}
-                    }}
+    assert_project_issues(9, ["Updated"])
   end
 
   test "insert_all capture emits inserted changes from submitted entries" do
@@ -244,14 +219,8 @@ defmodule Upkeep.RepoCaptureTest do
                ])
              end)
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{name: :inserted, schema: Issue, record: %Issue{id: 1}} =
-                      change}
-
-    refute_receive {:upkeep_event,
-                    %Upkeep.Change{name: :inserted, schema: Issue, record: %Issue{id: 2}}}
-
-    socket = Live.refresh_matching(socket, change)
+    socket = assert_project_issues(socket, 9, ["Mine"])
+    refute_receive {:dag_value, {ProjectIssues, %{project_id: 1, user_id: 10}}, _}
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Mine"]
   end
 
@@ -267,14 +236,7 @@ defmodule Upkeep.RepoCaptureTest do
                )
              end)
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{
-                      name: :inserted,
-                      schema: Issue,
-                      record: %Issue{id: 1, project_id: 1, assignee_id: 9, status: "open"}
-                    } = change}
-
-    socket = Live.refresh_matching(socket, change)
+    socket = assert_project_issues(socket, 9, ["Partial"])
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Partial"]
   end
 
@@ -290,11 +252,7 @@ defmodule Upkeep.RepoCaptureTest do
                )
              end)
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{name: :inserted, schema: Issue, record: %Issue{id: 1}} =
-                      change}
-
-    socket = Live.refresh_matching(socket, change)
+    socket = assert_project_issues(socket, 9, ["Table"])
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Table"]
   end
 
@@ -308,14 +266,7 @@ defmodule Upkeep.RepoCaptureTest do
                ])
              end)
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{
-                      name: :inserted,
-                      schema: "upkeep_repo_capture_test_issues",
-                      record: %{id: 1, assignee_id: 9}
-                    } = change}
-
-    socket = Live.refresh_matching(socket, change)
+    socket = assert_table_project_issues(socket, 9, ["Table source"])
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Table source"]
   end
 
@@ -336,14 +287,8 @@ defmodule Upkeep.RepoCaptureTest do
                Repo.insert_all(Issue, import_query(user_id: 9))
              end)
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{name: :inserted, schema: Issue, record: %Issue{id: 1}} =
-                      change}
-
-    refute_receive {:upkeep_event,
-                    %Upkeep.Change{name: :inserted, schema: Issue, record: %Issue{id: 2}}}
-
-    socket = Live.refresh_matching(socket, change)
+    socket = assert_project_issues(socket, 9, ["Imported"])
+    refute_receive {:dag_value, {ProjectIssues, %{project_id: 1, user_id: 10}}, _}
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Imported"]
   end
 
@@ -361,14 +306,7 @@ defmodule Upkeep.RepoCaptureTest do
                Repo.insert_all("upkeep_repo_capture_test_issues", import_query(user_id: 9))
              end)
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{
-                      name: :inserted,
-                      schema: "upkeep_repo_capture_test_issues",
-                      record: %{id: 1, title: "Imported table"}
-                    } = change}
-
-    socket = Live.refresh_matching(socket, change)
+    socket = assert_table_project_issues(socket, 9, ["Imported table"])
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Imported table"]
   end
 
@@ -390,16 +328,8 @@ defmodule Upkeep.RepoCaptureTest do
                )
              end)
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{
-                      name: :updated,
-                      schema: Issue,
-                      record: %Issue{id: 1, assignee_id: 9},
-                      from: %Issue{id: 1, assignee_id: 10}
-                    } = change}
-
-    mine = Live.refresh_matching(mine, change)
-    theirs = Live.refresh_matching(theirs, change)
+    mine = assert_project_issues(mine, 9, ["Moved", "Mine"])
+    theirs = assert_project_issues(theirs, 10, [])
 
     assert Enum.map(mine.assigns.issues, & &1.title) == ["Moved", "Mine"]
     assert theirs.assigns.issues == []
@@ -425,16 +355,8 @@ defmodule Upkeep.RepoCaptureTest do
                )
              end)
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{
-                      name: :updated,
-                      schema: "upkeep_repo_capture_test_issues",
-                      record: %{id: 1, assignee_id: 9},
-                      from: %{id: 1, assignee_id: 10}
-                    } = change}
-
-    mine = Live.refresh_matching(mine, change)
-    theirs = Live.refresh_matching(theirs, change)
+    mine = assert_table_project_issues(mine, 9, ["Moved", "Mine"])
+    theirs = assert_table_project_issues(theirs, 10, [])
 
     assert Enum.map(mine.assigns.issues, & &1.title) == ["Moved", "Mine"]
     assert theirs.assigns.issues == []
@@ -455,15 +377,7 @@ defmodule Upkeep.RepoCaptureTest do
                )
              end)
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{
-                      name: :updated,
-                      schema: Issue,
-                      record: %Issue{id: 1, assignee_id: 9},
-                      from: %Issue{id: 1, assignee_id: 10}
-                    } = change}
-
-    socket = Live.refresh_matching(socket, change)
+    socket = assert_project_issues(socket, 9, ["Moved"])
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Moved"]
   end
 
@@ -477,13 +391,7 @@ defmodule Upkeep.RepoCaptureTest do
                set: [assignee_id: 9]
              )
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{
-                      name: :updated,
-                      schema: Issue,
-                      record: %Issue{id: 1, assignee_id: 9},
-                      from: %Issue{id: 1, assignee_id: 10}
-                    }}
+    assert_project_issues(9, ["Moved"])
   end
 
   test "delete_all capture emits deleted changes from affected rows" do
@@ -498,11 +406,7 @@ defmodule Upkeep.RepoCaptureTest do
                Repo.delete_all(from(i in Issue, where: i.project_id == 1 and i.assignee_id == 9))
              end)
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{name: :deleted, schema: Issue, record: %Issue{id: 1}} =
-                      change}
-
-    socket = Live.refresh_matching(socket, change)
+    socket = assert_project_issues(socket, 9, [])
     assert socket.assigns.issues == []
   end
 
@@ -522,14 +426,7 @@ defmodule Upkeep.RepoCaptureTest do
                )
              end)
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{
-                      name: :deleted,
-                      schema: "upkeep_repo_capture_test_issues",
-                      record: %{id: 1}
-                    } = change}
-
-    socket = Live.refresh_matching(socket, change)
+    socket = assert_table_project_issues(socket, 9, [])
     assert socket.assigns.issues == []
   end
 
@@ -547,7 +444,7 @@ defmodule Upkeep.RepoCaptureTest do
                Repo.rollback(:cancelled)
              end)
 
-    refute_receive {:upkeep_event, %Upkeep.Change{name: :updated, schema: Issue}}
+    refute_receive {:dag_value, _, _}
     assert %Issue{assignee_id: 10} = Repo.get!(Issue, 1)
   end
 
@@ -562,8 +459,7 @@ defmodule Upkeep.RepoCaptureTest do
 
     assert {:ok, %{issues: {1, nil}}} = Upkeep.mutate(multi)
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{name: :inserted, schema: Issue, record: %Issue{id: 1}}}
+    assert_project_issues(9, ["Multi"])
   end
 
   test "bulk capture can be disabled" do
@@ -571,7 +467,7 @@ defmodule Upkeep.RepoCaptureTest do
 
     Repo.insert_all(Issue, [issue_attrs(id: 1, assignee_id: 9)], upkeep: false)
 
-    refute_receive {:upkeep_event, %Upkeep.Change{name: :inserted, schema: Issue}}
+    refute_receive {:dag_value, _, _}
   end
 
   test "repo capture can be disabled for setup writes" do
@@ -579,7 +475,7 @@ defmodule Upkeep.RepoCaptureTest do
 
     Repo.insert!(issue(id: 1, assignee_id: 9), upkeep: false)
 
-    refute_receive {:upkeep_event, %Upkeep.Change{name: :inserted, schema: Issue}}
+    refute_receive {:dag_value, _, _}
   end
 
   defp watch_project(opts) do
@@ -594,6 +490,25 @@ defmodule Upkeep.RepoCaptureTest do
 
     %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
     |> Live.watch(:issues, TableProjectIssues, project_id: 1, user_id: user_id)
+  end
+
+  defp assert_project_issues(user_id, titles) do
+    source_id = {ProjectIssues, %{project_id: 1, user_id: user_id}}
+    assert_receive {:dag_value, ^source_id, issues}
+    assert Enum.map(issues, & &1.title) == titles
+    issues
+  end
+
+  defp assert_project_issues(socket, user_id, titles) do
+    issues = assert_project_issues(user_id, titles)
+    Live.apply_dag_value(socket, {ProjectIssues, %{project_id: 1, user_id: user_id}}, issues)
+  end
+
+  defp assert_table_project_issues(socket, user_id, titles) do
+    source_id = {TableProjectIssues, %{project_id: 1, user_id: user_id}}
+    assert_receive {:dag_value, ^source_id, issues}
+    assert Enum.map(issues, & &1.title) == titles
+    Live.apply_dag_value(socket, source_id, issues)
   end
 
   defp issue(attrs) do

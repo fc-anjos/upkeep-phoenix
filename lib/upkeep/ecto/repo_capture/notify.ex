@@ -30,6 +30,7 @@ defmodule Upkeep.Ecto.RepoCapture.Notify do
   def notify_change(action, schema, record), do: notify_change(action, schema, record, nil)
 
   def notify_change(_action, nil, _record, _from), do: :ok
+  def notify_change(_action, Ecto.Migration.SchemaMigration, _record, _from), do: :ok
 
   def notify_change(action, schema, record, from) do
     action

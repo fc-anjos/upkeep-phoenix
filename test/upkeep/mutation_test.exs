@@ -40,10 +40,10 @@ defmodule Upkeep.MutationTest do
 
     assert {:ok, :moved} = result
 
-    assert_receive {:upkeep_event,
-                    %Upkeep.Change{name: :updated, record: %Issue{project_id: 777}} = change}
+    source_id = source_id(777)
+    assert_receive {:dag_value, ^source_id, [:after]}
 
-    refreshed = Live.refresh_matching(socket, change)
+    refreshed = Live.apply_dag_value(socket, source_id, [:after])
     assert refreshed.assigns.issues == [:after]
   end
 
@@ -57,7 +57,7 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:error, :cancelled} = result
-    refute_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 778}}}
+    refute_receive {:dag_value, {ProjectIssues, %{project_id: 778}}, _}
   end
 
   test "mutate discards notifications when the mutation raises" do
@@ -70,7 +70,7 @@ defmodule Upkeep.MutationTest do
       end)
     end
 
-    refute_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 779}}}
+    refute_receive {:dag_value, {ProjectIssues, %{project_id: 779}}, _}
   end
 
   test "mutate preserves notification order after commit" do
@@ -84,8 +84,8 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:ok, :ok} = result
-    assert_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 780, issue_id: 1}}}
-    assert_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 780, issue_id: 2}}}
+    assert_receive {:dag_value, {ProjectIssues, %{project_id: 780}}, [:before]}
+    refute_receive {:dag_value, {ProjectIssues, %{project_id: 780}}, _}
   end
 
   test "nested mutate joins the outer journal and flushes once" do
@@ -99,12 +99,12 @@ defmodule Upkeep.MutationTest do
                    :inner
                  end)
 
-        refute_received {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 777}}}
+        refute_received {:dag_value, {ProjectIssues, %{project_id: 777}}, _}
         :outer
       end)
 
     assert {:ok, :outer} = result
-    assert_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 777, issue_id: 1}}}
+    assert_receive {:dag_value, {ProjectIssues, %{project_id: 777}}, [:before]}
   end
 
   test "Ecto.Multi flushes notifications after commit" do
@@ -118,7 +118,7 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:ok, %{move: :moved}} = Upkeep.mutate(multi)
-    assert_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 777, issue_id: 1}}}
+    assert_receive {:dag_value, {ProjectIssues, %{project_id: 777}}, [:before]}
   end
 
   test "Ecto.Multi discards notifications on rollback" do
@@ -132,7 +132,7 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:error, :move, :cancelled, %{}} = Upkeep.mutate(multi)
-    refute_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 778}}}
+    refute_receive {:dag_value, {ProjectIssues, %{project_id: 778}}, _}
   end
 
   test "Ecto.Multi preserves notification order after commit" do
@@ -150,8 +150,8 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:ok, %{first: :first, second: :second}} = Upkeep.mutate(multi)
-    assert_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 779, issue_id: 1}}}
-    assert_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 779, issue_id: 2}}}
+    assert_receive {:dag_value, {ProjectIssues, %{project_id: 779}}, [:before]}
+    refute_receive {:dag_value, {ProjectIssues, %{project_id: 779}}, _}
   end
 
   test "nested Ecto.Multi rollback rolls back the outer mutation and discards all events" do
@@ -173,14 +173,15 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:error, :rollback} = result
-    refute_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 780, issue_id: 1}}}
-    refute_receive {:upkeep_event, %Upkeep.Change{record: %Issue{project_id: 780, issue_id: 2}}}
+    refute_receive {:dag_value, {ProjectIssues, %{project_id: 780}}, _}
   end
 
   defp watch_project(project_id) do
     %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
     |> Live.watch(:issues, ProjectIssues, project_id: project_id)
   end
+
+  defp source_id(project_id), do: {ProjectIssues, %{project_id: project_id}}
 
   defp issue(project_id, issue_id), do: %Issue{project_id: project_id, issue_id: issue_id}
 end

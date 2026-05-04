@@ -146,10 +146,37 @@ defmodule Upkeep.Coordinator.NodeDAG do
     shards = Keyword.get(opts, :shards, System.schedulers_online())
     :persistent_term.put({__MODULE__, :shards}, shards)
 
-    ensure_table(@index_table, [:bag, :public, :named_table, read_concurrency: true, write_concurrency: true])
-    ensure_table(@nodes_table, [:set, :public, :named_table, read_concurrency: true, write_concurrency: true])
-    ensure_table(@values_table, [:set, :public, :named_table, read_concurrency: true, write_concurrency: true])
-    ensure_table(@dependents_table, [:bag, :public, :named_table, read_concurrency: true, write_concurrency: true])
+    ensure_table(@index_table, [
+      :bag,
+      :public,
+      :named_table,
+      read_concurrency: true,
+      write_concurrency: true
+    ])
+
+    ensure_table(@nodes_table, [
+      :set,
+      :public,
+      :named_table,
+      read_concurrency: true,
+      write_concurrency: true
+    ])
+
+    ensure_table(@values_table, [
+      :set,
+      :public,
+      :named_table,
+      read_concurrency: true,
+      write_concurrency: true
+    ])
+
+    ensure_table(@dependents_table, [
+      :bag,
+      :public,
+      :named_table,
+      read_concurrency: true,
+      write_concurrency: true
+    ])
 
     children = [
       {Task.Supervisor, name: task_sup()}

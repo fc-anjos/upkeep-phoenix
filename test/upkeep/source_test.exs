@@ -122,11 +122,6 @@ defmodule Upkeep.SourceTest do
   test "watch joins source interest and notify dispatches through the coordinator", %{
     table: table
   } do
-    attach_telemetry([
-      [:upkeep, :coordinator, :dispatch, :start],
-      [:upkeep, :coordinator, :dispatch, :stop]
-    ])
-
     socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
 
     socket = Live.watch(socket, :columns, BoardColumns, project_id: 123)
@@ -138,17 +133,10 @@ defmodule Upkeep.SourceTest do
 
     assert :ok = Upkeep.notify(change)
 
-    assert_receive {:upkeep_event, ^change}
+    source_id = {BoardColumns, %{project_id: 123}}
+    assert_receive {:dag_value, ^source_id, [:todo, :doing]}
 
-    assert_receive {:telemetry, [:upkeep, :coordinator, :dispatch, :start], _measurements,
-                    %{event: ^change}}
-
-    assert_receive {:telemetry, [:upkeep, :coordinator, :dispatch, :stop], measurements,
-                    %{event: ^change, pid_count: 1}}
-
-    assert is_integer(measurements.duration)
-
-    refreshed = Live.refresh_matching(socket, change)
+    refreshed = Live.apply_dag_value(socket, source_id, [:todo, :doing])
     assert refreshed.assigns.columns == [:todo, :doing]
   end
 
@@ -161,7 +149,7 @@ defmodule Upkeep.SourceTest do
 
     assert :ok = Upkeep.notify(change)
 
-    refute_receive {:upkeep_event, ^change}
+    refute_receive {:dag_value, _, _}
   end
 
   test "coordinator sends one event when a process watches overlapping source keys" do
@@ -176,8 +164,9 @@ defmodule Upkeep.SourceTest do
 
     assert :ok = Upkeep.notify(change)
 
-    assert_receive {:upkeep_event, ^change}
-    refute_receive {:upkeep_event, ^change}
+    assert_receive {:dag_value, {BoardColumns, %{project_id: 123}}, [:todo]}
+    assert_receive {:dag_value, {MyIssues, %{project_id: 123, user_id: 9}}, [:mine]}
+    refute_receive {:dag_value, _, _}
   end
 
   defp inserted_issue(attrs) do
@@ -213,22 +202,5 @@ defmodule Upkeep.SourceTest do
       Issue,
       Keyword.merge([id: 1, project_id: 123, assignee_id: 9, column_id: 1], attrs)
     )
-  end
-
-  defp attach_telemetry(events) do
-    test_pid = self()
-    handler_id = {__MODULE__, test_pid, make_ref()}
-
-    :ok =
-      :telemetry.attach_many(
-        handler_id,
-        events,
-        fn event, measurements, metadata, _config ->
-          send(test_pid, {:telemetry, event, measurements, metadata})
-        end,
-        nil
-      )
-
-    on_exit(fn -> :telemetry.detach(handler_id) end)
   end
 end

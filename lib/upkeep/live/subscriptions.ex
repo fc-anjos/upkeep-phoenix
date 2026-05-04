@@ -9,7 +9,11 @@ defmodule Upkeep.Live.Subscriptions do
   resulting value out to all interested LVs.
   """
   def register(source_id, interest_keys, source, params) do
-    load_fn = fn -> source.load(params) end
+    load_fn = fn ->
+      {value, _tracked_deps} = Upkeep.Source.load(source, params)
+      value
+    end
+
     :ok = NodeDAG.register_source(source_id, interest_keys, load_fn)
   end
 

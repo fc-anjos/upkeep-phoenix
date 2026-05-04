@@ -219,7 +219,9 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
   defp do_unregister(state, pid, node_id) do
     interests =
       case Map.get(state.interests, node_id) do
-        nil -> state.interests
+        nil ->
+          state.interests
+
         set ->
           new_set = MapSet.delete(set, pid)
 
