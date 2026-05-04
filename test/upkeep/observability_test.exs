@@ -96,7 +96,6 @@ defmodule Upkeep.ObservabilityTest do
              |> Upkeep.Change.updated()
              |> Upkeep.notify()
 
-    assert :ok = Upkeep.Coordinator.Graph.drain()
     assert_receive {:dag_values, [{{ProjectIssues, %{project_id: ^project_id}}, [:after]}]}
 
     events = recent_events_after_observability_flush()

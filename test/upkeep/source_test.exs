@@ -160,7 +160,6 @@ defmodule Upkeep.SourceTest do
     change = updated_issue(project_id: 123)
 
     assert :ok = Upkeep.notify(change)
-    assert :ok = Upkeep.Coordinator.Graph.drain()
 
     source_id = {BoardColumns, %{project_id: 123}}
     assert_receive {:dag_values, [{^source_id, [:todo, :doing]}]}
@@ -177,7 +176,6 @@ defmodule Upkeep.SourceTest do
     change = updated_issue(project_id: 456)
 
     assert :ok = Upkeep.notify(change)
-    assert :ok = Upkeep.Coordinator.Graph.drain()
 
     refute_receive {:dag_values, [{_, _}]}
   end
@@ -198,7 +196,6 @@ defmodule Upkeep.SourceTest do
     change = updated_issue(project_id: project_id, assignee_id: user_id)
 
     assert :ok = Upkeep.notify(change)
-    assert :ok = Upkeep.Coordinator.Graph.drain()
 
     assert_dag_values([
       {{BoardColumns, %{project_id: project_id}}, [:todo]},

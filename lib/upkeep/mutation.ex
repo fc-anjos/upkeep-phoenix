@@ -3,7 +3,10 @@ defmodule Upkeep.Mutation do
   Transaction boundary for domain facts.
 
   Notifications emitted inside `mutate/2` are journaled in the calling process
-  and flushed only after the database transaction commits.
+  and flushed only after the database transaction commits. Outer `mutate/2`
+  calls return only after the local graph has finished processing those
+  notifications, so callers can observe their effects without manually draining.
+  Cross-node propagation remains eventually consistent.
   """
 
   @journal_key {__MODULE__, :journal}
@@ -34,7 +37,7 @@ defmodule Upkeep.Mutation do
       put_journal(journal() ++ [event])
       :ok
     else
-      Upkeep.Coordinator.Graph.notify(event)
+      dispatch_journal([event])
     end
   end
 
@@ -77,7 +80,7 @@ defmodule Upkeep.Mutation do
     try do
       case repo.transaction(fn -> {fun.(), journal()} end) do
         {:ok, {result, events}} ->
-          Enum.each(events, &Upkeep.Coordinator.Graph.notify/1)
+          dispatch_journal(events)
           {:ok, result}
 
         {:error, reason} ->
@@ -95,9 +98,7 @@ defmodule Upkeep.Mutation do
     try do
       case repo.transaction(multi) do
         {:ok, changes} ->
-          journal()
-          |> Enum.each(&Upkeep.Coordinator.Graph.notify/1)
-
+          dispatch_journal(journal())
           {:ok, changes}
 
         {:error, _operation, _value, _changes} = error ->
@@ -129,7 +130,7 @@ defmodule Upkeep.Mutation do
       result = fun.()
 
       if transaction_committed?(result) do
-        Enum.each(journal(), &Upkeep.Coordinator.Graph.notify/1)
+        dispatch_journal(journal())
       end
 
       result
@@ -158,6 +159,13 @@ defmodule Upkeep.Mutation do
         put_journal(previous)
         :erlang.raise(kind, reason, __STACKTRACE__)
     end
+  end
+
+  defp dispatch_journal([]), do: :ok
+
+  defp dispatch_journal(events) do
+    Enum.each(events, &Upkeep.Coordinator.Graph.notify/1)
+    Upkeep.Coordinator.Graph.drain()
   end
 
   defp transaction_committed?({:ok, _result}), do: true

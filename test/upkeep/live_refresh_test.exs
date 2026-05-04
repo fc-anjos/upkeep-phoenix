@@ -983,7 +983,6 @@ defmodule Upkeep.LiveRefreshTest do
              |> Upkeep.Change.updated()
              |> Upkeep.notify()
 
-    assert :ok = Upkeep.Coordinator.Graph.drain()
 
     graph_node_id =
       {:derived, UpkeepWeb.KanbanLive, :issue_count, [source_id],
@@ -1031,7 +1030,6 @@ defmodule Upkeep.LiveRefreshTest do
              |> Upkeep.Change.updated()
              |> Upkeep.notify()
 
-    assert :ok = Upkeep.Coordinator.Graph.drain()
 
     graph_node_id =
       {:derived, UpkeepWeb.KanbanLive, :issue_count, [source_id],
