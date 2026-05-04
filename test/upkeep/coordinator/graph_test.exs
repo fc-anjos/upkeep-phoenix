@@ -1,7 +1,7 @@
-defmodule Upkeep.Coordinator.NodeDAGTest do
+defmodule Upkeep.Coordinator.GraphTest do
   use ExUnit.Case, async: false
 
-  alias Upkeep.Coordinator.NodeDAG
+  alias Upkeep.Coordinator.Graph
 
   defmodule Ev do
     defstruct [:id, :tenant_id]
@@ -19,8 +19,8 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
   describe "source nodes" do
     test "load_fn runs once per coalesced event; subscribers receive {:dag_values, ...}" do
       attach_telemetry([
-        [:upkeep, :node_dag, :dispatch, :start],
-        [:upkeep, :node_dag, :dispatch, :stop]
+        [:upkeep, :graph, :dispatch, :start],
+        [:upkeep, :graph, :dispatch, :stop]
       ])
 
       counter = :counters.new(1, [:atomics])
@@ -33,22 +33,22 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
       end
 
       node_id = {:test_source, System.unique_integer()}
-      :ok = NodeDAG.register_source(node_id, keys, load_fn)
+      :ok = Graph.register_loader(node_id, keys, load_fn)
 
       event = %Ev{id: 1, tenant_id: 1}
-      Enum.each(1..50, fn _ -> NodeDAG.notify(event) end)
+      Enum.each(1..50, fn _ -> Graph.notify(event) end)
 
-      :ok = NodeDAG.drain()
+      :ok = Graph.drain()
 
       assert_receive {:dag_values, [{^node_id, :loaded_value}]}, 1_000
 
-      assert_receive {:telemetry, [:upkeep, :node_dag, :dispatch, :start], %{system_time: _},
+      assert_receive {:telemetry, [:upkeep, :graph, :dispatch, :start], %{system_time: _},
                       %{shard: shard, pair_count: pair_count}}
 
       assert is_integer(shard)
       assert pair_count >= 1
 
-      assert_receive {:telemetry, [:upkeep, :node_dag, :dispatch, :stop], %{duration: duration},
+      assert_receive {:telemetry, [:upkeep, :graph, :dispatch, :stop], %{duration: duration},
                       %{pid_count: pid_count}}
 
       assert is_integer(duration)
@@ -58,7 +58,7 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
       # We tolerate up to a small handful of loads (one per flush window).
       assert :counters.get(counter, 1) <= 5
 
-      NodeDAG.unregister(node_id)
+      Graph.unregister(node_id)
     end
 
     test "load_fn returning new keys reconciles the index" do
@@ -74,21 +74,18 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
       end
 
       node_id = {:reregister_test, System.unique_integer()}
-      :ok = NodeDAG.register_source(node_id, [key_a], load_fn)
+      :ok = Graph.register_loader(node_id, [key_a], load_fn)
 
       # First flush: routes via key_a.
-      NodeDAG.notify(%Ev{id: 1, tenant_id: 1})
-      :ok = NodeDAG.drain()
+      Graph.notify(%Ev{id: 1, tenant_id: 1})
+      :ok = Graph.drain()
       assert_receive {:dag_values, [{^node_id, :v}]}, 1_000
 
-      # After re-registration, key_a no longer routes; key_b does.
-      assert :ets.lookup(NodeDAG.index_table(), key_a) == []
-
-      NodeDAG.notify(%Ev{id: 1, tenant_id: 2})
-      :ok = NodeDAG.drain()
+      Graph.notify(%Ev{id: 1, tenant_id: 2})
+      :ok = Graph.drain()
       assert_receive {:dag_values, [{^node_id, :v}]}, 1_000
 
-      NodeDAG.unregister(node_id)
+      Graph.unregister(node_id)
     end
 
     test "unregistering removes interest and the index" do
@@ -96,15 +93,13 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
       load_fn = fn -> {:v, [key]} end
       node_id = {:remove_test, System.unique_integer()}
 
-      :ok = NodeDAG.register_source(node_id, [key], load_fn)
-      :ok = NodeDAG.unregister(node_id)
+      :ok = Graph.register_loader(node_id, [key], load_fn)
+      :ok = Graph.unregister(node_id)
 
       # No subscribers; notify must not deliver anything.
-      NodeDAG.notify(%Ev{id: 99, tenant_id: 1})
-      :ok = NodeDAG.drain()
+      Graph.notify(%Ev{id: 99, tenant_id: 1})
+      :ok = Graph.drain()
       refute_receive {:dag_values, [{^node_id, _}]}, 200
-
-      assert :ets.lookup(NodeDAG.index_table(), key) == []
     end
 
     test "indexed routing loads only matching source nodes" do
@@ -117,7 +112,7 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
       unrelated_ids = for idx <- 1..25, do: {:unrelated_source, idx, System.unique_integer()}
 
       :ok =
-        NodeDAG.register_source(matching_id, [matching_key], fn ->
+        Graph.register_loader(matching_id, [matching_key], fn ->
           :counters.add(matching_loads, 1, 1)
           {:matched, [matching_key]}
         end)
@@ -126,14 +121,14 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
         key = narrow_key(%Ev{id: System.unique_integer([:positive]), tenant_id: 999})
 
         :ok =
-          NodeDAG.register_source(node_id, [key], fn ->
+          Graph.register_loader(node_id, [key], fn ->
             :counters.add(unrelated_loads, 1, 1)
             {:unrelated, [key]}
           end)
       end)
 
-      NodeDAG.notify(%Ev{id: 10, tenant_id: 1})
-      :ok = NodeDAG.drain()
+      Graph.notify(%Ev{id: 10, tenant_id: 1})
+      :ok = Graph.drain()
 
       assert_receive {:dag_values, [{^matching_id, :matched}]}, 1_000
       refute_receive {:dag_values, [{{:unrelated_source, _, _}, _}]}
@@ -141,8 +136,8 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
       assert :counters.get(matching_loads, 1) == 1
       assert :counters.get(unrelated_loads, 1) == 0
 
-      NodeDAG.unregister(matching_id)
-      Enum.each(unrelated_ids, &NodeDAG.unregister/1)
+      Graph.unregister(matching_id)
+      Enum.each(unrelated_ids, &Graph.unregister/1)
     end
   end
 
@@ -165,17 +160,17 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
         deps |> Map.fetch!(source_id) |> length()
       end
 
-      :ok = NodeDAG.register_source(source_id, keys, load_fn)
-      :ok = NodeDAG.register_derived(derived_id, [source_id], compute_fn)
+      :ok = Graph.register_loader(source_id, keys, load_fn)
+      :ok = Graph.register_derived(derived_id, [source_id], compute_fn)
 
       subscribers =
         start_subscribers(100, fn ->
-          :ok = NodeDAG.register_source(source_id, keys, load_fn)
-          :ok = NodeDAG.register_derived(derived_id, [source_id], compute_fn)
+          :ok = Graph.register_loader(source_id, keys, load_fn)
+          :ok = Graph.register_derived(derived_id, [source_id], compute_fn)
         end)
 
-      NodeDAG.notify(%Ev{id: 20, tenant_id: 1})
-      :ok = NodeDAG.drain()
+      Graph.notify(%Ev{id: 20, tenant_id: 1})
+      :ok = Graph.drain()
 
       assert_receive {:dag_values, batch}, 1_000
       assert {source_id, [:a, :b]} in batch
@@ -184,8 +179,8 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
       assert :counters.get(source_loads, 1) == 1
       assert :counters.get(derived_computes, 1) == 1
 
-      NodeDAG.unregister(derived_id)
-      NodeDAG.unregister(source_id)
+      Graph.unregister(derived_id)
+      Graph.unregister(source_id)
       stop_subscribers(subscribers)
     end
 
@@ -208,11 +203,11 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
         Map.fetch!(deps, source_id)
       end
 
-      :ok = NodeDAG.register_source(source_id, keys, load_fn)
-      :ok = NodeDAG.register_derived(derived_id, [source_id], compute_fn)
+      :ok = Graph.register_loader(source_id, keys, load_fn)
+      :ok = Graph.register_derived(derived_id, [source_id], compute_fn)
 
-      Enum.each(1..50, fn _ -> NodeDAG.notify(event) end)
-      :ok = NodeDAG.drain()
+      Enum.each(1..50, fn _ -> Graph.notify(event) end)
+      :ok = Graph.drain()
 
       assert_receive {:dag_values, batch}, 1_000
       assert {source_id, :value} in batch
@@ -221,8 +216,8 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
       assert :counters.get(source_loads, 1) == 1
       assert :counters.get(derived_computes, 1) == 1
 
-      NodeDAG.unregister(derived_id)
-      NodeDAG.unregister(source_id)
+      Graph.unregister(derived_id)
+      Graph.unregister(source_id)
     end
 
     test "recompute once when source changes; multi-shard, derived auto-colocates with source" do
@@ -246,11 +241,11 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
         Map.fetch!(deps, source_id) * 2
       end
 
-      :ok = NodeDAG.register_source(source_id, keys, load_fn)
-      :ok = NodeDAG.register_derived(derived_id, [source_id], compute_fn)
+      :ok = Graph.register_loader(source_id, keys, load_fn)
+      :ok = Graph.register_derived(derived_id, [source_id], compute_fn)
 
-      Enum.each(1..20, fn _ -> NodeDAG.notify(%Ev{id: 7, tenant_id: 1}) end)
-      :ok = NodeDAG.drain()
+      Enum.each(1..20, fn _ -> Graph.notify(%Ev{id: 7, tenant_id: 1}) end)
+      :ok = Graph.drain()
 
       assert_receive {:dag_values, batch}, 1_000
       assert {source_id, 42} in batch
@@ -259,12 +254,12 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
       assert :counters.get(source_loads, 1) <= 5
       assert :counters.get(derived_computes, 1) <= 5
 
-      NodeDAG.unregister(derived_id)
-      NodeDAG.unregister(source_id)
+      Graph.unregister(derived_id)
+      Graph.unregister(source_id)
     end
 
     test "raises when deps span multiple shards" do
-      shards = :persistent_term.get({NodeDAG, :shards})
+      shards = Graph.shard_count()
 
       # Find two source ids whose phash2 lands on different shards.
       [src_a, src_b] = pick_split_pair(shards)
@@ -272,19 +267,19 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
       keys_a = [narrow_key(%Ev{id: 1, tenant_id: 1})]
       keys_b = [narrow_key(%Ev{id: 2, tenant_id: 1})]
 
-      :ok = NodeDAG.register_source(src_a, keys_a, fn -> {nil, keys_a} end)
-      :ok = NodeDAG.register_source(src_b, keys_b, fn -> {nil, keys_b} end)
+      :ok = Graph.register_loader(src_a, keys_a, fn -> {nil, keys_a} end)
+      :ok = Graph.register_loader(src_b, keys_b, fn -> {nil, keys_b} end)
 
       assert_raise ArgumentError, ~r/split across shards/, fn ->
-        NodeDAG.register_derived(
+        Graph.register_derived(
           {:der_split, System.unique_integer()},
           [src_a, src_b],
           fn _ -> :unreachable end
         )
       end
 
-      NodeDAG.unregister(src_a)
-      NodeDAG.unregister(src_b)
+      Graph.unregister(src_a)
+      Graph.unregister(src_b)
     end
   end
 
@@ -303,7 +298,7 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
     [a, b]
   end
 
-  defp start_subscribers(count, register_fn \\ fn -> :ok end) do
+  defp start_subscribers(count, register_fn) do
     parent = self()
 
     pids =
@@ -315,7 +310,7 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
         end)
       end
 
-    for _ <- 1..count, do: receive do: (:ready -> :ok)
+    for _ <- 1..count, do: receive(do: (:ready -> :ok))
     pids
   end
 

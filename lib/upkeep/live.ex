@@ -239,7 +239,7 @@ defmodule Upkeep.Live do
   def notify(event) when is_struct(event), do: Upkeep.notify(event)
 
   @doc """
-  Apply a batch of NodeDAG-pushed values to the LV in one pass.
+  Apply a batch of Graph-pushed values to the LV in one pass.
   Reduces subscriber-side wakeups to one handle_info per shard flush.
   """
   def apply_dag_values(socket, pairs) when is_list(pairs) do
@@ -249,7 +249,7 @@ defmodule Upkeep.Live do
   end
 
   @doc """
-  Apply a NodeDAG-pushed value to the LV. Mirrors `maybe_refresh` but skips
+  Apply a Graph-pushed value to the LV. Mirrors `maybe_refresh` but skips
   the source.load step — the coordinator already ran it once for everyone.
   """
   def apply_dag_value(socket, source_id, value) do

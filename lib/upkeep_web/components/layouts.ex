@@ -11,6 +11,20 @@ defmodule UpkeepWeb.Layouts do
   # and other static content.
   embed_templates "layouts/*"
 
+  attr :flash, :map, required: true
+  attr :current_scope, :map, default: nil
+  slot :inner_block, required: true
+
+  def app(assigns) do
+    ~H"""
+    <main class="min-h-screen bg-zinc-100 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-100">
+      {render_slot(@inner_block)}
+    </main>
+
+    <.flash_group flash={@flash} />
+    """
+  end
+
   @doc """
   Shows the flash group with standard titles and content.
 

@@ -241,7 +241,7 @@ defmodule UpkeepWeb.KanbanLiveTest do
     source_id = {source, params}
 
     source_id
-    |> Upkeep.Coordinator.NodeDAG.subscribers()
+    |> Upkeep.Coordinator.Graph.subscribers()
     |> MapSet.to_list()
   end
 
@@ -268,7 +268,7 @@ defmodule UpkeepWeb.KanbanLiveTest do
     if html =~ expected do
       html
     else
-      Process.sleep(25)
+      sync_live_view(view)
       assert_eventually_render(view, expected, attempts - 1)
     end
   end
@@ -284,7 +284,7 @@ defmodule UpkeepWeb.KanbanLiveTest do
     if has_element?(view, selector) do
       true
     else
-      Process.sleep(25)
+      sync_live_view(view)
       assert_eventually_has_element(view, selector, attempts - 1)
     end
   end
@@ -292,5 +292,11 @@ defmodule UpkeepWeb.KanbanLiveTest do
   defp assert_eventually_has_element(view, selector, 0) do
     html = render(view)
     flunk("expected rendered LiveView to include selector #{inspect(selector)}, got:\n#{html}")
+  end
+
+  defp sync_live_view(view) do
+    :ok = Upkeep.Coordinator.Graph.drain()
+    :sys.get_state(view.pid)
+    :ok
   end
 end

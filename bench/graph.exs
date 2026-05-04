@@ -1,8 +1,8 @@
-# NodeDAG throughput regression gate.
+# Graph throughput regression gate.
 #
-#   mix run bench/node_dag.exs
+#   mix run bench/graph.exs
 #
-# Drives the production NodeDAG with a realistic workload (100 subscribers,
+# Drives the production Graph with a realistic workload (100 subscribers,
 # 200-event pool, 50µs simulated query work, narrow-key registration) at
 # four publisher concurrency levels. Reports calls/s, deliveries/s,
 # queries/s, q/event, then asserts minimum thresholds at the highest
@@ -66,7 +66,7 @@ defmodule Bench.Sub do
               {1, keys}
             end
 
-            Upkeep.Coordinator.NodeDAG.register_source(node_id, keys, load_fn)
+            Upkeep.Coordinator.Graph.register_loader(node_id, keys, load_fn)
           end)
 
           send(parent, :ready)
@@ -93,8 +93,8 @@ defmodule Bench.Sub do
               Map.fetch!(deps, source_id) * 2
             end
 
-            Upkeep.Coordinator.NodeDAG.register_source(source_id, keys, load_fn)
-            Upkeep.Coordinator.NodeDAG.register_derived(derived_id, [source_id], compute_fn)
+            Upkeep.Coordinator.Graph.register_loader(source_id, keys, load_fn)
+            Upkeep.Coordinator.Graph.register_derived(derived_id, [source_id], compute_fn)
           end)
 
           send(parent, :ready)
@@ -146,7 +146,7 @@ defmodule Bench.Run do
       n
     else
       event = elem(pool, :rand.uniform(size) - 1)
-      Upkeep.Coordinator.NodeDAG.notify(event)
+      Upkeep.Coordinator.Graph.notify(event)
       loop(pool, size, deadline, n + 1)
     end
   end
@@ -163,7 +163,7 @@ publisher_levels = [1, 4, 8, 16]
 
 _subs = Bench.Sub.spawn_many(n_subs, pool, queries, derived_computes, deliveries)
 # Drain shards so :group :joined backlog is processed before measuring.
-Upkeep.Coordinator.NodeDAG.drain()
+Upkeep.Coordinator.Graph.drain()
 Process.sleep(500)
 
 IO.puts(
@@ -181,7 +181,7 @@ results =
     :counters.put(deliveries, 1, 0)
 
     calls = Bench.Run.run(p, duration_ms, pool)
-    Upkeep.Coordinator.NodeDAG.drain()
+    Upkeep.Coordinator.Graph.drain()
     Process.sleep(500)
 
     q = :counters.get(queries, 1)

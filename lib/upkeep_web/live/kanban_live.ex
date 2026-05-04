@@ -13,7 +13,9 @@ defmodule UpkeepWeb.KanbanLive do
     {:ok,
      socket
      |> assign(:new_issue_title, "")
+     |> assign(:new_issue_form, issue_form())
      |> assign(:comment_body, "")
+     |> assign(:comment_form, comment_form())
      |> assign(:selected_issue_id, nil)
      |> assign(:selected_issue_title, nil)
      |> assign(:comments, [])
@@ -35,7 +37,7 @@ defmodule UpkeepWeb.KanbanLive do
     title = title |> String.trim() |> default_title()
     {:ok, _issue} = Kanban.create_issue(@project_id, title)
 
-    {:noreply, assign(socket, :new_issue_title, "")}
+    {:noreply, assign(socket, new_issue_title: "", new_issue_form: issue_form())}
   end
 
   def handle_event("move_issue", %{"id" => id, "column" => column_id}, socket) do
@@ -82,20 +84,20 @@ defmodule UpkeepWeb.KanbanLive do
         %{"comment" => %{"body" => _body}},
         %{assigns: %{selected_issue_id: nil}} = socket
       ) do
-    {:noreply, assign(socket, :comment_body, "")}
+    {:noreply, assign(socket, comment_body: "", comment_form: comment_form())}
   end
 
   def handle_event("add_comment", %{"comment" => %{"body" => body}}, socket) do
     body = body |> String.trim() |> default_comment()
     {:ok, _comment} = Kanban.add_comment(socket.assigns.selected_issue_id, body)
 
-    {:noreply, assign(socket, :comment_body, "")}
+    {:noreply, assign(socket, comment_body: "", comment_form: comment_form())}
   end
 
   @impl true
   def render(assigns) do
     ~H"""
-    <main class="min-h-screen bg-zinc-100 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-100">
+    <Layouts.app flash={@flash}>
       <div class="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
         <header class="flex flex-col gap-3 border-b border-zinc-300 pb-4 dark:border-zinc-700 md:flex-row md:items-end md:justify-between">
           <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between md:flex-1">
@@ -112,10 +114,15 @@ defmodule UpkeepWeb.KanbanLive do
             <.theme_toggle />
           </div>
 
-          <.form for={%{}} as={:issue} phx-submit="create_issue" class="flex w-full gap-2 md:max-w-md">
-            <input
-              name="issue[title]"
-              value={@new_issue_title}
+          <.form
+            for={@new_issue_form}
+            id="new-issue-form"
+            phx-submit="create_issue"
+            class="flex w-full gap-2 md:max-w-md"
+          >
+            <.input
+              field={@new_issue_form[:title]}
+              type="text"
               placeholder="New issue"
               class="min-w-0 flex-1 rounded border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
             />
@@ -171,10 +178,15 @@ defmodule UpkeepWeb.KanbanLive do
                     phx-submit="rename_issue"
                     class="mt-3 flex gap-1"
                   >
-                    <input type="hidden" name="issue[id]" value={issue.id} />
-                    <input
-                      name="issue[title]"
-                      value={issue.title}
+                    <.input
+                      field={rename_issue_form(issue)[:id]}
+                      type="hidden"
+                      id={"issue-id-#{issue.id}"}
+                    />
+                    <.input
+                      field={rename_issue_form(issue)[:title]}
+                      type="text"
+                      id={"issue-title-#{issue.id}"}
                       aria-label="Issue title"
                       class="min-w-0 flex-1 rounded border border-zinc-300 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
                     />
@@ -298,14 +310,14 @@ defmodule UpkeepWeb.KanbanLive do
                   <li :if={@comments == []} class="px-3 py-2 text-zinc-500">No comments</li>
                 </ul>
                 <.form
-                  for={%{}}
-                  as={:comment}
+                  for={@comment_form}
+                  id="comment-form"
                   phx-submit="add_comment"
                   class="flex gap-2 border-t border-zinc-300 p-2 dark:border-zinc-700"
                 >
-                  <input
-                    name="comment[body]"
-                    value={@comment_body}
+                  <.input
+                    field={@comment_form[:body]}
+                    type="text"
                     placeholder="Comment"
                     class="min-w-0 flex-1 rounded border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
                   />
@@ -330,7 +342,7 @@ defmodule UpkeepWeb.KanbanLive do
           </aside>
         </section>
       </div>
-    </main>
+    </Layouts.app>
     """
   end
 
@@ -377,6 +389,18 @@ defmodule UpkeepWeb.KanbanLive do
   defp default_comment(""), do: "No details yet."
   defp default_comment(body), do: body
 
+  defp issue_form(params \\ %{"title" => ""}) do
+    to_form(params, as: :issue)
+  end
+
+  defp rename_issue_form(issue) do
+    to_form(%{"id" => issue.id, "title" => issue.title}, as: :issue)
+  end
+
+  defp comment_form(params \\ %{"body" => ""}) do
+    to_form(params, as: :comment)
+  end
+
   defp open_issue_detail(socket, issue_id) do
     issue = find_issue(socket.assigns.columns, issue_id)
 
@@ -401,6 +425,7 @@ defmodule UpkeepWeb.KanbanLive do
     |> assign(:comments, [])
     |> assign(:comment_count, 0)
     |> assign(:comment_body, "")
+    |> assign(:comment_form, comment_form())
   end
 
   defp find_issue(columns, issue_id) do

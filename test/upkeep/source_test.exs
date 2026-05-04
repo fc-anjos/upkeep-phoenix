@@ -154,22 +154,41 @@ defmodule Upkeep.SourceTest do
 
   test "coordinator sends one event when a process watches overlapping source keys" do
     socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+    project_id = System.unique_integer([:positive])
+    user_id = 9
 
-    socket = Live.watch(socket, :columns, BoardColumns, project_id: 123)
-    Live.watch(socket, :my_issues, MyIssues, project_id: 123, user_id: 9)
+    :ets.insert(__MODULE__, {{:board_columns, project_id}, [:todo]})
+    :ets.insert(__MODULE__, {{:my_issues, project_id, user_id}, [:mine]})
+
+    socket = Live.watch(socket, :columns, BoardColumns, project_id: project_id)
+    Live.watch(socket, :my_issues, MyIssues, project_id: project_id, user_id: user_id)
 
     assert socket.assigns.columns == [:todo]
 
-    change = updated_issue(project_id: 123, assignee_id: 9)
+    change = updated_issue(project_id: project_id, assignee_id: user_id)
 
     assert :ok = Upkeep.notify(change)
+    assert :ok = Upkeep.Coordinator.Graph.drain()
 
-    assert_receive {:dag_values, batch_1}
-    assert_receive {:dag_values, batch_2}
-    received = batch_1 ++ batch_2
-    assert {{BoardColumns, %{project_id: 123}}, [:todo]} in received
-    assert {{MyIssues, %{project_id: 123, user_id: 9}}, [:mine]} in received
+    assert_dag_values([
+      {{BoardColumns, %{project_id: project_id}}, [:todo]},
+      {{MyIssues, %{project_id: project_id, user_id: user_id}}, [:mine]}
+    ])
+
     refute_receive {:dag_values, _}
+  end
+
+  defp assert_dag_values(expected, received \\ []) do
+    if Enum.all?(expected, &(&1 in received)) do
+      received
+    else
+      receive do
+        {:dag_values, batch} -> assert_dag_values(expected, received ++ batch)
+      after
+        1_000 ->
+          flunk("expected DAG values #{inspect(expected)}, got #{inspect(received)}")
+      end
+    end
   end
 
   defp inserted_issue(attrs) do

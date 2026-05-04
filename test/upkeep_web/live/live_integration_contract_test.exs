@@ -93,7 +93,7 @@ defmodule UpkeepWeb.LiveIntegrationContractTest do
     if html =~ expected do
       html
     else
-      Process.sleep(25)
+      sync_live_view(view)
       assert_eventually_render(view, expected, attempts - 1)
     end
   end
@@ -101,5 +101,11 @@ defmodule UpkeepWeb.LiveIntegrationContractTest do
   defp assert_eventually_render(view, expected, 0) do
     html = render(view)
     flunk("expected rendered LiveView to include #{inspect(expected)}, got:\n#{html}")
+  end
+
+  defp sync_live_view(view) do
+    :ok = Upkeep.Coordinator.Graph.drain()
+    :sys.get_state(view.pid)
+    :ok
   end
 end

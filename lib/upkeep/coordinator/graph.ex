@@ -1,8 +1,8 @@
-defmodule Upkeep.Coordinator.NodeDAG do
+defmodule Upkeep.Coordinator.Graph do
   @moduledoc """
-  Sharded centralized DAG coordinator with `Group`-based interest tracking.
+  Sharded graph-aware coordinator with `Group`-based interest tracking.
 
-  Subscribers register interest in nodes (`register_source/3`,
+  Subscribers register interest in nodes (`register_source/4`,
   `register_derived/3`) declaring how their value is computed. The
   coordinator owns the routing index and the canonical node values; each
   shard:
@@ -22,7 +22,7 @@ defmodule Upkeep.Coordinator.NodeDAG do
       refcounted nodes when the last subscriber leaves. No hand-rolled
       `Process.monitor` bookkeeping.
     * Shape B lifecycle: shards `Group.register/4` themselves under
-      `node_dag/shard/<idx>`. LVs `Group.monitor/2` that prefix and
+      `graph/shard/<idx>`. LVs `Group.monitor/2` that prefix and
       re-register their watches on shard restart.
     * Cross-node ready: `Group.dispatch/3` already does cross-node send
       batching when we go multi-node.
@@ -37,14 +37,15 @@ defmodule Upkeep.Coordinator.NodeDAG do
 
   use Supervisor
 
+  alias Upkeep.Coordinator.Graph.Index
   alias Upkeep.Source
 
   @group Upkeep.Group
   @backpressure_threshold 5_000
 
   ## ETS table names
-  @index_table :upkeep_node_dag_index
-  @nodes_table :upkeep_node_dag_nodes
+  @index_table :upkeep_graph_index
+  @nodes_table :upkeep_graph_nodes
 
   ## Public API
 
@@ -56,15 +57,39 @@ defmodule Upkeep.Coordinator.NodeDAG do
 
   @doc """
   Register a source node. Caller pid joins as subscriber via `Group.join/4`.
-  Idempotent on the node definition; re-registering same `node_id` only
-  adds the caller as another subscriber.
+
+  The coordinator stores `{source, params}` and invokes `Upkeep.Source.load/2`
+  during flush. Keeping source definitions as data makes shard state easier to
+  inspect and avoids using anonymous closures as the production node contract.
   """
-  def register_source(node_id, interest_keys, load_fn)
+  def register_source(node_id, interest_keys, source, params)
+      when is_list(interest_keys) and is_atom(source) and is_map(params) do
+    shard = shard_of(node_id)
+
+    :ok =
+      GenServer.call(
+        shard_name(shard),
+        {:register_source, node_id, interest_keys, {:source, source, params}}
+      )
+
+    join_subscriber(node_id)
+  end
+
+  @doc """
+  Register a test or benchmark loader function.
+
+  Application sources should use `register_source/4`; this helper keeps
+  low-level coordinator tests and benchmarks independent from Ecto sources.
+  """
+  def register_loader(node_id, interest_keys, load_fn)
       when is_list(interest_keys) and is_function(load_fn, 0) do
     shard = shard_of(node_id)
 
     :ok =
-      GenServer.call(shard_name(shard), {:register_source, node_id, interest_keys, load_fn})
+      GenServer.call(
+        shard_name(shard),
+        {:register_source, node_id, interest_keys, {:fun, load_fn}}
+      )
 
     join_subscriber(node_id)
   end
@@ -133,9 +158,7 @@ defmodule Upkeep.Coordinator.NodeDAG do
     affected_by_shard =
       event
       |> Source.event_keys()
-      |> Enum.flat_map(&:ets.lookup(@index_table, &1))
-      |> Enum.map(fn {_key, node_id} -> node_id end)
-      |> Enum.uniq()
+      |> Index.lookup_nodes()
       |> Enum.group_by(&shard_of_node/1)
 
     Enum.each(affected_by_shard, fn {shard, node_ids} ->
@@ -161,20 +184,22 @@ defmodule Upkeep.Coordinator.NodeDAG do
   def shard_name(idx), do: :"#{__MODULE__}.Shard.#{idx}"
   def task_sup, do: :"#{__MODULE__}.TaskSup"
 
+  def shard_count, do: :persistent_term.get({__MODULE__, :shards})
+
   @doc "Group key under which a node's subscribers join."
   def source_key(node_id) do
-    "node_dag/source/" <>
+    "graph/source/" <>
       (node_id |> :erlang.term_to_binary() |> Base.url_encode64(padding: false))
   end
 
-  def decode_source_key("node_dag/source/" <> encoded) do
+  def decode_source_key("graph/source/" <> encoded) do
     encoded
     |> Base.url_decode64!(padding: false)
     |> :erlang.binary_to_term()
   end
 
   @doc "Group key under which a shard registers itself for lifecycle monitoring."
-  def shard_key(idx), do: "node_dag/shard/#{idx}"
+  def shard_key(idx), do: "graph/shard/#{idx}"
 
   ## Supervisor
 
@@ -227,8 +252,8 @@ defmodule Upkeep.Coordinator.NodeDAG do
   # Sources hash to their shard; derived nodes have an explicit override
   # stored in nodes_table so they can colocate with their deps.
   defp shard_of_node(node_id) do
-    case :ets.lookup(@nodes_table, node_id) do
-      [{^node_id, _kind, shard_idx, _keys}] -> shard_idx
+    case Index.lookup(node_id) do
+      {:ok, {_kind, shard_idx, _keys}} -> shard_idx
       _ -> shard_of(node_id)
     end
   end

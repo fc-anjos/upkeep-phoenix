@@ -24,9 +24,10 @@ defmodule Upkeep.Observability do
     [:upkeep, :dag, :recompute, :stop],
     [:upkeep, :dag, :recompute, :exception],
     [:upkeep, :live, :assign],
-    [:upkeep, :node_dag, :dispatch, :start],
-    [:upkeep, :node_dag, :dispatch, :stop],
-    [:upkeep, :node_dag, :dispatch, :exception],
+    [:upkeep, :graph, :dispatch, :start],
+    [:upkeep, :graph, :dispatch, :stop],
+    [:upkeep, :graph, :dispatch, :exception],
+    [:upkeep, :graph, :source_load, :exception],
     [:upkeep, :coordinator, :dispatch, :start],
     [:upkeep, :coordinator, :dispatch, :stop],
     [:upkeep, :coordinator, :dispatch, :exception]

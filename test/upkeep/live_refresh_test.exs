@@ -420,7 +420,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     assert socket.assigns.issue_card_comments == [:comment_a]
     assert socket.assigns.issue_card_comment_count == 1
-    assert member_count(IssueComments, issue_id: 1) == 1
+    assert member_count(IssueComments, [issue_id: 1], component_id) == 1
 
     snapshot = Live.graph_snapshot(socket)
     source_id = {:scoped, component_id, {IssueComments, %{issue_id: 1}}}
@@ -465,7 +465,7 @@ defmodule Upkeep.LiveRefreshTest do
     assert socket.assigns.issue_id == 1
     assert socket.assigns.issue_label == "issue 1"
     assert socket.assigns.issue_card_comments == [:comment_a]
-    assert member_count(IssueComments, issue_id: 1) == 1
+    assert member_count(IssueComments, [issue_id: 1], component_id) == 1
 
     :ets.insert(table, {{:issues, 1}, [1, :unchanged_component_value]})
 
@@ -476,7 +476,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     assert socket.assigns.issue_id == 1
     assert socket.assigns.issue_label == "issue 1"
-    assert member_count(IssueComments, issue_id: 1) == 1
+    assert member_count(IssueComments, [issue_id: 1], component_id) == 1
 
     :ets.insert(table, {{:issues, 1}, [2]})
 
@@ -503,7 +503,7 @@ defmodule Upkeep.LiveRefreshTest do
       Live.watch(socket, :issue_card_comments, IssueComments, [issue_id: 2], under: component_id)
 
     assert socket.assigns.issue_card_comments == [:comment_b]
-    assert member_count(IssueComments, issue_id: 2) == 1
+    assert member_count(IssueComments, [issue_id: 2], component_id) == 1
   end
 
   test "removing component-scoped source preserves shared source interest", %{table: table} do
@@ -683,23 +683,21 @@ defmodule Upkeep.LiveRefreshTest do
     |> Upkeep.Change.inserted()
   end
 
-  defp member_count(source, params) do
+  defp member_count(source, params, component \\ :issue_detail) do
     params = Map.new(params)
 
+    source_ids = [
+      Upkeep.Live.Ids.scoped_source_id(source, params, nil),
+      Upkeep.Live.Ids.scoped_source_id(source, params, component)
+    ]
+
     subscribed? =
-      Upkeep.Coordinator.NodeDAG.nodes_table()
-      |> :ets.tab2list()
-      |> Enum.any?(fn {node_id, _kind, _shard_idx, _keys} ->
-        source_id_matches?(node_id, source, params) and
-          Upkeep.Coordinator.NodeDAG.subscribed?(node_id, self())
+      Enum.any?(source_ids, fn source_id ->
+        Upkeep.Coordinator.Graph.subscribed?(source_id, self())
       end)
 
     if subscribed?, do: 1, else: 0
   end
-
-  defp source_id_matches?({source, params}, source, params), do: true
-  defp source_id_matches?({:scoped, _component, {source, params}}, source, params), do: true
-  defp source_id_matches?(_, _, _), do: false
 
   defp attach_telemetry(events) do
     test_pid = self()

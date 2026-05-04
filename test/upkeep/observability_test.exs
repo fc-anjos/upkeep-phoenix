@@ -62,7 +62,7 @@ defmodule Upkeep.ObservabilityTest do
            end)
   end
 
-  test "stores NodeDAG dispatch telemetry events", %{table: table} do
+  test "stores Graph dispatch telemetry events", %{table: table} do
     %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
     |> Live.watch(:issues, ProjectIssues, project_id: 1)
 
@@ -73,12 +73,13 @@ defmodule Upkeep.ObservabilityTest do
              |> Upkeep.Change.updated()
              |> Upkeep.notify()
 
+    assert :ok = Upkeep.Coordinator.Graph.drain()
     assert_receive {:dag_values, [{{ProjectIssues, %{project_id: 1}}, [:after]}]}
 
     events = recent_events_after_observability_flush()
 
     assert Enum.any?(events, fn event ->
-             event.event == [:upkeep, :node_dag, :dispatch, :stop] and
+             event.event == [:upkeep, :graph, :dispatch, :stop] and
                Map.get(event.metadata, :pair_count, 0) >= 1 and
                Map.get(event.metadata, :pid_count, 0) >= 1 and
                is_integer(event.measurements.duration)

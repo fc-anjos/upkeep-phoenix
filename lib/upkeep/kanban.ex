@@ -3,8 +3,6 @@ defmodule Upkeep.Kanban do
   Small Ecto-backed kanban domain used by Upkeep's LiveView reference app.
   """
 
-  use GenServer
-
   import Ecto.Query
 
   alias Ecto.Changeset
@@ -14,64 +12,7 @@ defmodule Upkeep.Kanban do
   @project_id 1
   @current_user_id 1
 
-  defmodule Column do
-    use Ecto.Schema
-
-    @primary_key {:id, :integer, autogenerate: false}
-    schema "kanban_columns" do
-      field :project_id, :integer
-      field :name, :string
-      field :position, :integer
-    end
-  end
-
-  defmodule Issue do
-    use Ecto.Schema
-
-    @primary_key {:id, :integer, autogenerate: false}
-    schema "kanban_issues" do
-      field :project_id, :integer
-      field :column_id, :integer
-      field :assignee_id, :integer
-      field :title, :string
-      field :status, :string
-      field :position, :integer
-    end
-  end
-
-  defmodule Comment do
-    use Ecto.Schema
-
-    @primary_key {:id, :integer, autogenerate: false}
-    schema "kanban_comments" do
-      field :project_id, :integer
-      field :issue_id, :integer
-      field :body, :string
-    end
-  end
-
-  defmodule Activity do
-    use Ecto.Schema
-
-    @primary_key {:id, :integer, autogenerate: false}
-    schema "kanban_activity" do
-      field :project_id, :integer
-      field :message, :string
-    end
-  end
-
-  def start_link(_opts), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
-
-  @impl true
-  def init(nil) do
-    ensure_tables!()
-    reset!()
-    {:ok, nil}
-  end
-
   def reset! do
-    ensure_tables!()
-
     Repo.transaction(fn ->
       Repo.delete_all(Activity, upkeep: false)
       Repo.delete_all(Comment, upkeep: false)
@@ -349,45 +290,5 @@ defmodule Upkeep.Kanban do
         body: "Keep the source contract boring."
       }
     ]
-  end
-
-  defp ensure_tables! do
-    Repo.query!("""
-    CREATE TABLE IF NOT EXISTS kanban_columns (
-      id INTEGER PRIMARY KEY,
-      project_id INTEGER NOT NULL,
-      name TEXT NOT NULL,
-      position INTEGER NOT NULL
-    )
-    """)
-
-    Repo.query!("""
-    CREATE TABLE IF NOT EXISTS kanban_issues (
-      id INTEGER PRIMARY KEY,
-      project_id INTEGER NOT NULL,
-      column_id INTEGER NOT NULL,
-      assignee_id INTEGER,
-      title TEXT NOT NULL,
-      status TEXT NOT NULL,
-      position INTEGER NOT NULL
-    )
-    """)
-
-    Repo.query!("""
-    CREATE TABLE IF NOT EXISTS kanban_comments (
-      id INTEGER PRIMARY KEY,
-      project_id INTEGER NOT NULL,
-      issue_id INTEGER NOT NULL,
-      body TEXT NOT NULL
-    )
-    """)
-
-    Repo.query!("""
-    CREATE TABLE IF NOT EXISTS kanban_activity (
-      id INTEGER PRIMARY KEY,
-      project_id INTEGER NOT NULL,
-      message TEXT NOT NULL
-    )
-    """)
   end
 end
