@@ -3,11 +3,12 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
 
   alias Upkeep.Coordinator.Graph
   alias Upkeep.Coordinator.Graph.Index
+  alias Upkeep.Coordinator.Node
   alias Upkeep.DAG
 
   def register_source(state, node_id, interest_keys, loader) do
     case Map.fetch(state.sources, node_id) do
-      {:ok, {_loader, _registered_keys, _encoded_key, _tracked_deps, _loaded?}} ->
+      {:ok, %Node{}} ->
         state
 
       :error ->
@@ -18,7 +19,13 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
         %{
           state
           | sources:
-              Map.put(state.sources, node_id, {loader, interest_keys, encoded_key, [], false}),
+              Map.put(state.sources, node_id, %Node{
+                id: node_id,
+                kind: :source,
+                loader: loader,
+                registered_keys: interest_keys,
+                encoded_key: encoded_key
+              }),
             dag: dag
         }
     end
@@ -31,7 +38,13 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
     %{
       state
       | dag: DAG.put_derived(state.dag, node_id, dep_ids, compute_fn, initial_value: nil),
-        sources: Map.put_new(state.sources, node_id, {nil, [], encoded_key, [], true})
+        sources:
+          Map.put_new(state.sources, node_id, %Node{
+            id: node_id,
+            kind: :derived,
+            encoded_key: encoded_key,
+            loaded?: true
+          })
     }
   end
 

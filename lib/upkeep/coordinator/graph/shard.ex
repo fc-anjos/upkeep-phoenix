@@ -84,7 +84,7 @@ defmodule Upkeep.Coordinator.Graph.Shard do
 
   @impl true
   def handle_info(
-        {ref, {node_id, value, current_keys, tracked_deps, loader, registered_keys}},
+        {ref, {node_id, value, current_keys, tracked_deps, node}},
         state
       ) do
     {:noreply,
@@ -95,8 +95,7 @@ defmodule Upkeep.Coordinator.Graph.Shard do
        value,
        current_keys,
        tracked_deps,
-       loader,
-       registered_keys
+       node
      )}
   end
 

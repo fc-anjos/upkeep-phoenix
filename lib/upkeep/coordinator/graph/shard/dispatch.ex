@@ -2,6 +2,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Dispatch do
   @moduledoc false
 
   alias Upkeep.Coordinator.Graph
+  alias Upkeep.Coordinator.Node
 
   def batch(_state, []), do: :ok
 
@@ -16,8 +17,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Dispatch do
     :telemetry.span([:upkeep, :graph, :dispatch], metadata, fn ->
       pairs_by_pid =
         Enum.reduce(pairs, %{}, fn {node_id, value}, acc ->
-          {_loader, _keys, encoded_key, _tracked_deps, _loaded?} =
-            Map.fetch!(state.sources, node_id)
+          %Node{encoded_key: encoded_key} = Map.fetch!(state.sources, node_id)
 
           Graph.group()
           |> Group.members(encoded_key)

@@ -4,29 +4,28 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
   alias Upkeep.Coordinator.Graph
   alias Upkeep.Coordinator.Graph.Index
   alias Upkeep.Coordinator.Graph.Shard.Loaders
+  alias Upkeep.Coordinator.Node
   alias Upkeep.DAG
 
   def register_source_and_load(state, node_id, from) do
     case Map.fetch(state.initial_loads, node_id) do
       {:ok, load} ->
-        {loader, _registered_keys, _encoded_key, _tracked_deps, _loaded?} =
-          Map.fetch!(state.sources, node_id)
+        node = Map.fetch!(state.sources, node_id)
 
-        emit_source(:hit, state.idx, node_id, loader)
+        emit_source(:hit, state.idx, node_id, node.loader)
 
         state = put_in(state.initial_loads[node_id].waiters, [from | load.waiters])
         {:noreply, state}
 
       :error ->
-        {loader, registered_keys, _encoded_key, _tracked_deps, _loaded?} =
-          Map.fetch!(state.sources, node_id)
+        node = Map.fetch!(state.sources, node_id)
 
-        emit_source(:miss, state.idx, node_id, loader)
+        emit_source(:miss, state.idx, node_id, node.loader)
 
         task =
           Task.Supervisor.async_nolink(Graph.task_sup(), fn ->
-            {value, current_keys, tracked_deps} = Loaders.run_with_deps(loader)
-            {node_id, value, current_keys, tracked_deps, loader, registered_keys}
+            {value, current_keys, tracked_deps} = Loaders.run_with_deps(node.loader)
+            {node_id, value, current_keys, tracked_deps, node}
           end)
 
         state = %{
@@ -82,15 +81,14 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
         value,
         current_keys,
         tracked_deps,
-        loader,
-        registered_keys
+        %Node{} = node
       ) do
     Process.demonitor(ref, [:flush])
 
     {load, state} = pop_source(state, ref, node_id)
 
-    if current_keys != registered_keys do
-      Index.reconcile_source(node_id, state.idx, registered_keys, current_keys)
+    if current_keys != node.registered_keys do
+      Index.reconcile_source(node_id, state.idx, node.registered_keys, current_keys)
     end
 
     {dag, _changed?} = DAG.put_source(state.dag, node_id, value, [])
@@ -99,7 +97,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
       Map.put(
         state.sources,
         node_id,
-        {loader, current_keys, Graph.source_key(node_id), tracked_deps, true}
+        %Node{node | registered_keys: current_keys, tracked_deps: tracked_deps, loaded?: true}
       )
 
     Enum.each(load.waiters, &GenServer.reply(&1, {:ok, value, tracked_deps}))
