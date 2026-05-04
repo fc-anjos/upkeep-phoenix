@@ -212,7 +212,7 @@ defmodule Upkeep.Source do
     repo = source.__upkeep_repo__() || Application.get_env(:upkeep, :repo)
 
     {value, deps} =
-      with_read_context(repo, fn ->
+      with_read_context(repo, source_id(source, params), fn ->
         value = source.load(params)
         {value, tracked_deps()}
       end)
@@ -227,9 +227,9 @@ defmodule Upkeep.Source do
 
   def read(%Ecto.Query{} = query) do
     case Process.get(@context_key) do
-      %{repo: repo} ->
+      %{repo: repo} = ctx ->
         track_query(query)
-        memoize_read(repo, query)
+        memoize_read(repo, ctx[:holder], query)
 
       _ ->
         raise ArgumentError,
@@ -241,7 +241,7 @@ defmodule Upkeep.Source do
 
   def read(value), do: value
 
-  defp memoize_read(repo, query) do
+  defp memoize_read(repo, holder, query) do
     fingerprint = read_fingerprint(repo, query)
     cache = Map.get(Process.get(@context_key), :reads, %{})
 
@@ -250,7 +250,7 @@ defmodule Upkeep.Source do
         value
 
       :error ->
-        value = Upkeep.Coordinator.ReadNodes.fetch_or_load(repo, query)
+        value = Upkeep.Coordinator.ReadNodes.fetch_or_load(repo, query, holder)
         ctx = Process.get(@context_key)
         Process.put(@context_key, Map.put(ctx, :reads, Map.put(cache, fingerprint, value)))
         value
@@ -276,7 +276,7 @@ defmodule Upkeep.Source do
     repo = source.__upkeep_repo__() || Application.get_env(:upkeep, :repo)
 
     {_value, deps} =
-      with_read_context(repo, fn ->
+      with_read_context(repo, source_id(source, params), fn ->
         value = source.load(params)
         {value, tracked_deps()}
       end)
@@ -320,9 +320,9 @@ defmodule Upkeep.Source do
     if function_exported?(source, :query, 1), do: source.query(params), else: nil
   end
 
-  defp with_read_context(repo, fun) do
+  defp with_read_context(repo, holder, fun) do
     previous = Process.get(@context_key)
-    Process.put(@context_key, %{repo: repo, deps: []})
+    Process.put(@context_key, %{repo: repo, deps: [], holder: holder})
 
     try do
       fun.()

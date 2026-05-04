@@ -5,6 +5,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
   alias Upkeep.Coordinator.Graph.Index
   alias Upkeep.Coordinator.Graph.Shard.Retries
   alias Upkeep.Coordinator.Node
+  alias Upkeep.Coordinator.ReadNodes
   alias Upkeep.DAG
 
   def register_source(state, node_id, interest_keys, loader) do
@@ -51,6 +52,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
 
   def remove(state, node_id) do
     Index.delete(node_id)
+    ReadNodes.release(node_id)
 
     state = Retries.clear(state, node_id)
 

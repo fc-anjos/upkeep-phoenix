@@ -235,6 +235,66 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
     assert ReadNodes.count() == 0
   end
 
+  test "release/1 evicts read-nodes when their last holder is dropped" do
+    Repo.insert!(%Project{id: 1, name: "alpha"})
+
+    q = from(p in Project)
+    holder_a = {:source_a, %{}}
+    holder_b = {:source_b, %{}}
+
+    ReadNodes.fetch_or_load(Repo, q, holder_a)
+    ReadNodes.fetch_or_load(Repo, q, holder_b)
+    assert ReadNodes.count() == 1
+
+    # Releasing one holder leaves the read-node alive — another holder
+    # is still using it.
+    assert ReadNodes.release(holder_a) == 0
+    assert ReadNodes.count() == 1
+
+    # Releasing the last holder evicts the value and its index entries.
+    assert ReadNodes.release(holder_b) == 1
+    assert ReadNodes.count() == 0
+    assert :ets.tab2list(ReadNodes.index_table()) == []
+  end
+
+  test "release/1 is a no-op when no holder was recorded" do
+    Repo.insert!(%Project{id: 1, name: "alpha"})
+
+    q = from(p in Project)
+    ReadNodes.fetch_or_load(Repo, q)
+    assert ReadNodes.count() == 1
+
+    assert ReadNodes.release({:never_seen, %{}}) == 0
+    assert ReadNodes.count() == 1
+  end
+
+  test "removing a source node releases its read-nodes" do
+    # Use a custom source that goes through Upkeep.Source.load so the
+    # holder propagation is exercised end-to-end.
+    Repo.insert!(%Project{id: 1, name: "alpha"})
+
+    defmodule HolderSource do
+      use Upkeep.Source, repo: Upkeep.Repo
+
+      import Ecto.Query
+
+      def load(params) do
+        Upkeep.read(from(p in Upkeep.Coordinator.ReadNodesTest.Project, where: p.id == ^params.id))
+      end
+
+      def reacts_to?(_event, _params), do: false
+      def __upkeep_interest_keys__(_params), do: []
+      def __upkeep_explicit_interest_keys__(_params), do: []
+      def __upkeep_sharing_partition__(params), do: params
+    end
+
+    {_value, _deps} = Upkeep.Source.load(HolderSource, %{id: 1})
+    assert ReadNodes.count() == 1
+
+    Upkeep.Coordinator.ReadNodes.release(Upkeep.Source.source_id(HolderSource, %{id: 1}))
+    assert ReadNodes.count() == 0
+  end
+
   test "Watcher is a member of the cluster notification group" do
     members = Group.members(Upkeep.Coordinator.Graph.group(), Upkeep.Coordinator.Graph.notification_key())
     pids = Enum.map(members, fn {pid, _meta} -> pid end)
