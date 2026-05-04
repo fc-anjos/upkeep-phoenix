@@ -22,13 +22,8 @@ defmodule Upkeep.Live do
         ]
 
       @impl true
-      def handle_info({:upkeep_event, event}, socket) do
-        socket =
-          socket
-          |> Upkeep.Live.queue_matching(event)
-          |> Upkeep.Live.flush_refreshes()
-
-        {:noreply, socket}
+      def handle_info({:dag_value, source_id, value}, socket) do
+        {:noreply, Upkeep.Live.apply_dag_value(socket, source_id, value)}
       end
 
       defoverridable handle_info: 2
@@ -59,7 +54,7 @@ defmodule Upkeep.Live do
         registered? = Subscriptions.register_interest?(socket)
 
         if registered? do
-          Subscriptions.join_interest(interest_keys, assign_name, source)
+          Subscriptions.register(source_id, interest_keys, source, params)
         end
 
         socket
@@ -236,6 +231,29 @@ defmodule Upkeep.Live do
 
   def notify(event) when is_struct(event), do: Upkeep.notify(event)
 
+  @doc """
+  Apply a NodeDAG-pushed value to the LV. Mirrors `maybe_refresh` but skips
+  the source.load step — the coordinator already ran it once for everyone.
+  """
+  def apply_dag_value(socket, source_id, value) do
+    case Map.fetch(State.watches(socket), source_id) do
+      {:ok, watch} ->
+        socket = assign_watch(socket, watch, value)
+
+        {socket, changed?} =
+          put_dag_value(socket, source_id, value, Ids.source_deps(watch.component))
+
+        if changed? do
+          recompute_derived(socket, [Ids.source_node_id(source_id)])
+        else
+          socket
+        end
+
+      :error ->
+        socket
+    end
+  end
+
   defp maybe_refresh(socket, watch, changed) do
     value = load_source(watch, :refresh)
     socket = assign_watch(socket, watch, value)
@@ -339,9 +357,7 @@ defmodule Upkeep.Live do
         watches = Map.delete(current_watches, source_id)
 
         if watch.registered? do
-          Subscriptions.leave_interest(
-            Subscriptions.unused_interest_keys(watch.interest_keys, watches)
-          )
+          Subscriptions.unregister(source_id)
         end
 
         Telemetry.emit([:source, :unwatch], %{count: 1}, Telemetry.watch_metadata(watch))

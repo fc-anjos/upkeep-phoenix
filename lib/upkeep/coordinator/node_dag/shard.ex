@@ -61,6 +61,11 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
   end
 
   @impl true
+  def handle_call({:subscribers, node_id}, _from, state) do
+    {:reply, Map.get(state.interests, node_id, MapSet.new()), state}
+  end
+
+  @impl true
   def handle_call(:drain, _from, state), do: {:reply, :ok, do_flush(state)}
 
   @impl true

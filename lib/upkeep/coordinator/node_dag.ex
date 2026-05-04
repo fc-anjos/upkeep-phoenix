@@ -96,6 +96,17 @@ defmodule Upkeep.Coordinator.NodeDAG do
     GenServer.call(shard_name(shard), {:unregister, pid, node_id})
   end
 
+  @doc "Return the set of pids currently subscribed to `node_id`."
+  def subscribers(node_id) do
+    GenServer.call(shard_name(shard_of(node_id)), {:subscribers, node_id})
+  end
+
+  @doc "Return true if `pid` is currently subscribed to `node_id`."
+  def subscribed?(node_id, pid \\ nil) do
+    pid = pid || self()
+    MapSet.member?(subscribers(node_id), pid)
+  end
+
   def notify(event) when is_struct(event) do
     affected_by_shard =
       event

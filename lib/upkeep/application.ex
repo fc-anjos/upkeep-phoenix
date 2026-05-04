@@ -16,7 +16,7 @@ defmodule Upkeep.Application do
       {DNSCluster, query: Application.get_env(:upkeep, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Upkeep.PubSub},
       Upkeep.Kanban,
-      durable_supervisor_child(),
+      node_dag_child(),
       # Start to serve requests, typically the last entry
       UpkeepWeb.Endpoint
     ]
@@ -40,12 +40,5 @@ defmodule Upkeep.Application do
     System.get_env("RELEASE_NAME") == nil
   end
 
-  defp durable_supervisor_child do
-    opts =
-      :upkeep
-      |> Application.fetch_env!(:durable_server)
-      |> Keyword.put(:name, Upkeep.DurableSupervisor)
-
-    {DurableServer.Supervisor, opts}
-  end
+  defp node_dag_child, do: {Upkeep.Coordinator.NodeDAG, []}
 end

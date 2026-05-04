@@ -1,39 +1,20 @@
 defmodule Upkeep.Live.Subscriptions do
   @moduledoc false
 
-  alias Upkeep.Source
+  alias Upkeep.Coordinator.NodeDAG
 
-  @supervisor Upkeep.DurableSupervisor
-
-  def join_interest(interest_keys, assign_name, source) do
-    for key <- interest_keys do
-      :ok =
-        Group.join(@supervisor, Source.group_key(key), %{
-          assign: assign_name,
-          source: inspect(source)
-        })
-    end
+  @doc """
+  Register a watched source with the NodeDAG. The shared coordinator owns
+  the interest index and runs `load_fn` once per affected node, fanning the
+  resulting value out to all interested LVs.
+  """
+  def register(source_id, interest_keys, source, params) do
+    load_fn = fn -> source.load(params) end
+    :ok = NodeDAG.register_source(source_id, interest_keys, load_fn)
   end
 
-  def leave_interest(interest_keys) do
-    for key <- interest_keys do
-      case Group.leave(@supervisor, Source.group_key(key)) do
-        :ok -> :ok
-        {:error, :not_in_group} -> :ok
-      end
-    end
-
-    :ok
-  end
-
-  def unused_interest_keys(interest_keys, watches) do
-    remaining_keys =
-      watches
-      |> Map.values()
-      |> Enum.flat_map(& &1.interest_keys)
-      |> MapSet.new()
-
-    Enum.reject(interest_keys, &MapSet.member?(remaining_keys, &1))
+  def unregister(source_id) do
+    NodeDAG.unregister(source_id)
   end
 
   def register_interest?(%Phoenix.LiveView.Socket{endpoint: nil, view: nil}), do: true

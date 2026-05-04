@@ -34,7 +34,7 @@ defmodule Upkeep.Mutation do
       put_journal(journal() ++ [event])
       :ok
     else
-      Upkeep.Coordinator.notify(event)
+      Upkeep.Coordinator.NodeDAG.notify(event)
     end
   end
 
@@ -77,7 +77,7 @@ defmodule Upkeep.Mutation do
     try do
       case repo.transaction(fn -> {fun.(), journal()} end) do
         {:ok, {result, events}} ->
-          Enum.each(events, &Upkeep.Coordinator.notify/1)
+          Enum.each(events, &Upkeep.Coordinator.NodeDAG.notify/1)
           {:ok, result}
 
         {:error, reason} ->
@@ -96,7 +96,7 @@ defmodule Upkeep.Mutation do
       case repo.transaction(multi) do
         {:ok, changes} ->
           journal()
-          |> Enum.each(&Upkeep.Coordinator.notify/1)
+          |> Enum.each(&Upkeep.Coordinator.NodeDAG.notify/1)
 
           {:ok, changes}
 
@@ -129,7 +129,7 @@ defmodule Upkeep.Mutation do
       result = fun.()
 
       if transaction_committed?(result) do
-        Enum.each(journal(), &Upkeep.Coordinator.notify/1)
+        Enum.each(journal(), &Upkeep.Coordinator.NodeDAG.notify/1)
       end
 
       result

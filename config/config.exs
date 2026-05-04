@@ -11,20 +11,6 @@ config :upkeep,
   ecto_repos: [Upkeep.Repo],
   generators: [timestamp_type: :utc_datetime]
 
-config :upkeep, :durable_server,
-  prefix: "upkeep/",
-  backend:
-    {DurableServer.Backends.EKVStore,
-     [
-       name: Upkeep.DurableEKV,
-       data_dir: Path.expand("../tmp/durable/#{config_env()}", __DIR__),
-       cluster_size: 1,
-       shards: 2,
-       log: false,
-       shutdown_barrier: 1_000
-     ]},
-  group: [log: false]
-
 # Configure the endpoint
 config :upkeep, UpkeepWeb.Endpoint,
   url: [host: "localhost"],

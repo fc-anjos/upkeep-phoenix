@@ -687,12 +687,9 @@ defmodule Upkeep.LiveRefreshTest do
 
   defp member_count(source, params) do
     params = Map.new(params)
+    source_id = Upkeep.Live.Ids.scoped_source_id(source, params, nil)
 
-    source.__upkeep_interest_keys__(params)
-    |> hd()
-    |> Upkeep.Source.group_key()
-    |> then(&Group.members(Upkeep.DurableSupervisor, &1))
-    |> Enum.count(fn {pid, _meta} -> pid == self() end)
+    if Upkeep.Coordinator.NodeDAG.subscribed?(source_id, self()), do: 1, else: 0
   end
 
   defp attach_telemetry(events) do
