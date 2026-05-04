@@ -13,6 +13,7 @@ defmodule Upkeep.Live do
     SharedDerived,
     Snapshot,
     SourceLoads,
+    Specs,
     State,
     Subscriptions,
     Telemetry
@@ -44,6 +45,7 @@ defmodule Upkeep.Live do
   def watch(socket, assign_name, source, params, opts \\ []) when is_atom(assign_name) do
     params = normalize_params(params)
     component = Keyword.get(opts, :under)
+    _spec = Specs.source(assign_name, source, params, component)
     source_id = Ids.scoped_source_id(source, params, component)
 
     case Map.fetch(State.watches(socket), source_id) do
@@ -110,6 +112,7 @@ defmodule Upkeep.Live do
 
   def component(socket, component_id, deps, fun)
       when not is_nil(component_id) and is_list(deps) and is_function(fun, 1) do
+    _spec = Specs.component(socket, component_id, deps, fun)
     {dep_node_ids, dep_pairs} = DAGOperations.dependency_nodes(socket, deps)
     node_id = Ids.component_node_id(component_id)
 
@@ -157,6 +160,7 @@ defmodule Upkeep.Live do
 
   def derive(socket, assign_name, deps, fun)
       when is_atom(assign_name) and is_list(deps) and is_function(fun, 1) do
+    _spec = Specs.derived(socket, assign_name, deps, fun)
     {dep_node_ids, dep_pairs} = DAGOperations.dependency_nodes(socket, deps)
     node_id = Ids.derived_node_id(assign_name)
 
