@@ -9,7 +9,6 @@ defmodule Upkeep.Runtime do
 
   alias Upkeep.Runtime.DAGOperations
   alias Upkeep.Runtime.Execution.Shared
-  alias Upkeep.Runtime.Effects
   alias Upkeep.Runtime.Materializer
   alias Upkeep.Runtime.NodeSpec
   alias Upkeep.Runtime.Producer
@@ -29,15 +28,12 @@ defmodule Upkeep.Runtime do
           |> State.put_assign_node(assign_name, spec.id)
 
         effects = [
-          Effects.telemetry(
-            [:source, :watch],
-            %{count: 1},
-            Telemetry.watch_metadata(watch, assign_name, :alias)
-          ),
-          Effects.assign(assign_name, Map.fetch!(socket.assigns, primary_assign_name(watch)))
+          {:telemetry, [:source, :watch], %{count: 1},
+           Telemetry.watch_metadata(watch, assign_name, :alias)},
+          {:assign, assign_name, Map.fetch!(socket.assigns, primary_assign_name(watch))}
         ]
 
-        {socket, effects}
+        {:ok, socket, effects}
 
       :error ->
         registered? = Subscriptions.register_interest?(socket)
@@ -76,19 +72,16 @@ defmodule Upkeep.Runtime do
             producer
           ) ++
             [
-              Effects.telemetry(
-                [:source, :watch],
-                %{count: 1},
-                spec.metadata
-                |> Map.put(:node_id, spec.id)
-                |> Map.put(:kind, :new)
-                |> Map.put(:registered?, registered?)
-                |> Map.put(:interest_keys, interest_keys)
-              )
+              {:telemetry, [:source, :watch], %{count: 1},
+               spec.metadata
+               |> Map.put(:node_id, spec.id)
+               |> Map.put(:kind, :new)
+               |> Map.put(:registered?, registered?)
+               |> Map.put(:interest_keys, interest_keys)}
             ] ++
             assign_source_effect(assign_name, value, source_id)
 
-        {socket, effects}
+        {:ok, socket, effects}
     end
   end
 
@@ -107,7 +100,7 @@ defmodule Upkeep.Runtime do
     socket
     |> State.put_dag(dag)
     |> put_component_assign_nodes(component_id, value)
-    |> then(fn socket -> {socket, component_assign_effects(value)} end)
+    |> then(fn socket -> {:ok, socket, component_assign_effects(value)} end)
   end
 
   def mount(socket, %NodeSpec{kind: :derived, producer: %Producer.Compute{} = producer} = spec) do
@@ -141,49 +134,43 @@ defmodule Upkeep.Runtime do
     |> then(fn socket ->
       effects =
         [
-          Effects.telemetry([:derive, :sharing], %{count: 1}, public_sharing_metadata)
+          {:telemetry, [:derive, :sharing], %{count: 1}, public_sharing_metadata}
         ] ++
           register_shared_derived_effect(graph_node_id, sharing_metadata) ++
-          [Effects.assign(assign_name, value)]
+          [{:assign, assign_name, value}]
 
-      {socket, effects}
+      {:ok, socket, effects}
     end)
   end
 
   defp maybe_register_source_effect(true, source_id, interest_keys, producer) do
-    [Effects.register_source(source_id, interest_keys, producer.source, producer.params)]
+    [{:register_source, source_id, interest_keys, producer.source, producer.params}]
   end
 
   defp maybe_register_source_effect(false, _source_id, _interest_keys, _producer), do: []
 
   defp assign_source_effect(assign_name, value, source_id) do
     [
-      Effects.telemetry(
-        [:live, :assign],
-        %{count: 1},
-        %{
-          assign: assign_name,
-          node_id: Ids.source_node_id(source_id),
-          source_id: source_id,
-          kind: :source
-        }
-      ),
-      Effects.assign(assign_name, value)
+      {:telemetry, [:live, :assign], %{count: 1},
+       %{
+         assign: assign_name,
+         node_id: Ids.source_node_id(source_id),
+         source_id: source_id,
+         kind: :source
+       }},
+      {:assign, assign_name, value}
     ]
   end
 
   defp assign_derived_effect(assign_name, value, node_id) do
     [
-      Effects.telemetry(
-        [:live, :assign],
-        %{count: 1},
-        %{
-          assign: assign_name,
-          node_id: node_id,
-          kind: :derived
-        }
-      ),
-      Effects.assign(assign_name, value)
+      {:telemetry, [:live, :assign], %{count: 1},
+       %{
+         assign: assign_name,
+         node_id: node_id,
+         kind: :derived
+       }},
+      {:assign, assign_name, value}
     ]
   end
 
@@ -207,7 +194,7 @@ defmodule Upkeep.Runtime do
     value
     |> Enum.flat_map(fn
       {assign_name, assign_value} when is_atom(assign_name) ->
-        [Effects.assign(assign_name, assign_value)]
+        [{:assign, assign_name, assign_value}]
 
       {_assign_name, _assign_value} ->
         []
@@ -228,11 +215,8 @@ defmodule Upkeep.Runtime do
     case Map.fetch(sharing_metadata, :compute_fn) do
       {:ok, compute_fn} ->
         [
-          Effects.register_derived(
-            graph_node_id,
-            Map.fetch!(sharing_metadata, :graph_dep_node_ids),
-            compute_fn
-          )
+          {:register_derived, graph_node_id, Map.fetch!(sharing_metadata, :graph_dep_node_ids),
+           compute_fn}
         ]
 
       :error ->
@@ -263,7 +247,7 @@ defmodule Upkeep.Runtime do
     removed_node_ids
     |> Enum.flat_map(&State.assign_names_for_node(socket, &1))
     |> Enum.reduce(State.put_dag(socket, dag), &State.delete_assign_node(&2, &1))
-    |> then(fn socket -> {socket, effects} end)
+    |> then(fn socket -> {:ok, socket, effects} end)
   end
 
   def unwatch_assign(socket, assign_name) when is_atom(assign_name) do
@@ -274,6 +258,7 @@ defmodule Upkeep.Runtime do
       {socket, remove_effects} = remove_watch_assign(socket, source_id, assign_name)
       {socket, effects ++ remove_effects}
     end)
+    |> then(fn {socket, effects} -> {:ok, socket, effects} end)
   end
 
   def unwatch_source(socket, source, params) when is_atom(source) do
@@ -286,12 +271,18 @@ defmodule Upkeep.Runtime do
       {socket, remove_effects} = remove_watch(socket, source_id)
       {socket, effects ++ remove_effects}
     end)
+    |> then(fn {socket, effects} -> {:ok, socket, effects} end)
+  end
+
+  def refresh(socket, assign_name, source, params) when is_atom(assign_name) do
+    {value, _tracked_deps} = Upkeep.Source.load(source, params)
+    {:ok, socket, [{:assign, assign_name, value}]}
   end
 
   def refresh_matching(socket, event) when is_struct(event) do
-    {socket, queue_effects} = queue_matching(socket, event)
-    {socket, flush_effects} = flush_refreshes(socket)
-    {socket, queue_effects ++ flush_effects}
+    {:ok, socket, queue_effects} = queue_matching(socket, event)
+    {:ok, socket, flush_effects} = flush_refreshes(socket)
+    {:ok, socket, queue_effects ++ flush_effects}
   end
 
   def queue_matching(socket, event) when is_struct(event) do
@@ -302,11 +293,8 @@ defmodule Upkeep.Runtime do
         socket = State.queue_refresh(socket, watch.source_id)
 
         effects = [
-          Effects.telemetry(
-            [:source, :queue],
-            %{count: 1},
-            Telemetry.watch_metadata(watch, event: event)
-          )
+          {:telemetry, [:source, :queue], %{count: 1},
+           Telemetry.watch_metadata(watch, event: event)}
           | effects
         ]
 
@@ -315,7 +303,7 @@ defmodule Upkeep.Runtime do
         {socket, effects}
       end
     end)
-    |> then(fn {socket, effects} -> {socket, Enum.reverse(effects)} end)
+    |> then(fn {socket, effects} -> {:ok, socket, Enum.reverse(effects)} end)
   end
 
   def flush_refreshes(socket) do
@@ -332,7 +320,7 @@ defmodule Upkeep.Runtime do
       end)
 
     {socket, recompute_effects} = recompute_derived(socket, changed_source_nodes)
-    {socket, effects ++ recompute_effects}
+    {:ok, socket, effects ++ recompute_effects}
   end
 
   def apply_dag_values(socket, pairs) when is_list(pairs) do
@@ -359,20 +347,20 @@ defmodule Upkeep.Runtime do
       end)
 
     {socket, recompute_effects} = recompute_derived(socket, changed_nodes, skip: shared_nodes)
-    {socket, effects ++ recompute_effects}
+    {:ok, socket, effects ++ recompute_effects}
   end
 
   def apply_dag_value(socket, source_id, value) do
     case put_pushed_value(socket, source_id, value) do
       {_kind, socket, local_node_id, true, assign_effects} ->
         {socket, recompute_effects} = recompute_derived(socket, [local_node_id])
-        {socket, assign_effects ++ recompute_effects}
+        {:ok, socket, assign_effects ++ recompute_effects}
 
       {_kind, socket, _local_node_id, false, assign_effects} ->
-        {socket, assign_effects}
+        {:ok, socket, assign_effects}
 
       :unknown ->
-        {socket, []}
+        {:ok, socket, []}
     end
   end
 
@@ -473,11 +461,7 @@ defmodule Upkeep.Runtime do
           effects =
             maybe_unregister_effect(watch.registered?, source_id) ++
               [
-                Effects.telemetry(
-                  [:source, :unwatch],
-                  %{count: 1},
-                  Telemetry.watch_metadata(watch)
-                )
+                {:telemetry, [:source, :unwatch], %{count: 1}, Telemetry.watch_metadata(watch)}
               ]
 
           {socket, effects}
@@ -502,11 +486,8 @@ defmodule Upkeep.Runtime do
           |> then(fn socket ->
             {socket,
              [
-               Effects.telemetry(
-                 [:source, :unwatch],
-                 %{count: 1},
-                 Telemetry.watch_metadata(watch, assign_name, :alias)
-               )
+               {:telemetry, [:source, :unwatch], %{count: 1},
+                Telemetry.watch_metadata(watch, assign_name, :alias)}
              ]}
           end)
         end
@@ -516,7 +497,7 @@ defmodule Upkeep.Runtime do
     end
   end
 
-  defp maybe_unregister_effect(true, source_id), do: [Effects.unregister(source_id)]
+  defp maybe_unregister_effect(true, source_id), do: [{:unregister, source_id}]
   defp maybe_unregister_effect(false, _source_id), do: []
 
   defp compute_fun(%Producer.Compute{dep_pairs: dep_pairs, fun: fun}) do

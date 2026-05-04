@@ -2,7 +2,6 @@ defmodule Upkeep.Runtime.DAGOperations do
   @moduledoc false
 
   alias Upkeep.Live.{Components, Ids, Telemetry}
-  alias Upkeep.Runtime.Effects
   alias Upkeep.Runtime.State
 
   def put_source(socket, source_id, value, deps) do
@@ -121,7 +120,7 @@ defmodule Upkeep.Runtime.DAGOperations do
     value
     |> Enum.flat_map(fn
       {assign_name, assign_value} when is_atom(assign_name) ->
-        [Effects.assign(assign_name, assign_value)]
+        [{:assign, assign_name, assign_value}]
 
       {_assign_name, _assign_value} ->
         []
@@ -135,12 +134,9 @@ defmodule Upkeep.Runtime.DAGOperations do
     |> State.assign_names_for_node(node_id)
     |> Enum.flat_map(fn assign_name ->
       [
-        Effects.telemetry(
-          [:live, :assign],
-          %{count: 1},
-          %{assign: assign_name, node_id: node_id, kind: :derived}
-        ),
-        Effects.assign(assign_name, value)
+        {:telemetry, [:live, :assign], %{count: 1},
+         %{assign: assign_name, node_id: node_id, kind: :derived}},
+        {:assign, assign_name, value}
       ]
     end)
   end

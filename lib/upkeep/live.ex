@@ -3,9 +3,7 @@ defmodule Upkeep.Live do
   LiveView integration for watching Upkeep sources.
   """
 
-  import Phoenix.Component, only: [assign: 3]
-
-  alias Upkeep.Live.{Effects, Snapshot, Specs}
+  alias Upkeep.Live.{RuntimeResult, Snapshot, Specs}
 
   defmacro __using__(_opts) do
     quote do
@@ -36,50 +34,51 @@ defmodule Upkeep.Live do
 
     socket
     |> Upkeep.Runtime.mount(Specs.source(assign_name, source, params, component))
-    |> apply_effects()
+    |> RuntimeResult.apply()
   end
 
   def component(socket, component_id, deps, fun)
       when not is_nil(component_id) and is_list(deps) and is_function(fun, 1) do
     socket
     |> Upkeep.Runtime.mount(Specs.component(socket, component_id, deps, fun))
-    |> apply_effects()
+    |> RuntimeResult.apply()
   end
 
   def remove_component(socket, component_id) when not is_nil(component_id) do
     socket
     |> Upkeep.Runtime.remove_component(component_id)
-    |> apply_effects()
+    |> RuntimeResult.apply()
   end
 
   def derive(socket, assign_name, deps, fun)
       when is_atom(assign_name) and is_list(deps) and is_function(fun, 1) do
     socket
     |> Upkeep.Runtime.mount(Specs.derived(socket, assign_name, deps, fun))
-    |> apply_effects()
+    |> RuntimeResult.apply()
   end
 
   def unwatch(socket, assign_name) when is_atom(assign_name) do
     socket
     |> Upkeep.Runtime.unwatch_assign(assign_name)
-    |> apply_effects()
+    |> RuntimeResult.apply()
   end
 
   def unwatch(socket, source, params) when is_atom(source) do
     socket
     |> Upkeep.Runtime.unwatch_source(source, normalize_params(params))
-    |> apply_effects()
+    |> RuntimeResult.apply()
   end
 
   def refresh(socket, assign_name, source, params) when is_atom(assign_name) do
-    {value, _tracked_deps} = Upkeep.Source.load(source, normalize_params(params))
-    assign(socket, assign_name, value)
+    socket
+    |> Upkeep.Runtime.refresh(assign_name, source, normalize_params(params))
+    |> RuntimeResult.apply()
   end
 
   def refresh_matching(socket, event) when is_struct(event) do
     socket
     |> Upkeep.Runtime.refresh_matching(event)
-    |> apply_effects()
+    |> RuntimeResult.apply()
   end
 
   def graph_snapshot(socket) do
@@ -89,13 +88,13 @@ defmodule Upkeep.Live do
   def queue_matching(socket, event) when is_struct(event) do
     socket
     |> Upkeep.Runtime.queue_matching(event)
-    |> apply_effects()
+    |> RuntimeResult.apply()
   end
 
   def flush_refreshes(socket) do
     socket
     |> Upkeep.Runtime.flush_refreshes()
-    |> apply_effects()
+    |> RuntimeResult.apply()
   end
 
   def notify(event) when is_struct(event), do: Upkeep.notify(event)
@@ -107,7 +106,7 @@ defmodule Upkeep.Live do
   def apply_dag_values(socket, pairs) when is_list(pairs) do
     socket
     |> Upkeep.Runtime.apply_dag_values(pairs)
-    |> apply_effects()
+    |> RuntimeResult.apply()
   end
 
   @doc """
@@ -117,10 +116,8 @@ defmodule Upkeep.Live do
   def apply_dag_value(socket, source_id, value) do
     socket
     |> Upkeep.Runtime.apply_dag_value(source_id, value)
-    |> apply_effects()
+    |> RuntimeResult.apply()
   end
-
-  defp apply_effects({socket, effects}), do: Effects.apply(socket, effects)
 
   defp normalize_params(params) when is_list(params), do: Map.new(params)
   defp normalize_params(params) when is_map(params), do: params

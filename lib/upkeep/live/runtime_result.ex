@@ -1,4 +1,4 @@
-defmodule Upkeep.Live.Effects do
+defmodule Upkeep.Live.RuntimeResult do
   @moduledoc false
 
   import Phoenix.Component, only: [assign: 3]
@@ -6,7 +6,7 @@ defmodule Upkeep.Live.Effects do
   alias Upkeep.Live.Telemetry
   alias Upkeep.Runtime.Subscriptions
 
-  def apply(socket, effects) when is_list(effects) do
+  def apply({:ok, socket, effects}) when is_list(effects) do
     Enum.reduce(effects, socket, &apply_one/2)
   end
 
