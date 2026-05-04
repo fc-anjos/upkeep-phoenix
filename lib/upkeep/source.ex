@@ -250,7 +250,7 @@ defmodule Upkeep.Source do
         value
 
       :error ->
-        value = repo.all(query)
+        value = Upkeep.Coordinator.ReadNodes.fetch_or_load(repo, query)
         ctx = Process.get(@context_key)
         Process.put(@context_key, Map.put(ctx, :reads, Map.put(cache, fingerprint, value)))
         value

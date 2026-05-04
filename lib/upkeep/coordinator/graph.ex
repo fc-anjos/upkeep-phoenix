@@ -43,6 +43,7 @@ defmodule Upkeep.Coordinator.Graph do
   use Supervisor
 
   alias Upkeep.Coordinator.Graph.Index
+  alias Upkeep.Coordinator.ReadNodes
   alias Upkeep.Source
 
   @group Upkeep.Group
@@ -245,6 +246,7 @@ defmodule Upkeep.Coordinator.Graph do
   end
 
   def notify(event) when is_struct(event) do
+    ReadNodes.invalidate(event)
     Group.dispatch(@group, @notification_key, {:upkeep_graph_notify, event})
   end
 
@@ -272,6 +274,7 @@ defmodule Upkeep.Coordinator.Graph do
 
     :ets.delete_all_objects(@index_table)
     :ets.delete_all_objects(@nodes_table)
+    ReadNodes.clear()
 
     :ok
   end
@@ -356,6 +359,8 @@ defmodule Upkeep.Coordinator.Graph do
       read_concurrency: true,
       write_concurrency: true
     ])
+
+    Enum.each(ReadNodes.table_specs(), fn {name, opts} -> ensure_table(name, opts) end)
 
     children = [
       {Task.Supervisor, name: task_sup()}
