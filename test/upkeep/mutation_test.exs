@@ -30,6 +30,8 @@ defmodule Upkeep.MutationTest do
     :ets.insert(table, {{:issues, 780}, [:before]})
 
     on_exit(fn ->
+      drain_graph()
+
       if :ets.info(__MODULE__) != :undefined do
         :ets.delete(__MODULE__)
       end
@@ -49,6 +51,7 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:ok, :moved} = result
+    drain_graph()
 
     source_id = source_id(777)
     assert_receive {:dag_values, [{^source_id, [:after]}]}
@@ -67,6 +70,7 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:error, :cancelled} = result
+    drain_graph()
     refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 778}}, _}]}
   end
 
@@ -80,6 +84,7 @@ defmodule Upkeep.MutationTest do
       end)
     end
 
+    drain_graph()
     refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 779}}, _}]}
   end
 
@@ -94,6 +99,8 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:ok, :ok} = result
+    drain_graph()
+
     assert_receive {:dag_values, [{{ProjectIssues, %{project_id: 780}}, [:before]}]}
     refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 780}}, _}]}
   end
@@ -114,6 +121,8 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:ok, :outer} = result
+    drain_graph()
+
     assert_receive {:dag_values, [{{ProjectIssues, %{project_id: 777}}, [:before]}]}
   end
 
@@ -128,6 +137,8 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:ok, %{move: :moved}} = Upkeep.mutate(multi)
+    drain_graph()
+
     assert_receive {:dag_values, [{{ProjectIssues, %{project_id: 777}}, [:before]}]}
   end
 
@@ -142,6 +153,8 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:error, :move, :cancelled, %{}} = Upkeep.mutate(multi)
+    drain_graph()
+
     refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 778}}, _}]}
   end
 
@@ -160,6 +173,8 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:ok, %{first: :first, second: :second}} = Upkeep.mutate(multi)
+    drain_graph()
+
     assert_receive {:dag_values, [{{ProjectIssues, %{project_id: 779}}, [:before]}]}
     refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 779}}, _}]}
   end
@@ -183,6 +198,8 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:error, :rollback} = result
+    drain_graph()
+
     refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 780}}, _}]}
   end
 
@@ -194,4 +211,8 @@ defmodule Upkeep.MutationTest do
   defp source_id(project_id), do: {ProjectIssues, %{project_id: project_id}}
 
   defp issue(project_id, issue_id), do: %Issue{project_id: project_id, issue_id: issue_id}
+
+  defp drain_graph do
+    :ok = Upkeep.Coordinator.Graph.drain()
+  end
 end
