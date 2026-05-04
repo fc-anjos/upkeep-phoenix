@@ -71,6 +71,17 @@ defmodule Upkeep.LiveRefreshTest do
     invalidated_by(Issue, :updated, on: :issue_id, as: :user_id)
   end
 
+  defmodule ScopedActivity do
+    use Upkeep.Source
+
+    query(fn s ->
+      Upkeep.LiveRefreshTest.bump_load({:loads, :scoped_activity, s.user_id})
+      Upkeep.LiveRefreshTest.table_value({:scoped_activity, s.user_id})
+    end)
+
+    invalidated_by(Comment, :inserted, on: :issue_id, as: :user_id)
+  end
+
   defmodule BlockingScopedIssues do
     use Upkeep.Source
 
@@ -106,6 +117,8 @@ defmodule Upkeep.LiveRefreshTest do
     :ets.insert(table, {{:loads, :comments, 2}, 0})
     :ets.insert(table, {{:loads, :scoped_issues, 1}, 0})
     :ets.insert(table, {{:loads, :scoped_issues, 2}, 0})
+    :ets.insert(table, {{:loads, :scoped_activity, 1}, 0})
+    :ets.insert(table, {{:loads, :scoped_activity, 2}, 0})
     :ets.insert(table, {{:loads, :visible, 1}, 0})
     :ets.insert(table, {{:loads, :issue_count, 1}, 0})
     :ets.insert(table, {{:loads, :issue_label, 1}, 0})
@@ -459,6 +472,96 @@ defmodule Upkeep.LiveRefreshTest do
     assert load_count(:shared_issue_stats, user_b) == 1
     assert load_count(:shared_user_label, user_a) == 1
     assert load_count(:shared_user_label, user_b) == 1
+  end
+
+  test "concurrent connected derives share a multi-source initial compute", %{table: table} do
+    test_pid = self()
+    user_id = System.unique_integer([:positive])
+    put_scoped_user(table, user_id, [{user_id, :user_issue}])
+    put_scoped_activity(table, user_id, [{user_id, :user_activity}])
+    :ets.insert(table, {{:loads, :shared_dashboard_model, user_id}, 0})
+    :ets.insert(table, {{:derive_test_pid, user_id}, test_pid})
+
+    task_a =
+      Task.async(fn ->
+        connected_live_socket()
+        |> Live.watch(:issues, ScopedIssues, user_id: user_id)
+        |> Live.watch(:activity, ScopedActivity, user_id: user_id)
+        |> Live.derive(
+          :dashboard_model,
+          [:issues, :activity],
+          &__MODULE__.shared_dashboard_model/1
+        )
+      end)
+
+    assert_receive {:dashboard_model_started, loader_pid, ^user_id}
+
+    task_b =
+      Task.async(fn ->
+        connected_live_socket()
+        |> Live.watch(:issues, ScopedIssues, user_id: user_id)
+        |> Live.watch(:activity, ScopedActivity, user_id: user_id)
+        |> Live.derive(
+          :dashboard_model,
+          [:issues, :activity],
+          &__MODULE__.shared_dashboard_model/1
+        )
+      end)
+
+    refute_receive {:dashboard_model_started, _second_loader_pid, ^user_id}, 50
+    send(loader_pid, :continue)
+
+    socket_a = Task.await(task_a)
+    socket_b = Task.await(task_b)
+
+    assert socket_a.assigns.dashboard_model == %{
+             user_id: user_id,
+             issues: [:user_issue],
+             activity: [:user_activity]
+           }
+
+    assert socket_b.assigns.dashboard_model == socket_a.assigns.dashboard_model
+    assert load_count(:shared_dashboard_model, user_id) == 1
+  end
+
+  test "connected multi-source derived sharing does not leak values across source params", %{
+    table: table
+  } do
+    user_a = System.unique_integer([:positive])
+    user_b = System.unique_integer([:positive])
+    put_scoped_user(table, user_a, [{user_a, :user_a_issue}])
+    put_scoped_user(table, user_b, [{user_b, :user_b_issue}])
+    put_scoped_activity(table, user_a, [{user_a, :user_a_activity}])
+    put_scoped_activity(table, user_b, [{user_b, :user_b_activity}])
+    :ets.insert(table, {{:loads, :shared_dashboard_model, user_a}, 0})
+    :ets.insert(table, {{:loads, :shared_dashboard_model, user_b}, 0})
+
+    socket_a =
+      connected_live_socket()
+      |> Live.watch(:issues, ScopedIssues, user_id: user_a)
+      |> Live.watch(:activity, ScopedActivity, user_id: user_a)
+      |> Live.derive(:dashboard_model, [:issues, :activity], &__MODULE__.shared_dashboard_model/1)
+
+    socket_b =
+      connected_live_socket()
+      |> Live.watch(:issues, ScopedIssues, user_id: user_b)
+      |> Live.watch(:activity, ScopedActivity, user_id: user_b)
+      |> Live.derive(:dashboard_model, [:issues, :activity], &__MODULE__.shared_dashboard_model/1)
+
+    assert socket_a.assigns.dashboard_model == %{
+             user_id: user_a,
+             issues: [:user_a_issue],
+             activity: [:user_a_activity]
+           }
+
+    assert socket_b.assigns.dashboard_model == %{
+             user_id: user_b,
+             issues: [:user_b_issue],
+             activity: [:user_b_activity]
+           }
+
+    assert load_count(:shared_dashboard_model, user_a) == 1
+    assert load_count(:shared_dashboard_model, user_b) == 1
   end
 
   test "watch is idempotent for the same source identity" do
@@ -1037,6 +1140,30 @@ defmodule Upkeep.LiveRefreshTest do
     "user #{user_id}: #{count} issue"
   end
 
+  def shared_dashboard_model(%{issues: [{user_id, _issue} | _] = issues, activity: activity}) do
+    bump_load({:loads, :shared_dashboard_model, user_id})
+
+    case :ets.lookup(__MODULE__, {:derive_test_pid, user_id}) do
+      [{_, test_pid}] ->
+        send(test_pid, {:dashboard_model_started, self(), user_id})
+
+        receive do
+          :continue -> :ok
+        after
+          1_000 -> raise "blocking dashboard model compute was not released"
+        end
+
+      [] ->
+        :ok
+    end
+
+    %{
+      user_id: user_id,
+      issues: Enum.map(issues, fn {_user_id, issue} -> issue end),
+      activity: Enum.map(activity, fn {_user_id, item} -> item end)
+    }
+  end
+
   defp load_count(source) do
     table_value({:loads, source, 1})
   end
@@ -1048,6 +1175,11 @@ defmodule Upkeep.LiveRefreshTest do
   defp put_scoped_user(table, user_id, issues) do
     :ets.insert(table, {{:scoped_issues, user_id}, issues})
     :ets.insert(table, {{:loads, :scoped_issues, user_id}, 0})
+  end
+
+  defp put_scoped_activity(table, user_id, activity) do
+    :ets.insert(table, {{:scoped_activity, user_id}, activity})
+    :ets.insert(table, {{:loads, :scoped_activity, user_id}, 0})
   end
 
   defp updated_issue(project_id, issue_id) do

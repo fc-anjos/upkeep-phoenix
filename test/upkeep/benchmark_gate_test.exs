@@ -21,6 +21,15 @@ defmodule Upkeep.BenchmarkGateTest do
     assert output =~ "\nOK\n"
   end
 
+  test "initial multi-source derived sharing benchmark fires and passes its gate" do
+    output = run_benchmark!("bench/initial_multi_source_derived_sharing.exs")
+
+    assert output =~ "connected_multi_source_derives=1000"
+    assert output =~ ~r/same\s+1\s+\d+\.\d+/
+    assert output =~ ~r/distinct\s+1000\s+\d+\.\d+/
+    assert output =~ "\nOK\n"
+  end
+
   defp run_benchmark!(path) do
     port = 41_000 + System.unique_integer([:positive, :monotonic])
 
