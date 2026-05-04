@@ -364,6 +364,7 @@ defmodule Upkeep.Coordinator.Graph do
 
     children = [
       Upkeep.Coordinator.ReadNodes.Coalescer,
+      Upkeep.Coordinator.ReadNodes.Watcher,
       {Task.Supervisor, name: task_sup()}
       | for idx <- 0..(shards - 1) do
           Supervisor.child_spec(

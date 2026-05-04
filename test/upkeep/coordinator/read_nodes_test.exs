@@ -211,4 +211,33 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
     assert Enum.all?(results, &match?({:error, "boom"}, &1))
     refute Upkeep.Coordinator.ReadNodes.Coalescer.pending?(bad_node)
   end
+
+  test "Watcher invalidates ReadNodes when it receives a dispatched notification" do
+    Repo.insert!(%Project{id: 1, name: "alpha"})
+
+    q = from(p in Project)
+    ReadNodes.fetch_or_load(Repo, q)
+    assert ReadNodes.count() == 1
+
+    # Simulate a dispatched notification arriving on a *remote* node by
+    # sending the same message Group.dispatch would deliver, directly to
+    # the Watcher pid. This bypasses the inline invalidate inside
+    # Graph.notify/1, isolating the Watcher's behavior — which is the
+    # only mechanism remote nodes have to learn about evictions.
+    watcher = Process.whereis(Upkeep.Coordinator.ReadNodes.Watcher)
+    assert is_pid(watcher)
+
+    event = Upkeep.Change.updated(%Project{id: 1, name: "alpha2"})
+    send(watcher, {:upkeep_graph_notify, event})
+
+    # Wait for the cast to be processed.
+    _ = :sys.get_state(watcher)
+    assert ReadNodes.count() == 0
+  end
+
+  test "Watcher is a member of the cluster notification group" do
+    members = Group.members(Upkeep.Coordinator.Graph.group(), Upkeep.Coordinator.Graph.notification_key())
+    pids = Enum.map(members, fn {pid, _meta} -> pid end)
+    assert Process.whereis(Upkeep.Coordinator.ReadNodes.Watcher) in pids
+  end
 end
