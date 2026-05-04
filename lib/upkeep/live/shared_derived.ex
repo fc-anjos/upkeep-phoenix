@@ -49,7 +49,8 @@ defmodule Upkeep.Live.SharedDerived do
               reason: :shareable,
               graph_node_id: graph_node_id,
               graph_dep_node_ids: graph_dep_ids,
-              fun: fun_identity
+              fun: fun_identity,
+              compute_fn: graph_compute
             })
 
           {value, graph_node_id, metadata}

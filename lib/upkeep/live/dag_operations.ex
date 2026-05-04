@@ -21,6 +21,15 @@ defmodule Upkeep.Live.DAGOperations do
     {State.put_dag(socket, dag), changed?}
   end
 
+  def put_derived_value(socket, node_id, value) do
+    {dag, changed?} =
+      socket
+      |> State.dag()
+      |> Upkeep.DAG.put_existing_value(node_id, value)
+
+    {State.put_dag(socket, dag), changed?}
+  end
+
   def remove_source(socket, source_id) do
     source_node_id = Ids.source_node_id(source_id)
 
@@ -55,20 +64,23 @@ defmodule Upkeep.Live.DAGOperations do
 
   def recompute_derived(socket, []), do: socket
 
-  def recompute_derived(socket, changed_source_nodes, remove_watch)
+  def recompute_derived(socket, changed_source_nodes, remove_watch, opts \\ [])
       when is_function(remove_watch, 2) do
+    skip_node_ids = Keyword.get(opts, :skip, [])
+
     {dag, changed_derived_nodes, _recomputed_nodes} =
       Telemetry.span([:dag, :recompute], %{changed_source_nodes: changed_source_nodes}, fn ->
         socket
         |> State.dag()
-        |> Upkeep.DAG.recompute(changed_source_nodes)
+        |> Upkeep.DAG.recompute(changed_source_nodes, skip: skip_node_ids)
         |> then(fn {_dag, changed_derived_nodes, recomputed_nodes} = result ->
           {result,
            %{
              changed_derived_nodes: changed_derived_nodes,
              recomputed_nodes: recomputed_nodes,
              changed_count: length(changed_derived_nodes),
-             recomputed_count: length(recomputed_nodes)
+             recomputed_count: length(recomputed_nodes),
+             skipped_nodes: skip_node_ids
            }}
         end)
       end)

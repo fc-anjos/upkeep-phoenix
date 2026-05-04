@@ -91,8 +91,17 @@ defmodule Upkeep.DAG do
 
   def has_node?(%__MODULE__{} = dag, id), do: Map.has_key?(dag.nodes, id)
 
-  def recompute(%__MODULE__{} = dag, changed_ids) do
+  def put_existing_value(%__MODULE__{} = dag, id, value) do
+    unless Map.has_key?(dag.nodes, id) do
+      raise ArgumentError, "unknown DAG node #{inspect(id)}"
+    end
+
+    put_value(dag, id, value)
+  end
+
+  def recompute(%__MODULE__{} = dag, changed_ids, opts \\ []) do
     changed_ids = MapSet.new(changed_ids)
+    skip_ids = opts |> Keyword.get(:skip, []) |> MapSet.new()
     order = downstream_order(dag, changed_ids)
 
     {dag, changed, recomputed} =
@@ -100,14 +109,19 @@ defmodule Upkeep.DAG do
         deps = Map.fetch!(dag.deps, id)
         node = Map.fetch!(dag.nodes, id)
 
-        if node.kind != :source and Enum.any?(deps, &MapSet.member?(changed, &1)) do
-          value = compute_dep_values(dag, id)
-          {dag, value_changed?} = put_value(dag, id, value)
-          changed = if value_changed?, do: MapSet.put(changed, id), else: changed
+        cond do
+          MapSet.member?(skip_ids, id) ->
+            {dag, changed, recomputed}
 
-          {dag, changed, [id | recomputed]}
-        else
-          {dag, changed, recomputed}
+          node.kind != :source and Enum.any?(deps, &MapSet.member?(changed, &1)) ->
+            value = compute_dep_values(dag, id)
+            {dag, value_changed?} = put_value(dag, id, value)
+            changed = if value_changed?, do: MapSet.put(changed, id), else: changed
+
+            {dag, changed, [id | recomputed]}
+
+          true ->
+            {dag, changed, recomputed}
         end
       end)
 

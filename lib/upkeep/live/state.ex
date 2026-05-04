@@ -90,6 +90,15 @@ defmodule Upkeep.Live.State do
     end
   end
 
+  def local_shared_derived_node(socket, graph_node_id) do
+    socket
+    |> shared_derived_nodes()
+    |> Enum.find_value(fn
+      {local_node_id, ^graph_node_id} -> local_node_id
+      _other -> nil
+    end)
+  end
+
   def put_derive_sharing(socket, node_id, metadata) when is_map(metadata) do
     private = socket.private || %{}
     derive_sharing = Map.put(Map.get(private, :upkeep_derive_sharing, %{}), node_id, metadata)

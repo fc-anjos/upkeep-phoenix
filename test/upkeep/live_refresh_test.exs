@@ -708,6 +708,84 @@ defmodule Upkeep.LiveRefreshTest do
     assert load_count(:shared_dashboard_model, user_b) == 1
   end
 
+  test "graph-pushed source updates reuse shared derived graph values", %{table: table} do
+    user_id = System.unique_integer([:positive])
+    put_scoped_user(table, user_id, [{user_id, :before}])
+    :ets.insert(table, {{:loads, :shared_issue_count, user_id}, 0})
+
+    source_id = {ScopedIssues, %{user_id: user_id}}
+
+    socket =
+      connected_live_socket()
+      |> Live.watch(:issues, ScopedIssues, user_id: user_id)
+      |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
+
+    assert socket.assigns.issue_count == 1
+    assert load_count(:shared_issue_count, user_id) == 1
+
+    :ets.insert(table, {{:scoped_issues, user_id}, [{user_id, :before}, {user_id, :after}]})
+
+    assert :ok =
+             %Issue{issue_id: user_id}
+             |> Upkeep.Change.updated()
+             |> Upkeep.notify()
+
+    assert :ok = Upkeep.Coordinator.Graph.drain()
+
+    graph_node_id =
+      {:derived, UpkeepWeb.KanbanLive, :issue_count, [source_id],
+       {__MODULE__, :shared_issue_count, 1}}
+
+    assert_receive {:dag_values, pairs}
+    assert {source_id, [{user_id, :before}, {user_id, :after}]} in pairs
+    assert {graph_node_id, 2} in pairs
+
+    socket = Live.apply_dag_values(socket, pairs)
+
+    assert socket.assigns.issues == [{user_id, :before}, {user_id, :after}]
+    assert socket.assigns.issue_count == 2
+    assert load_count(:shared_issue_count, user_id) == 2
+  end
+
+  test "local derives recompute after graph-pushed shared derived values", %{table: table} do
+    user_id = System.unique_integer([:positive])
+    put_scoped_user(table, user_id, [{user_id, :before}])
+    :ets.insert(table, {{:loads, :shared_issue_count, user_id}, 0})
+
+    extra = user_id
+    source_id = {ScopedIssues, %{user_id: user_id}}
+
+    socket =
+      connected_live_socket()
+      |> Live.watch(:issues, ScopedIssues, user_id: user_id)
+      |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
+      |> Live.derive(:visible_count, [:issue_count], fn %{issue_count: count} -> count + extra end)
+
+    assert socket.assigns.visible_count == user_id + 1
+
+    :ets.insert(table, {{:scoped_issues, user_id}, [{user_id, :before}, {user_id, :after}]})
+
+    assert :ok =
+             %Issue{issue_id: user_id}
+             |> Upkeep.Change.updated()
+             |> Upkeep.notify()
+
+    assert :ok = Upkeep.Coordinator.Graph.drain()
+
+    graph_node_id =
+      {:derived, UpkeepWeb.KanbanLive, :issue_count, [source_id],
+       {__MODULE__, :shared_issue_count, 1}}
+
+    assert_receive {:dag_values, pairs}
+    assert {graph_node_id, 2} in pairs
+
+    socket = Live.apply_dag_values(socket, pairs)
+
+    assert socket.assigns.issue_count == 2
+    assert socket.assigns.visible_count == user_id + 2
+    assert load_count(:shared_issue_count, user_id) == 2
+  end
+
   test "watch is idempotent for the same source identity" do
     socket =
       new_socket()

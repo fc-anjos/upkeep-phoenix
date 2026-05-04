@@ -168,7 +168,9 @@ defmodule Upkeep.Live do
     {initial_value, graph_node_id, sharing_metadata} =
       SharedDerived.initial_value(socket, assign_name, dep_node_ids, dep_pairs, fun, compute)
 
-    Telemetry.emit([:derive, :sharing], %{count: 1}, sharing_metadata)
+    public_sharing_metadata = Map.delete(sharing_metadata, :compute_fn)
+
+    Telemetry.emit([:derive, :sharing], %{count: 1}, public_sharing_metadata)
 
     dag =
       socket
@@ -180,8 +182,8 @@ defmodule Upkeep.Live do
     socket
     |> State.put_dag(dag)
     |> State.put_assign_node(assign_name, node_id)
-    |> State.put_derive_sharing(node_id, sharing_metadata)
-    |> maybe_put_shared_derived_node(node_id, graph_node_id)
+    |> State.put_derive_sharing(node_id, public_sharing_metadata)
+    |> maybe_register_shared_derived_node(node_id, graph_node_id, sharing_metadata)
     |> assign(assign_name, value)
   end
 
@@ -260,9 +262,12 @@ defmodule Upkeep.Live do
   Reduces subscriber-side wakeups to one handle_info per shard flush.
   """
   def apply_dag_values(socket, pairs) when is_list(pairs) do
-    Enum.reduce(pairs, socket, fn {source_id, value}, s ->
-      apply_dag_value(s, source_id, value)
-    end)
+    {socket, changed_nodes, shared_nodes} =
+      Enum.reduce(pairs, {socket, [], []}, fn {node_id, value}, {socket, changed, shared} ->
+        apply_dag_pair(socket, node_id, value, changed, shared)
+      end)
+
+    recompute_derived(socket, changed_nodes, skip: shared_nodes)
   end
 
   @doc """
@@ -284,7 +289,49 @@ defmodule Upkeep.Live do
         end
 
       :error ->
-        socket
+        apply_shared_derived_value(socket, source_id, value)
+    end
+  end
+
+  defp apply_dag_pair(socket, source_id, value, changed, shared) do
+    case Map.fetch(State.watches(socket), source_id) do
+      {:ok, watch} ->
+        socket = assign_watch(socket, watch, value)
+
+        {socket, changed?} =
+          DAGOperations.put_value(socket, source_id, value, Ids.source_deps(watch.component))
+
+        changed =
+          if changed? do
+            [Ids.source_node_id(source_id) | changed]
+          else
+            changed
+          end
+
+        {socket, changed, shared}
+
+      :error ->
+        apply_shared_derived_pair(socket, source_id, value, changed, shared)
+    end
+  end
+
+  defp apply_shared_derived_pair(socket, graph_node_id, value, changed, shared) do
+    case State.local_shared_derived_node(socket, graph_node_id) do
+      nil ->
+        {socket, changed, shared}
+
+      local_node_id ->
+        {socket, changed?} = DAGOperations.put_derived_value(socket, local_node_id, value)
+        socket = assign_shared_derived_node(socket, local_node_id, value)
+
+        changed =
+          if changed? do
+            [local_node_id | changed]
+          else
+            changed
+          end
+
+        {socket, changed, [local_node_id | shared]}
     end
   end
 
@@ -309,8 +356,8 @@ defmodule Upkeep.Live do
     _ -> {socket, changed}
   end
 
-  defp recompute_derived(socket, changed_source_nodes) do
-    DAGOperations.recompute_derived(socket, changed_source_nodes, &remove_watch/2)
+  defp recompute_derived(socket, changed_source_nodes, opts \\ []) do
+    DAGOperations.recompute_derived(socket, changed_source_nodes, &remove_watch/2, opts)
   end
 
   defp assign_watch(socket, watch, value) do
@@ -319,9 +366,51 @@ defmodule Upkeep.Live do
     end)
   end
 
-  defp maybe_put_shared_derived_node(socket, _node_id, nil), do: socket
+  defp apply_shared_derived_value(socket, graph_node_id, value) do
+    case State.local_shared_derived_node(socket, graph_node_id) do
+      nil ->
+        socket
 
-  defp maybe_put_shared_derived_node(socket, node_id, graph_node_id) do
+      local_node_id ->
+        {socket, changed?} = DAGOperations.put_derived_value(socket, local_node_id, value)
+        socket = assign_shared_derived_node(socket, local_node_id, value)
+
+        if changed? do
+          recompute_derived(socket, [local_node_id])
+        else
+          socket
+        end
+    end
+  end
+
+  defp assign_shared_derived_node(socket, local_node_id, value) do
+    socket
+    |> State.assign_names_for_node(local_node_id)
+    |> Enum.reduce(socket, fn assign_name, socket ->
+      Assigns.assign_derived_value(socket, assign_name, value, local_node_id)
+    end)
+  end
+
+  defp maybe_register_shared_derived_node(socket, _node_id, nil, _sharing_metadata), do: socket
+
+  defp maybe_register_shared_derived_node(socket, node_id, graph_node_id, sharing_metadata) do
+    case Map.fetch(sharing_metadata, :compute_fn) do
+      {:ok, compute_fn} ->
+        try do
+          :ok =
+            Subscriptions.register_derived(
+              graph_node_id,
+              Map.fetch!(sharing_metadata, :graph_dep_node_ids),
+              compute_fn
+            )
+        rescue
+          ArgumentError -> :ok
+        end
+
+      :error ->
+        :ok
+    end
+
     State.put_shared_derived_node(socket, node_id, graph_node_id)
   end
 
