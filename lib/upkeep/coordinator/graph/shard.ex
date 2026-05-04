@@ -42,8 +42,10 @@ defmodule Upkeep.Coordinator.Graph.Shard do
        idx: idx,
        generation: generation,
        dag: DAG.new(),
-       # node_id => {loader, registered_keys, encoded_key}
+       # node_id => {loader, registered_keys, encoded_key, tracked_deps, loaded?}
        sources: %{},
+       initial_loads: %{},
+       initial_load_refs: %{},
        buffer_node_ids: MapSet.new(),
        buffer_size: 0,
        flush_scheduled?: false
@@ -52,17 +54,45 @@ defmodule Upkeep.Coordinator.Graph.Shard do
 
   @impl true
   def handle_call({:register_source, node_id, interest_keys, loader}, _from, state) do
-    encoded_key = Graph.source_key(node_id)
-    Index.put_source(node_id, state.idx, interest_keys)
-    {dag, _changed?} = DAG.put_source(state.dag, node_id, nil, [])
-
-    state = %{
-      state
-      | sources: Map.put(state.sources, node_id, {loader, interest_keys, encoded_key}),
-        dag: dag
-    }
-
+    state = register_source(state, node_id, interest_keys, loader)
     {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:register_source_and_load, node_id, interest_keys, loader}, from, state) do
+    state = register_source(state, node_id, interest_keys, loader)
+
+    case Map.fetch(state.initial_loads, node_id) do
+      {:ok, load} ->
+        {loader, _registered_keys, _encoded_key, _tracked_deps, _loaded?} =
+          Map.fetch!(state.sources, node_id)
+
+        emit_initial_load(:hit, state.idx, node_id, loader)
+
+        state = put_in(state.initial_loads[node_id].waiters, [from | load.waiters])
+        {:noreply, state}
+
+      :error ->
+        {loader, registered_keys, _encoded_key, _tracked_deps, _loaded?} =
+          Map.fetch!(state.sources, node_id)
+
+        emit_initial_load(:miss, state.idx, node_id, loader)
+
+        task =
+          Task.Supervisor.async_nolink(Graph.task_sup(), fn ->
+            {value, current_keys, tracked_deps} = run_loader_with_deps(loader)
+            {node_id, value, current_keys, tracked_deps, loader, registered_keys}
+          end)
+
+        state = %{
+          state
+          | initial_loads:
+              Map.put(state.initial_loads, node_id, %{ref: task.ref, waiters: [from]}),
+            initial_load_refs: Map.put(state.initial_load_refs, task.ref, node_id)
+        }
+
+        {:noreply, state}
+    end
   end
 
   @impl true
@@ -73,7 +103,7 @@ defmodule Upkeep.Coordinator.Graph.Shard do
     state = %{
       state
       | dag: DAG.put_derived(state.dag, node_id, dep_ids, compute_fn, initial_value: nil),
-        sources: Map.put_new(state.sources, node_id, {nil, [], encoded_key})
+        sources: Map.put_new(state.sources, node_id, {nil, [], encoded_key, [], true})
     }
 
     {:reply, :ok, state}
@@ -92,6 +122,53 @@ defmodule Upkeep.Coordinator.Graph.Shard do
 
   @impl true
   def handle_info(:flush, state), do: {:noreply, do_flush(state)}
+
+  @impl true
+  def handle_info(
+        {ref, {node_id, value, current_keys, tracked_deps, loader, registered_keys}},
+        state
+      ) do
+    Process.demonitor(ref, [:flush])
+
+    {load, state} = pop_initial_load(state, ref, node_id)
+
+    if current_keys != registered_keys do
+      Index.reconcile_source(node_id, state.idx, registered_keys, current_keys)
+    end
+
+    {dag, _changed?} = DAG.put_source(state.dag, node_id, value, [])
+
+    sources =
+      Map.put(
+        state.sources,
+        node_id,
+        {loader, current_keys, Graph.source_key(node_id), tracked_deps, true}
+      )
+
+    Enum.each(load.waiters, &GenServer.reply(&1, {:ok, value, tracked_deps}))
+
+    {:noreply, %{state | dag: dag, sources: sources}}
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+    case Map.fetch(state.initial_load_refs, ref) do
+      {:ok, node_id} ->
+        {load, state} = pop_initial_load(state, ref, node_id)
+
+        :telemetry.execute(
+          [:upkeep, :graph, :source_load, :exception],
+          %{count: 1},
+          %{shard: state.idx, reason: reason}
+        )
+
+        Enum.each(load.waiters, &GenServer.reply(&1, {:error, reason}))
+        {:noreply, state}
+
+      :error ->
+        {:noreply, state}
+    end
+  end
 
   @impl true
   def handle_info({:group, events, _info}, state) do
@@ -141,6 +218,37 @@ defmodule Upkeep.Coordinator.Graph.Shard do
   end
 
   ## Buffer / flush
+
+  defp register_source(state, node_id, interest_keys, loader) do
+    case Map.fetch(state.sources, node_id) do
+      {:ok, {_loader, _registered_keys, _encoded_key, _tracked_deps, _loaded?}} ->
+        state
+
+      :error ->
+        encoded_key = Graph.source_key(node_id)
+        Index.put_source(node_id, state.idx, interest_keys)
+        {dag, _changed?} = DAG.put_source(state.dag, node_id, nil, [])
+
+        %{
+          state
+          | sources:
+              Map.put(state.sources, node_id, {loader, interest_keys, encoded_key, [], false}),
+            dag: dag
+        }
+    end
+  end
+
+  defp pop_initial_load(state, ref, node_id) do
+    load = Map.fetch!(state.initial_loads, node_id)
+
+    state = %{
+      state
+      | initial_loads: Map.delete(state.initial_loads, node_id),
+        initial_load_refs: Map.delete(state.initial_load_refs, ref)
+    }
+
+    {load, state}
+  end
 
   defp enqueue(state, node_ids) do
     new_buffer = Enum.reduce(node_ids, state.buffer_node_ids, &MapSet.put(&2, &1))
@@ -196,23 +304,27 @@ defmodule Upkeep.Coordinator.Graph.Shard do
         Graph.task_sup(),
         node_ids,
         fn node_id ->
-          {loader, registered_keys, encoded_key} = Map.fetch!(state.sources, node_id)
-          {value, current_keys} = run_loader(loader)
-          {node_id, value, current_keys, loader, registered_keys, encoded_key}
+          {loader, registered_keys, encoded_key, _tracked_deps, _loaded?} =
+            Map.fetch!(state.sources, node_id)
+
+          {value, current_keys, tracked_deps} = run_loader_with_deps(loader)
+          {node_id, value, current_keys, tracked_deps, loader, registered_keys, encoded_key}
         end,
         ordered: false,
         timeout: 30_000,
         on_timeout: :kill_task
       )
       |> Enum.reduce({[], state.sources}, fn
-        {:ok, {node_id, value, current_keys, loader, registered_keys, encoded_key}},
+        {:ok, {node_id, value, current_keys, tracked_deps, loader, registered_keys, encoded_key}},
         {results, sources} ->
           sources =
             if current_keys != registered_keys do
               Index.reconcile_source(node_id, state.idx, registered_keys, current_keys)
-              Map.put(sources, node_id, {loader, current_keys, encoded_key})
+              Map.put(sources, node_id, {loader, current_keys, encoded_key, tracked_deps, true})
             else
-              sources
+              Map.update!(sources, node_id, fn {loader, keys, encoded_key, _deps, _loaded?} ->
+                {loader, keys, encoded_key, tracked_deps, true}
+              end)
             end
 
           {[{node_id, value} | results], sources}
@@ -230,13 +342,28 @@ defmodule Upkeep.Coordinator.Graph.Shard do
     {Enum.reverse(results), %{state | sources: sources}}
   end
 
-  defp run_loader({:source, source, params}) do
+  defp run_loader_with_deps({:source, source, params}) do
     {value, deps} = Upkeep.Source.load(source, params)
     dep_keys = Upkeep.Source.deps_interest_keys(deps)
-    {value, Enum.uniq(source.__upkeep_interest_keys__(params) ++ dep_keys)}
+    {value, Enum.uniq(source.__upkeep_interest_keys__(params) ++ dep_keys), deps}
   end
 
-  defp run_loader({:fun, load_fn}), do: load_fn.()
+  defp run_loader_with_deps({:fun, load_fn}) do
+    {value, current_keys} = load_fn.()
+    {value, current_keys, []}
+  end
+
+  defp emit_initial_load(result, shard, node_id, loader) do
+    :telemetry.execute(
+      [:upkeep, :graph, :initial_load, result],
+      %{count: 1},
+      Map.merge(%{shard: shard, node_id: node_id}, loader_metadata(loader))
+    )
+  end
+
+  defp loader_metadata({:source, source, params}), do: %{source: source, params: params}
+  defp loader_metadata({:fun, _load_fn}), do: %{source: nil, params: nil}
+  defp loader_metadata(nil), do: %{source: nil, params: nil}
 
   # Batched per-pid dispatch. For one flush, builds pid → [(node_id, value)]
   # by walking the affected nodes' Group memberships once each, then sends a
@@ -250,7 +377,8 @@ defmodule Upkeep.Coordinator.Graph.Shard do
     :telemetry.span([:upkeep, :graph, :dispatch], metadata, fn ->
       pairs_by_pid =
         Enum.reduce(pairs, %{}, fn {node_id, value}, acc ->
-          {_loader, _keys, encoded_key} = Map.fetch!(state.sources, node_id)
+          {_loader, _keys, encoded_key, _tracked_deps, _loaded?} =
+            Map.fetch!(state.sources, node_id)
 
           Graph.group()
           |> Group.members(encoded_key)

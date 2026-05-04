@@ -49,16 +49,20 @@ defmodule Upkeep.Live do
         |> assign(assign_name, Map.fetch!(socket.assigns, primary_assign_name(watch)))
 
       :error ->
-        {value, tracked_deps} = load_source(source, params, source_id, component, :watch)
-
-        interest_keys =
-          (source.__upkeep_interest_keys__(params) ++
-             Upkeep.Source.deps_interest_keys(tracked_deps))
-          |> Enum.uniq()
-
         registered? = Subscriptions.register_interest?(socket)
+        shared_initial_load? = Subscriptions.shared_initial_load?(socket)
 
-        if registered? do
+        {value, tracked_deps, interest_keys} =
+          load_or_register_source(
+            socket,
+            shared_initial_load?,
+            source_id,
+            source,
+            params,
+            component
+          )
+
+        if registered? and not shared_initial_load? do
           Subscriptions.register(source_id, interest_keys, source, params)
         end
 
@@ -366,6 +370,30 @@ defmodule Upkeep.Live do
         {{value, tracked_deps}, %{changed?: nil, tracked_deps: length(tracked_deps)}}
       end
     )
+  end
+
+  defp load_or_register_source(_socket, true, source_id, source, params, _component) do
+    static_keys = source.__upkeep_interest_keys__(params)
+
+    {:ok, value, tracked_deps} =
+      Subscriptions.register_and_load(source_id, static_keys, source, params)
+
+    interest_keys =
+      (static_keys ++ Upkeep.Source.deps_interest_keys(tracked_deps))
+      |> Enum.uniq()
+
+    {value, tracked_deps, interest_keys}
+  end
+
+  defp load_or_register_source(_socket, false, source_id, source, params, component) do
+    {value, tracked_deps} = load_source(source, params, source_id, component, :watch)
+
+    interest_keys =
+      (source.__upkeep_interest_keys__(params) ++
+         Upkeep.Source.deps_interest_keys(tracked_deps))
+      |> Enum.uniq()
+
+    {value, tracked_deps, interest_keys}
   end
 
   defp reacts_to?(watch, event) do

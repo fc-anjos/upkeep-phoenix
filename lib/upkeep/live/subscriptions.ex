@@ -12,6 +12,10 @@ defmodule Upkeep.Live.Subscriptions do
     :ok = Graph.register_source(source_id, interest_keys, source, params)
   end
 
+  def register_and_load(source_id, interest_keys, source, params) do
+    Graph.register_source_and_load(source_id, interest_keys, source, params)
+  end
+
   def unregister(source_id) do
     Graph.unregister(source_id)
   end
@@ -19,5 +23,10 @@ defmodule Upkeep.Live.Subscriptions do
   def register_interest?(%Phoenix.LiveView.Socket{endpoint: nil, view: nil}), do: true
 
   def register_interest?(%Phoenix.LiveView.Socket{} = socket),
+    do: Phoenix.LiveView.connected?(socket)
+
+  def shared_initial_load?(%Phoenix.LiveView.Socket{endpoint: nil, view: nil}), do: false
+
+  def shared_initial_load?(%Phoenix.LiveView.Socket{} = socket),
     do: Phoenix.LiveView.connected?(socket)
 end

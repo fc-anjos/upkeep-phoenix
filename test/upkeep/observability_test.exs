@@ -63,18 +63,21 @@ defmodule Upkeep.ObservabilityTest do
   end
 
   test "stores Graph dispatch telemetry events", %{table: table} do
-    %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
-    |> Live.watch(:issues, ProjectIssues, project_id: 1)
+    project_id = System.unique_integer([:positive])
+    :ets.insert(table, {{:issues, project_id}, [:before]})
 
-    :ets.insert(table, {{:issues, 1}, [:after]})
+    %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+    |> Live.watch(:issues, ProjectIssues, project_id: project_id)
+
+    :ets.insert(table, {{:issues, project_id}, [:after]})
 
     assert :ok =
-             %Issue{project_id: 1}
+             %Issue{project_id: project_id}
              |> Upkeep.Change.updated()
              |> Upkeep.notify()
 
     assert :ok = Upkeep.Coordinator.Graph.drain()
-    assert_receive {:dag_values, [{{ProjectIssues, %{project_id: 1}}, [:after]}]}
+    assert_receive {:dag_values, [{{ProjectIssues, %{project_id: ^project_id}}, [:after]}]}
 
     events = recent_events_after_observability_flush()
 

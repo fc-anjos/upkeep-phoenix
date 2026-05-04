@@ -60,6 +60,36 @@ defmodule Upkeep.LiveRefreshTest do
     invalidated_by(Comment, :inserted, on: :issue_id)
   end
 
+  defmodule ScopedIssues do
+    use Upkeep.Source
+
+    query(fn s ->
+      Upkeep.LiveRefreshTest.bump_load({:loads, :scoped_issues, s.user_id})
+      Upkeep.LiveRefreshTest.table_value({:scoped_issues, s.user_id})
+    end)
+
+    invalidated_by(Issue, :updated, on: :issue_id, as: :user_id)
+  end
+
+  defmodule BlockingScopedIssues do
+    use Upkeep.Source
+
+    query(fn s ->
+      send(s.test_pid, {:blocking_load_started, self()})
+
+      receive do
+        :continue -> :ok
+      after
+        1_000 -> raise "blocking source was not released"
+      end
+
+      Upkeep.LiveRefreshTest.bump_load({:loads, :scoped_issues, s.user_id})
+      Upkeep.LiveRefreshTest.table_value({:scoped_issues, s.user_id})
+    end)
+
+    invalidated_by(Issue, :updated, on: :issue_id, as: :user_id)
+  end
+
   setup do
     table = :ets.new(__MODULE__, [:set, :public, :named_table])
     :ets.insert(table, {{:issues, 1}, [:issue_a]})
@@ -67,11 +97,15 @@ defmodule Upkeep.LiveRefreshTest do
     :ets.insert(table, {{:failing, 1}, [:stable]})
     :ets.insert(table, {{:comments, 1}, [:comment_a]})
     :ets.insert(table, {{:comments, 2}, [:comment_b]})
+    :ets.insert(table, {{:scoped_issues, 1}, [:user_1_issue]})
+    :ets.insert(table, {{:scoped_issues, 2}, [:user_2_issue]})
     :ets.insert(table, {{:loads, :issues, 1}, 0})
     :ets.insert(table, {{:loads, :activity, 1}, 0})
     :ets.insert(table, {{:loads, :failing, 1}, 0})
     :ets.insert(table, {{:loads, :comments, 1}, 0})
     :ets.insert(table, {{:loads, :comments, 2}, 0})
+    :ets.insert(table, {{:loads, :scoped_issues, 1}, 0})
+    :ets.insert(table, {{:loads, :scoped_issues, 2}, 0})
     :ets.insert(table, {{:loads, :visible, 1}, 0})
     :ets.insert(table, {{:loads, :issue_count, 1}, 0})
     :ets.insert(table, {{:loads, :issue_label, 1}, 0})
@@ -159,6 +193,107 @@ defmodule Upkeep.LiveRefreshTest do
 
     assert socket_a.assigns.issues == [:issue_b]
     assert socket_b.assigns.issues == [:issue_a]
+  end
+
+  test "concurrent connected watches share the in-flight initial load for the same source identity",
+       %{
+         table: table
+       } do
+    test_pid = self()
+    user_id = System.unique_integer([:positive])
+    put_scoped_user(table, user_id, [:user_issue])
+
+    task_a =
+      Task.async(fn ->
+        connected_live_socket()
+        |> Live.watch(:issues, BlockingScopedIssues, user_id: user_id, test_pid: test_pid)
+      end)
+
+    assert_receive {:blocking_load_started, loader_pid}
+
+    task_b =
+      Task.async(fn ->
+        connected_live_socket()
+        |> Live.watch(:issues, BlockingScopedIssues, user_id: user_id, test_pid: test_pid)
+      end)
+
+    refute_receive {:blocking_load_started, _second_loader_pid}, 50
+    send(loader_pid, :continue)
+
+    socket_a = Task.await(task_a)
+    socket_b = Task.await(task_b)
+
+    assert socket_a.assigns.issues == [:user_issue]
+    assert socket_b.assigns.issues == [:user_issue]
+    assert load_count(:scoped_issues, user_id) == 1
+  end
+
+  test "connected watches do not share initial values across different source params", %{
+    table: table
+  } do
+    user_a = System.unique_integer([:positive])
+    user_b = System.unique_integer([:positive])
+    put_scoped_user(table, user_a, [:user_a_issue])
+    put_scoped_user(table, user_b, [:user_b_issue])
+
+    socket_a =
+      connected_live_socket()
+      |> Live.watch(:issues, ScopedIssues, user_id: user_a)
+
+    socket_b =
+      connected_live_socket()
+      |> Live.watch(:issues, ScopedIssues, user_id: user_b)
+
+    assert socket_a.assigns.issues == [:user_a_issue]
+    assert socket_b.assigns.issues == [:user_b_issue]
+    assert load_count(:scoped_issues, user_a) == 1
+    assert load_count(:scoped_issues, user_b) == 1
+  end
+
+  test "connected source sharing emits initial-load miss and hit telemetry", %{table: table} do
+    attach_telemetry([
+      [:upkeep, :graph, :initial_load, :miss],
+      [:upkeep, :graph, :initial_load, :hit]
+    ])
+
+    test_pid = self()
+    user_id = System.unique_integer([:positive])
+    put_scoped_user(table, user_id, [:user_issue])
+    source_id = {BlockingScopedIssues, %{test_pid: test_pid, user_id: user_id}}
+
+    task_a =
+      Task.async(fn ->
+        connected_live_socket()
+        |> Live.watch(:issues, BlockingScopedIssues, user_id: user_id, test_pid: test_pid)
+      end)
+
+    assert_receive {:blocking_load_started, loader_pid}
+
+    task_b =
+      Task.async(fn ->
+        connected_live_socket()
+        |> Live.watch(:issues, BlockingScopedIssues, user_id: user_id, test_pid: test_pid)
+      end)
+
+    refute_receive {:blocking_load_started, _second_loader_pid}, 50
+    send(loader_pid, :continue)
+
+    Task.await(task_a)
+    Task.await(task_b)
+
+    assert_receive {:telemetry, [:upkeep, :graph, :initial_load, :miss], %{count: 1},
+                    %{
+                      node_id: ^source_id,
+                      source: BlockingScopedIssues,
+                      params: %{test_pid: _, user_id: ^user_id}
+                    }}
+
+    assert_receive {:telemetry, [:upkeep, :graph, :initial_load, :hit], %{count: 1},
+                    %{
+                      node_id: ^source_id,
+                      source: BlockingScopedIssues,
+                      params: %{test_pid: _, user_id: ^user_id}
+                    }}
   end
 
   test "watch is idempotent for the same source identity" do
@@ -571,9 +706,10 @@ defmodule Upkeep.LiveRefreshTest do
              Enum.find(snapshot.dag.edges, &(&1.to == {:source, comments_source_id}))
   end
 
-  test "emits telemetry for watch, queue, reload, recompute, assign, and unwatch", %{
-    table: table
-  } do
+  test "emits telemetry for watch, shared initial load, queue, reload, recompute, assign, and unwatch",
+       %{
+         table: table
+       } do
     attach_telemetry([
       [:upkeep, :source, :watch],
       [:upkeep, :source, :queue],
@@ -582,23 +718,19 @@ defmodule Upkeep.LiveRefreshTest do
       [:upkeep, :source, :unwatch],
       [:upkeep, :dag, :recompute, :start],
       [:upkeep, :dag, :recompute, :stop],
-      [:upkeep, :live, :assign]
+      [:upkeep, :live, :assign],
+      [:upkeep, :graph, :initial_load, :miss]
     ])
 
     source_id = {ProjectIssues, %{project_id: 1}}
 
     socket =
-      new_socket()
+      connected_live_socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
       |> Live.derive(:issue_count, [:issues], fn %{issues: issues} -> length(issues) end)
 
-    assert_receive {:telemetry, [:upkeep, :source, :reload, :start], _measurements,
-                    %{source_id: ^source_id, reason: :watch}}
-
-    assert_receive {:telemetry, [:upkeep, :source, :reload, :stop], measurements,
-                    %{source_id: ^source_id, reason: :watch}}
-
-    assert is_integer(measurements.duration)
+    assert_receive {:telemetry, [:upkeep, :graph, :initial_load, :miss], %{count: 1},
+                    %{node_id: ^source_id, source: ProjectIssues, params: %{project_id: 1}}}
 
     assert_receive {:telemetry, [:upkeep, :source, :watch], %{count: 1},
                     %{source_id: ^source_id, assign_name: :issues, kind: :new}}
@@ -618,6 +750,11 @@ defmodule Upkeep.LiveRefreshTest do
 
     assert_receive {:telemetry, [:upkeep, :source, :reload, :start], _measurements,
                     %{source_id: ^source_id, reason: :refresh}}
+
+    assert_receive {:telemetry, [:upkeep, :source, :reload, :stop], measurements,
+                    %{source_id: ^source_id, reason: :refresh}}
+
+    assert is_integer(measurements.duration)
 
     assert_receive {:telemetry, [:upkeep, :dag, :recompute, :stop], _measurements,
                     %{
@@ -671,6 +808,11 @@ defmodule Upkeep.LiveRefreshTest do
 
   defp load_count(source, id) do
     table_value({:loads, source, id})
+  end
+
+  defp put_scoped_user(table, user_id, issues) do
+    :ets.insert(table, {{:scoped_issues, user_id}, issues})
+    :ets.insert(table, {{:loads, :scoped_issues, user_id}, 0})
   end
 
   defp updated_issue(project_id, issue_id) do

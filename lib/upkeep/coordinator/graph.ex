@@ -76,6 +76,29 @@ defmodule Upkeep.Coordinator.Graph do
   end
 
   @doc """
+  Register a source node and return the current shared value.
+
+  If the same source identity is already loading, the caller joins that in-flight
+  load and receives the shared result. Otherwise the shard starts a fresh load,
+  stores its value for later notifications, reconciles its interest keys, and
+  returns the loaded value.
+  """
+  def register_source_and_load(node_id, interest_keys, source, params)
+      when is_list(interest_keys) and is_atom(source) and is_map(params) do
+    shard = shard_of(node_id)
+
+    {:ok, value, deps} =
+      GenServer.call(
+        shard_name(shard),
+        {:register_source_and_load, node_id, interest_keys, {:source, source, params}},
+        30_000
+      )
+
+    join_subscriber(node_id)
+    {:ok, value, deps}
+  end
+
+  @doc """
   Register a test or benchmark loader function.
 
   Application sources should use `register_source/4`; this helper keeps
