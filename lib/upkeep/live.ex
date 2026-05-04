@@ -14,10 +14,11 @@ defmodule Upkeep.Live do
     Snapshot,
     SourceLoads,
     Specs,
-    State,
     Subscriptions,
     Telemetry
   }
+
+  alias Upkeep.Runtime.State
 
   defmacro __using__(_opts) do
     quote do
@@ -434,7 +435,7 @@ defmodule Upkeep.Live do
 
         socket =
           socket
-          |> put_watches(watches)
+          |> State.put_watches(watches)
           |> State.delete_pending_refresh(source_id)
 
         watch.assign_names
@@ -468,11 +469,6 @@ defmodule Upkeep.Live do
       :error ->
         socket
     end
-  end
-
-  defp put_watches(socket, watches) do
-    private = socket.private || %{}
-    %{socket | private: Map.put(private, :upkeep_watches, watches)}
   end
 
   defp primary_assign_name(watch) do

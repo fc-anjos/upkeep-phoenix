@@ -3,7 +3,8 @@ defmodule Upkeep.Live.Assigns do
 
   import Phoenix.Component, only: [assign: 3]
 
-  alias Upkeep.Live.{Ids, State, Telemetry}
+  alias Upkeep.Live.{Ids, Telemetry}
+  alias Upkeep.Runtime.State
 
   def assign_source_value(socket, assign_name, value, source_id) do
     Telemetry.emit([:live, :assign], %{count: 1}, %{

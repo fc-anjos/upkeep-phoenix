@@ -1,7 +1,8 @@
 defmodule Upkeep.Live.DAGOperations do
   @moduledoc false
 
-  alias Upkeep.Live.{Assigns, Components, Ids, State, Telemetry}
+  alias Upkeep.Live.{Assigns, Components, Ids, Telemetry}
+  alias Upkeep.Runtime.State
 
   def put_source(socket, source_id, value, deps) do
     {dag, _changed?} =

@@ -1,8 +1,9 @@
 defmodule Upkeep.Live.SharedDerived do
   @moduledoc false
 
-  alias Upkeep.Live.{State, Subscriptions}
   alias Upkeep.Coordinator.Graph
+  alias Upkeep.Live.Subscriptions
+  alias Upkeep.Runtime.State
 
   def initial_value(socket, assign_name, dep_node_ids, dep_pairs, fun, compute) do
     base_metadata = sharing_metadata(socket, assign_name, dep_node_ids)
