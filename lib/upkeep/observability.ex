@@ -24,6 +24,7 @@ defmodule Upkeep.Observability do
     [:upkeep, :dag, :recompute, :stop],
     [:upkeep, :dag, :recompute, :exception],
     [:upkeep, :live, :assign],
+    [:upkeep, :derive, :sharing],
     [:upkeep, :graph, :dispatch, :start],
     [:upkeep, :graph, :dispatch, :stop],
     [:upkeep, :graph, :dispatch, :exception],

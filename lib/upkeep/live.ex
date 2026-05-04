@@ -154,8 +154,10 @@ defmodule Upkeep.Live do
       |> fun.()
     end
 
-    {initial_value, graph_node_id} =
+    {initial_value, graph_node_id, sharing_metadata} =
       shared_initial_derived_value(socket, assign_name, dep_node_ids, dep_pairs, fun, compute)
+
+    Telemetry.emit([:derive, :sharing], %{count: 1}, sharing_metadata)
 
     dag =
       socket
@@ -401,9 +403,11 @@ defmodule Upkeep.Live do
   end
 
   defp shared_initial_derived_value(socket, assign_name, dep_node_ids, dep_pairs, fun, compute) do
-    with true <- Subscriptions.shared_initial_load?(socket),
-         {:ok, graph_dep_ids, local_to_graph} <- shared_graph_dep_ids(socket, dep_node_ids),
-         {:ok, fun_identity} <- external_fun_identity(fun) do
+    base_metadata = derive_sharing_metadata(socket, assign_name, dep_node_ids)
+
+    with {:ok, fun_identity} <- external_fun_identity(fun),
+         true <- Subscriptions.shared_initial_load?(socket),
+         {:ok, graph_dep_ids, local_to_graph} <- shared_graph_dep_ids(socket, dep_node_ids) do
       dep_values = shared_graph_dep_values(socket, local_to_graph)
 
       graph_compute = fn graph_node_values ->
@@ -436,20 +440,50 @@ defmodule Upkeep.Live do
              graph_compute,
              metadata
            ) do
-        {:ok, value} -> {value, graph_node_id}
+        {:ok, value} ->
+          sharing_metadata =
+            base_metadata
+            |> Map.merge(%{
+              result: :shared,
+              reason: :shareable,
+              graph_node_id: graph_node_id,
+              graph_dep_node_ids: graph_dep_ids,
+              fun: fun_identity
+            })
+
+          {value, graph_node_id, sharing_metadata}
       end
     else
-      _ -> {compute_initial_value(socket, dep_node_ids, compute), nil}
+      :not_external_fun ->
+        {compute_initial_value(socket, dep_node_ids, compute), nil,
+         Map.merge(base_metadata, %{result: :local, reason: :local_fun})}
+
+      {:captured_fun, fun_identity} ->
+        {compute_initial_value(socket, dep_node_ids, compute), nil,
+         Map.merge(base_metadata, %{result: :local, reason: :captured_fun, fun: fun_identity})}
+
+      false ->
+        {compute_initial_value(socket, dep_node_ids, compute), nil,
+         Map.merge(base_metadata, %{result: :local, reason: :disconnected_socket})}
+
+      {:unshareable_dep, reason} ->
+        {compute_initial_value(socket, dep_node_ids, compute), nil,
+         Map.merge(base_metadata, %{result: :local, reason: reason})}
     end
   rescue
-    ArgumentError -> {compute_initial_value(socket, dep_node_ids, compute), nil}
+    ArgumentError ->
+      {compute_initial_value(socket, dep_node_ids, compute), nil,
+       Map.merge(derive_sharing_metadata(socket, assign_name, dep_node_ids), %{
+         result: :local,
+         reason: :error
+       })}
   end
 
   defp shared_graph_dep_ids(socket, dep_node_ids) do
     dep_node_ids
     |> Enum.reduce_while({:ok, [], %{}}, fn
       {:source, {:scoped, _component, _source_id}}, _acc ->
-        {:halt, :error}
+        {:halt, {:unshareable_dep, :component_scoped_dep}}
 
       {:source, source_id} = local_node_id, {:ok, ids, local_to_graph} ->
         {:cont, {:ok, [source_id | ids], Map.put(local_to_graph, local_node_id, source_id)}}
@@ -461,15 +495,15 @@ defmodule Upkeep.Live do
              {:ok, [graph_node_id | ids], Map.put(local_to_graph, local_node_id, graph_node_id)}}
 
           :error ->
-            {:halt, :error}
+            {:halt, {:unshareable_dep, :local_only_dep}}
         end
 
       _node_id, _acc ->
-        {:halt, :error}
+        {:halt, {:unshareable_dep, :unsupported_dep}}
     end)
     |> case do
       {:ok, ids, local_to_graph} -> {:ok, Enum.reverse(ids), local_to_graph}
-      :error -> :error
+      {:unshareable_dep, reason} -> {:unshareable_dep, reason}
     end
   end
 
@@ -491,8 +525,27 @@ defmodule Upkeep.Live do
          {:arity, arity} <- List.keyfind(info, :arity, 0) do
       {:ok, {module, name, arity}}
     else
-      _ -> :error
+      {:env, env} when is_list(env) and env != [] ->
+        {:captured_fun, fun_identity_from_info(info)}
+
+      _ ->
+        :not_external_fun
     end
+  end
+
+  defp fun_identity_from_info(info) do
+    module = info |> List.keyfind(:module, 0) |> elem(1)
+    name = info |> List.keyfind(:name, 0) |> elem(1)
+    arity = info |> List.keyfind(:arity, 0) |> elem(1)
+    {module, name, arity}
+  end
+
+  defp derive_sharing_metadata(socket, assign_name, dep_node_ids) do
+    %{
+      assign_name: assign_name,
+      view: Map.get(socket, :view),
+      dep_node_ids: dep_node_ids
+    }
   end
 
   defp compute_initial_value(socket, dep_node_ids, compute) do

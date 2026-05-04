@@ -89,6 +89,38 @@ defmodule Upkeep.ObservabilityTest do
            end)
   end
 
+  test "stores derive sharing diagnostics", %{table: table} do
+    project_id = System.unique_integer([:positive])
+    :ets.insert(table, {{:issues, project_id}, [:before]})
+
+    %Phoenix.LiveView.Socket{
+      endpoint: UpkeepWeb.Endpoint,
+      view: UpkeepWeb.KanbanLive,
+      transport_pid: self(),
+      assigns: %{__changed__: %{}}
+    }
+    |> Live.watch(:issues, ProjectIssues, project_id: project_id)
+    |> Live.derive(:issue_count, [:issues], &__MODULE__.issue_count/1)
+    |> Live.derive(:local_count, [:issue_count], fn %{issue_count: count} -> count end)
+
+    events = recent_events_after_observability_flush()
+
+    assert Enum.any?(events, fn event ->
+             event.event == [:upkeep, :derive, :sharing] and
+               event.metadata.assign_name == :issue_count and
+               event.metadata.result == :shared and
+               event.metadata.reason == :shareable and
+               event.metadata.fun == {__MODULE__, :issue_count, 1}
+           end)
+
+    assert Enum.any?(events, fn event ->
+             event.event == [:upkeep, :derive, :sharing] and
+               event.metadata.assign_name == :local_count and
+               event.metadata.result == :local and
+               event.metadata.reason == :local_fun
+           end)
+  end
+
   test "can clear stored events" do
     %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
     |> Live.watch(:issues, ProjectIssues, project_id: 1)
@@ -102,4 +134,6 @@ defmodule Upkeep.ObservabilityTest do
     _ = :sys.get_state(Upkeep.Observability)
     Upkeep.recent_events()
   end
+
+  def issue_count(%{issues: issues}), do: length(issues)
 end

@@ -102,6 +102,10 @@ defmodule Upkeep.LiveRefreshTest do
   end
 
   setup do
+    if :ets.info(__MODULE__) != :undefined do
+      :ets.delete(__MODULE__)
+    end
+
     table = :ets.new(__MODULE__, [:set, :public, :named_table])
     :ets.insert(table, {{:issues, 1}, [:issue_a]})
     :ets.insert(table, {{:activity, 1}, [:activity_a]})
@@ -122,6 +126,12 @@ defmodule Upkeep.LiveRefreshTest do
     :ets.insert(table, {{:loads, :visible, 1}, 0})
     :ets.insert(table, {{:loads, :issue_count, 1}, 0})
     :ets.insert(table, {{:loads, :issue_label, 1}, 0})
+
+    on_exit(fn ->
+      if :ets.info(__MODULE__) != :undefined do
+        :ets.delete(__MODULE__)
+      end
+    end)
 
     %{table: table}
   end
@@ -396,6 +406,94 @@ defmodule Upkeep.LiveRefreshTest do
     assert socket_b.assigns.issue_names == [:user_b_issue]
     assert load_count(:shared_issue_names, user_a) == 1
     assert load_count(:shared_issue_names, user_b) == 1
+  end
+
+  test "derive sharing emits diagnostics for shared and local decisions", %{table: table} do
+    attach_telemetry([[:upkeep, :derive, :sharing]])
+
+    user_id = System.unique_integer([:positive])
+    put_scoped_user(table, user_id, [{user_id, :user_issue}])
+    :ets.insert(table, {{:loads, :shared_issue_count, user_id}, 0})
+
+    shared_source_id = {ScopedIssues, %{user_id: user_id}}
+
+    shared_graph_id =
+      {:derived, UpkeepWeb.KanbanLive, :issue_count, [shared_source_id],
+       {__MODULE__, :shared_issue_count, 1}}
+
+    connected_live_socket()
+    |> Live.watch(:issues, ScopedIssues, user_id: user_id)
+    |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
+
+    assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
+                    %{
+                      assign_name: :issue_count,
+                      result: :shared,
+                      reason: :shareable,
+                      graph_node_id: ^shared_graph_id,
+                      dep_node_ids: [{:source, ^shared_source_id}],
+                      graph_dep_node_ids: [^shared_source_id],
+                      fun: {__MODULE__, :shared_issue_count, 1}
+                    }}
+
+    disconnected_live_socket()
+    |> Live.watch(:issues, ScopedIssues, user_id: user_id)
+    |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
+
+    assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
+                    %{
+                      assign_name: :issue_count,
+                      result: :local,
+                      reason: :disconnected_socket
+                    }}
+
+    issue_count_fn = fn %{issues: issues} -> length(issues) + user_id end
+
+    connected_live_socket()
+    |> Live.watch(:issues, ScopedIssues, user_id: user_id)
+    |> Live.derive(:issue_count, [:issues], issue_count_fn)
+
+    assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
+                    %{
+                      assign_name: :issue_count,
+                      result: :local,
+                      reason: :captured_fun
+                    }}
+
+    connected_live_socket()
+    |> Live.component(:issue_detail, [], fn %{} -> %{issue_id: user_id} end)
+    |> Live.watch(:issues, ScopedIssues, [user_id: user_id], under: :issue_detail)
+    |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
+
+    assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
+                    %{
+                      assign_name: :issue_count,
+                      result: :local,
+                      reason: :component_scoped_dep
+                    }}
+
+    local_marker = :local
+
+    connected_live_socket()
+    |> Live.watch(:issues, ScopedIssues, user_id: user_id)
+    |> Live.derive(:local_issues, [:issues], fn %{issues: issues} ->
+      {local_marker, issues} |> elem(1)
+    end)
+    |> Live.derive(:issue_count, [:local_issues], &__MODULE__.shared_local_issue_count/1)
+
+    assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
+                    %{
+                      assign_name: :local_issues,
+                      result: :local,
+                      reason: :local_fun
+                    }}
+
+    assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
+                    %{
+                      assign_name: :issue_count,
+                      result: :local,
+                      reason: :local_only_dep
+                    }}
   end
 
   test "concurrent connected derives share a chain of initial computes", %{table: table} do
@@ -1089,6 +1187,8 @@ defmodule Upkeep.LiveRefreshTest do
 
     length(issues)
   end
+
+  def shared_local_issue_count(%{local_issues: issues}), do: length(issues)
 
   def shared_issue_names(%{issues: [{user_id, _name} | _] = issues}) do
     bump_load({:loads, :shared_issue_names, user_id})
