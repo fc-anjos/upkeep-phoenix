@@ -207,6 +207,24 @@ defmodule Upkeep.SourceEctoTest do
     end
   end
 
+  defmodule QueryPreloadedProjectIssues do
+    use Upkeep.Source, repo: Upkeep.Repo
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.{Comment, Issue}
+
+    def query(%{project_id: project_id}) do
+      visible_comments =
+        from c in Comment,
+          where: c.body == "visible"
+
+      from i in Issue,
+        where: i.project_id == ^project_id,
+        preload: [comments: ^visible_comments]
+    end
+  end
+
   defmodule SchemalessProjectIssues do
     use Upkeep.Source
 
@@ -356,6 +374,16 @@ defmodule Upkeep.SourceEctoTest do
              {:upkeep_change, :updated, Issue, [assignee_id: 9, project_id: 1, status: "open"]},
              {:upkeep_change, :deleted, Issue, [assignee_id: 9, project_id: 1, status: "open"]}
            ]
+  end
+
+  test "coverage classifies field-indexed query deps as precise" do
+    Repo.insert!(issue(id: 1, project_id: 1, assignee_id: 9, title: "Mine", position: 1))
+
+    coverage = Upkeep.Test.assert_source_reactive!(ProjectIssues, %{project_id: 1, user_id: 9})
+
+    assert coverage.unknown == []
+    assert %{schema: Issue, fields: [:assignee_id, :project_id, :status]} in coverage.precise
+    assert coverage.broad == []
   end
 
   test "plain query/1 sources refresh after captured repo inserts without explicit reactors" do
@@ -577,6 +605,33 @@ defmodule Upkeep.SourceEctoTest do
              comment(project_id: 99) |> Upkeep.Change.inserted(),
              params
            )
+  end
+
+  test "coverage classifies preload deps as broad but known" do
+    Repo.insert!(%Column{id: 1, project_id: 1, name: "Backlog", position: 1})
+    Repo.insert!(issue(id: 1, project_id: 1, column_id: 1, title: "With preloads"))
+
+    coverage = Upkeep.Test.assert_source_reactive!(PreloadedProjectIssues, %{project_id: 1})
+
+    assert coverage.unknown == []
+    assert %{schema: Issue, fields: [:project_id]} in coverage.precise
+    assert %{schema: Column, reason: :no_precise_filters} in coverage.broad
+    assert %{schema: Comment, reason: :no_precise_filters} in coverage.broad
+    assert %{schema: Tag, reason: :no_precise_filters} in coverage.broad
+    assert %{schema: IssueTag, reason: :no_precise_filters} in coverage.broad
+  end
+
+  test "coverage reports query preloads as unknown" do
+    Repo.insert!(issue(id: 1, project_id: 1, title: "With query preload"))
+
+    coverage = Upkeep.Source.coverage(QueryPreloadedProjectIssues, %{project_id: 1})
+
+    assert %{reason: :unsupported_preload_query} in coverage.unknown
+    assert %{schema: Comment, reason: :no_precise_filters} in coverage.broad
+
+    assert_raise ExUnit.AssertionError, ~r/unknown entries/, fn ->
+      Upkeep.Test.assert_source_reactive!(QueryPreloadedProjectIssues, %{project_id: 1})
+    end
   end
 
   test "preloaded query sources refresh after associated records change" do

@@ -44,6 +44,25 @@ defmodule Upkeep.Test do
   end
 
   @doc """
+  Assert that Upkeep can see a source's invalidation surface.
+
+  This executes the source once so custom `load/1` callbacks can report any
+  `Upkeep.read/1` queries they perform.
+  """
+  def assert_source_reactive!(source, params) when is_atom(source) and is_map(params) do
+    coverage = Upkeep.Source.coverage(source, params)
+
+    if Upkeep.Source.Coverage.known?(coverage) do
+      coverage
+    else
+      raise ExUnit.AssertionError,
+        message:
+          "expected #{inspect(source)} with params #{inspect(params)} to have a known " <>
+            "Upkeep invalidation surface, got unknown entries: #{inspect(coverage.unknown)}"
+    end
+  end
+
+  @doc """
   Allow the calling test pid's sandboxed connection to be used by the
   coordinator's shard processes and their task supervisor.
 

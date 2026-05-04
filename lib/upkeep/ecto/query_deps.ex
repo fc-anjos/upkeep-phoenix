@@ -28,6 +28,31 @@ defmodule Upkeep.Ecto.QueryDeps do
 
   def from_query(_query), do: %__MODULE__{}
 
+  def coverage(%__MODULE__{} = deps) do
+    {unknown, warnings} = Enum.split_with(deps.warnings, &unknown_warning?/1)
+
+    deps.schemas
+    |> Enum.reduce(
+      Upkeep.Source.Coverage.new(nil, %{}, unknown: unknown, warnings: warnings),
+      fn schema, coverage ->
+        filters = equality_filters(deps, schema)
+
+        cond do
+          deps.broad? ->
+            append_broad(coverage, schema, :unsupported_query)
+
+          filters == %{} ->
+            append_broad(coverage, schema, :no_precise_filters)
+
+          true ->
+            append_precise(coverage, schema, Map.keys(filters))
+        end
+      end
+    )
+  end
+
+  def coverage(%Ecto.Query{} = query), do: query |> from_query() |> coverage()
+
   def interest_keys(query_or_deps)
 
   def interest_keys(%Ecto.Query{} = query), do: query |> from_query() |> interest_keys()
@@ -211,7 +236,11 @@ defmodule Upkeep.Ecto.QueryDeps do
     |> Upkeep.Ecto.QueryDeps.Expressions.all()
     |> Enum.reduce(deps, fn expr, deps ->
       if Upkeep.Ecto.QueryDeps.Expressions.unsupported?(expr) do
-        %{deps | broad?: true, warnings: ["unsupported query expression" | deps.warnings]}
+        %{
+          deps
+          | broad?: true,
+            warnings: [%{reason: :unsupported_query_expression} | deps.warnings]
+        }
       else
         deps
       end
@@ -228,12 +257,43 @@ defmodule Upkeep.Ecto.QueryDeps do
   end
 
   defp collect_preload_deps(deps, query) do
-    query
-    |> preload_schemas()
-    |> Enum.reduce(deps, fn schema, deps ->
-      %{deps | schemas: MapSet.put(deps.schemas, schema)}
+    schemas = preload_schemas(query)
+    warnings = preload_warnings(query.preloads)
+
+    deps =
+      Enum.reduce(schemas, deps, fn schema, deps ->
+        %{deps | schemas: MapSet.put(deps.schemas, schema)}
+      end)
+
+    %{deps | warnings: Enum.uniq(warnings ++ deps.warnings)}
+  end
+
+  defp preload_warnings(preloads) when is_list(preloads) do
+    Enum.flat_map(preloads, fn
+      {_assoc, %Ecto.Query{}} ->
+        [%{reason: :unsupported_preload_query}]
+
+      {_assoc, fun} when is_function(fun) ->
+        [%{reason: :unsupported_preload_function}]
+
+      {_assoc, nested} ->
+        preload_warnings(List.wrap(nested))
+
+      %Ecto.Query{} ->
+        [%{reason: :unsupported_preload_query}]
+
+      fun when is_function(fun) ->
+        [%{reason: :unsupported_preload_function}]
+
+      assoc when is_atom(assoc) ->
+        []
+
+      _other ->
+        [%{reason: :unsupported_preload}]
     end)
   end
+
+  defp preload_warnings(_preloads), do: []
 
   defp preload_schemas(query) do
     root_schema = Map.get(Upkeep.Ecto.QueryDeps.Bindings.from_query(query), 0)
@@ -303,6 +363,26 @@ defmodule Upkeep.Ecto.QueryDeps do
         warnings: Enum.uniq(left.warnings ++ right.warnings)
     }
   end
+
+  defp append_precise(%Upkeep.Source.Coverage{} = coverage, schema, fields) do
+    entry = %{schema: schema, fields: Enum.sort(fields)}
+    %Upkeep.Source.Coverage{coverage | precise: [entry | coverage.precise]}
+  end
+
+  defp append_broad(%Upkeep.Source.Coverage{} = coverage, schema, reason) do
+    entry = %{schema: schema, reason: reason}
+    %Upkeep.Source.Coverage{coverage | broad: [entry | coverage.broad]}
+  end
+
+  defp unknown_warning?(%{reason: reason})
+       when reason in [
+              :unsupported_preload,
+              :unsupported_preload_function,
+              :unsupported_preload_query
+            ],
+       do: true
+
+  defp unknown_warning?(_warning), do: false
 
   defp merge_mapsets(left, right) do
     Map.merge(left, right, fn _schema, left_fields, right_fields ->

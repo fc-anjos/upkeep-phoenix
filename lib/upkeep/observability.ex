@@ -15,6 +15,7 @@ defmodule Upkeep.Observability do
 
   @events [
     [:upkeep, :source, :watch],
+    [:upkeep, :source, :coverage],
     [:upkeep, :source, :queue],
     [:upkeep, :source, :reload, :start],
     [:upkeep, :source, :reload, :stop],

@@ -51,6 +51,12 @@ defmodule Upkeep.SourceTest do
     end)
   end
 
+  defmodule HiddenLoad do
+    use Upkeep.Source
+
+    def load(_params), do: []
+  end
+
   setup do
     Upkeep.Test.reset_graph()
 
@@ -129,6 +135,16 @@ defmodule Upkeep.SourceTest do
     assert ColumnIssues.reacts_to?(change, %{column_id: 1})
     assert ColumnIssues.reacts_to?(change, %{column_id: 2})
     refute ColumnIssues.reacts_to?(change, %{column_id: 3})
+  end
+
+  test "coverage reports unknown sources that do not declare or track reads" do
+    coverage = Upkeep.Source.coverage(HiddenLoad, %{})
+
+    assert coverage.unknown == [%{reason: :no_invalidation_surface}]
+
+    assert_raise ExUnit.AssertionError, ~r/known Upkeep invalidation surface/, fn ->
+      Upkeep.Test.assert_source_reactive!(HiddenLoad, %{})
+    end
   end
 
   test "watch joins source interest and notify dispatches through the coordinator", %{

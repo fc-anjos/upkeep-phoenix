@@ -201,6 +201,10 @@ defmodule Upkeep.Source do
       def __upkeep_interest_keys__(params) do
         [unquote_splicing(interest_keys)] ++ unquote(query_interest_keys)
       end
+
+      def __upkeep_explicit_interest_keys__(params) do
+        [unquote_splicing(interest_keys)]
+      end
     end
   end
 
@@ -213,7 +217,11 @@ defmodule Upkeep.Source do
         {value, tracked_deps()}
       end)
 
-    warn_if_no_invalidation_surface(source, params, deps)
+    coverage = coverage(source, params, deps)
+
+    emit_coverage(coverage)
+    warn_if_no_invalidation_surface(coverage)
+
     {value, deps}
   end
 
@@ -241,6 +249,25 @@ defmodule Upkeep.Source do
 
   def deps_react_to?(deps, event) do
     Enum.any?(deps, &Upkeep.Ecto.QueryDeps.matches_change?(&1, event))
+  end
+
+  def coverage(source, params) when is_atom(source) and is_map(params) do
+    repo = source.__upkeep_repo__() || Application.get_env(:upkeep, :repo)
+
+    {_value, deps} =
+      with_read_context(repo, fn ->
+        value = source.load(params)
+        {value, tracked_deps()}
+      end)
+
+    coverage(source, params, deps)
+  end
+
+  def coverage(source, params, deps) when is_atom(source) and is_map(params) and is_list(deps) do
+    deps
+    |> Enum.map(&Upkeep.Ecto.QueryDeps.coverage/1)
+    |> Enum.reduce(base_coverage(source, params), &Upkeep.Source.Coverage.merge/2)
+    |> attach_unknown_if_empty()
   end
 
   defdelegate matches?(event, notification), to: Upkeep.Source.Keys
@@ -301,14 +328,49 @@ defmodule Upkeep.Source do
 
   @warn_dedup_key {__MODULE__, :no_invalidation_warned}
 
-  defp warn_if_no_invalidation_surface(source, params, deps) do
-    static_keys =
-      if function_exported?(source, :__upkeep_interest_keys__, 1),
-        do: source.__upkeep_interest_keys__(params),
+  defp emit_coverage(%Upkeep.Source.Coverage{} = coverage) do
+    :telemetry.execute(
+      [:upkeep, :source, :coverage],
+      %{count: 1},
+      %{
+        source: coverage.source,
+        params: coverage.params,
+        coverage: coverage,
+        severity: Upkeep.Source.Coverage.severity(coverage),
+        known?: Upkeep.Source.Coverage.known?(coverage)
+      }
+    )
+  end
+
+  defp base_coverage(source, params) do
+    explicit =
+      if function_exported?(source, :__upkeep_explicit_interest_keys__, 1),
+        do: source.__upkeep_explicit_interest_keys__(params),
         else: []
 
-    if static_keys == [] and deps == [] do
-      shape = {source, params}
+    Upkeep.Source.Coverage.new(source, params, explicit: explicit)
+  end
+
+  defp attach_unknown_if_empty(%Upkeep.Source.Coverage{} = coverage) do
+    empty? =
+      coverage.precise == [] and coverage.broad == [] and coverage.explicit == [] and
+        coverage.unknown == []
+
+    if empty? do
+      %Upkeep.Source.Coverage{
+        coverage
+        | unknown: [%{reason: :no_invalidation_surface}]
+      }
+    else
+      coverage
+    end
+  end
+
+  defp warn_if_no_invalidation_surface(%Upkeep.Source.Coverage{unknown: []}), do: :ok
+
+  defp warn_if_no_invalidation_surface(%Upkeep.Source.Coverage{} = coverage) do
+    if Enum.any?(coverage.unknown, &(&1.reason == :no_invalidation_surface)) do
+      shape = {coverage.source, coverage.params}
       seen = :persistent_term.get(@warn_dedup_key, MapSet.new())
 
       unless MapSet.member?(seen, shape) do
@@ -317,7 +379,7 @@ defmodule Upkeep.Source do
         require Logger
 
         Logger.warning(
-          "Upkeep source #{inspect(source)} with params #{inspect(params)} produced " <>
+          "Upkeep source #{inspect(coverage.source)} with params #{inspect(coverage.params)} produced " <>
             "no invalidation keys. It will not react to any event. Add an " <>
             "invalidated_by/reacts_to declaration, or call Upkeep.read inside load/1."
         )

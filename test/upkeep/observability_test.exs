@@ -60,6 +60,7 @@ defmodule Upkeep.ObservabilityTest do
     event_names = Enum.map(events, & &1.event)
 
     assert [:upkeep, :source, :watch] in event_names
+    assert [:upkeep, :source, :coverage] in event_names
     assert [:upkeep, :source, :queue] in event_names
     assert [:upkeep, :source, :reload, :stop] in event_names
     assert [:upkeep, :dag, :recompute, :stop] in event_names
@@ -71,6 +72,13 @@ defmodule Upkeep.ObservabilityTest do
              event.event == [:upkeep, :source, :queue] and
                event.measurements == %{count: 1} and
                event.metadata.source == ProjectIssues
+           end)
+
+    assert Enum.any?(events, fn event ->
+             event.event == [:upkeep, :source, :coverage] and
+               event.metadata.source == ProjectIssues and
+               event.metadata.known? == true and
+               event.metadata.severity == :ok
            end)
   end
 
