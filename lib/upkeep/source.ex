@@ -144,7 +144,7 @@ defmodule Upkeep.Source do
             def load(params) do
               params
               |> __MODULE__.query()
-              |> Upkeep.read(repo: unquote(repo))
+              |> Upkeep.read()
             end
           end
 
@@ -179,40 +179,34 @@ defmodule Upkeep.Source do
     end
   end
 
-  def load_from_query(%Ecto.Query{} = _query, nil) do
-    raise ArgumentError,
-          "source returned an Ecto.Query but no repo was configured; " <>
-            "use `use Upkeep.Source, repo: MyApp.Repo` or define load/1 explicitly"
-  end
-
-  def load_from_query(%Ecto.Query{} = query, repo) when is_atom(repo), do: repo.all(query)
-  def load_from_query(value, _repo), do: value
-
   def load(source, params) when is_atom(source) do
     repo = source.__upkeep_repo__()
 
-    with_read_context(repo, fn ->
-      value = source.load(params)
-      {value, tracked_deps()}
-    end)
+    {value, deps} =
+      with_read_context(repo, fn ->
+        value = source.load(params)
+        {value, tracked_deps()}
+      end)
+
+    warn_if_no_invalidation_surface(source, params, deps)
+    {value, deps}
   end
 
-  def read(query, opts \\ [])
+  def read(%Ecto.Query{} = query) do
+    case Process.get(@context_key) do
+      %{repo: repo} ->
+        track_query(query)
+        repo.all(query)
 
-  def read(%Ecto.Query{} = query, opts) do
-    repo = Keyword.get(opts, :repo) || current_repo()
-
-    unless repo do
-      raise ArgumentError,
-            "Upkeep.read/1 needs a source repo context; " <>
-              "use `use Upkeep.Source, repo: MyApp.Repo` or pass `repo: MyApp.Repo`"
+      _ ->
+        raise ArgumentError,
+              "Upkeep.read/1 must be called inside a source context. " <>
+                "Use it only inside a source's load/1 or query/1 callback. " <>
+                "For ad-hoc queries, call Repo.all/1 directly."
     end
-
-    track_query(query)
-    repo.all(query)
   end
 
-  def read(value, _opts), do: value
+  def read(value), do: value
 
   def deps_interest_keys(deps) do
     deps
@@ -257,22 +251,45 @@ defmodule Upkeep.Source do
   defp restore_read_context(nil), do: Process.delete(@context_key)
   defp restore_read_context(previous), do: Process.put(@context_key, previous)
 
-  defp current_repo do
-    case Process.get(@context_key) do
-      %{repo: repo} -> repo
-      _context -> nil
-    end
-  end
-
   defp track_query(query) do
     case Process.get(@context_key) do
       %{deps: deps} = context ->
         deps = [Upkeep.Ecto.QueryDeps.from_query(query) | deps]
         Process.put(@context_key, %{context | deps: deps})
 
-      _context ->
-        :ok
+      _ ->
+        raise "Upkeep.Source.track_query/1 called outside a source context. " <>
+                "This usually means a Task spawned inside load/1 lost the context — " <>
+                "explicit propagation is required for concurrent reads."
     end
+  end
+
+  @warn_dedup_key {__MODULE__, :no_invalidation_warned}
+
+  defp warn_if_no_invalidation_surface(source, params, deps) do
+    static_keys =
+      if function_exported?(source, :__upkeep_interest_keys__, 1),
+        do: source.__upkeep_interest_keys__(params),
+        else: []
+
+    if static_keys == [] and deps == [] do
+      shape = {source, params}
+      seen = :persistent_term.get(@warn_dedup_key, MapSet.new())
+
+      unless MapSet.member?(seen, shape) do
+        :persistent_term.put(@warn_dedup_key, MapSet.put(seen, shape))
+
+        require Logger
+
+        Logger.warning(
+          "Upkeep source #{inspect(source)} with params #{inspect(params)} produced " <>
+            "no invalidation keys. It will not react to any event. Add an " <>
+            "invalidated_by/reacts_to declaration, or call Upkeep.read inside load/1."
+        )
+      end
+    end
+
+    :ok
   end
 
   defp tracked_deps do

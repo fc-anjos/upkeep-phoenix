@@ -3,9 +3,12 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
   use GenServer
 
   alias Upkeep.Coordinator.NodeDAG
+  alias Upkeep.DAG
 
   @flush_interval_ms 1
   @flush_threshold 1_000
+
+  ## Public
 
   def start_link(opts) do
     name = Keyword.fetch!(opts, :name)
@@ -13,11 +16,16 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
     GenServer.start_link(__MODULE__, idx, name: name)
   end
 
+  ## GenServer
+
   @impl true
   def init(idx) do
     {:ok,
      %{
        idx: idx,
+       dag: DAG.new(),
+       # node_id => {load_fn, registered_keys}
+       sources: %{},
        interests: %{},
        pid_nodes: %{},
        monitors: %{},
@@ -27,30 +35,39 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
      }}
   end
 
-  ## Registration
-
   @impl true
   def handle_call({:register_source, pid, node_id, interest_keys, load_fn}, _from, state) do
-    unless :ets.member(NodeDAG.nodes_table(), node_id) do
-      :ets.insert(NodeDAG.nodes_table(), {node_id, {:source, load_fn, interest_keys}})
+    state =
+      if Map.has_key?(state.sources, node_id) do
+        state
+      else
+        :ets.insert(NodeDAG.nodes_table(), {node_id, :source})
+        Enum.each(interest_keys, &:ets.insert(NodeDAG.index_table(), {&1, node_id}))
+        {dag, _changed?} = DAG.put_source(state.dag, node_id, nil, [])
 
-      Enum.each(interest_keys, fn key ->
-        :ets.insert(NodeDAG.index_table(), {key, node_id})
-      end)
-    end
+        %{
+          state
+          | sources: Map.put(state.sources, node_id, {load_fn, interest_keys}),
+            dag: dag
+        }
+      end
 
     {:reply, :ok, add_interest(state, pid, node_id)}
   end
 
   @impl true
   def handle_call({:register_derived, pid, node_id, dep_ids, compute_fn}, _from, state) do
-    unless :ets.member(NodeDAG.nodes_table(), node_id) do
-      :ets.insert(NodeDAG.nodes_table(), {node_id, {:derived, compute_fn, dep_ids}})
+    state =
+      if DAG.has_node?(state.dag, node_id) do
+        state
+      else
+        :ets.insert(NodeDAG.nodes_table(), {node_id, :derived})
 
-      Enum.each(dep_ids, fn dep ->
-        :ets.insert(NodeDAG.dependents_table(), {dep, node_id})
-      end)
-    end
+        %{
+          state
+          | dag: DAG.put_derived(state.dag, node_id, dep_ids, compute_fn, initial_value: nil)
+        }
+      end
 
     {:reply, :ok, add_interest(state, pid, node_id)}
   end
@@ -109,91 +126,97 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
   defp do_flush(%{buffer_size: 0} = state), do: %{state | flush_scheduled?: false}
 
   defp do_flush(state) do
-    dirty_sources = MapSet.to_list(state.buffer_node_ids)
+    # Loads dirty sources, updates the DAG, recomputes downstream derived
+    # via Upkeep.DAG.recompute/2, and dispatches in parallel.
+    dirty_sources =
+      state.buffer_node_ids
+      |> MapSet.to_list()
+      |> Enum.filter(&Map.has_key?(state.sources, &1))
 
-    # Step 1: load all dirty source nodes (in parallel via Task.Supervisor).
-    # Step 2: compute affected derived nodes (only those whose deps are dirty).
-    # Step 3: dispatch values to interested pids — in parallel.
+    {sources_loaded, state} = load_sources(dirty_sources, state)
 
-    interests = state.interests
-    sources_loaded = load_sources(dirty_sources)
+    dag =
+      Enum.reduce(sources_loaded, state.dag, fn {id, value}, dag ->
+        {dag, _changed?} = DAG.put_source(dag, id, value, [])
+        dag
+      end)
 
-    # Push source values to subscribers (parallel).
-    Enum.each(sources_loaded, fn {node_id, value} ->
-      pids = Map.get(interests, node_id, MapSet.new())
+    {dag, derived_changed, _} = DAG.recompute(dag, Enum.map(sources_loaded, &elem(&1, 0)))
 
-      if MapSet.size(pids) > 0 do
-        msg = {:dag_value, node_id, value}
-        spawn_dispatch(pids, msg)
-      end
+    # Dispatch source values unconditionally (matches current contract).
+    Enum.each(sources_loaded, fn {id, value} ->
+      dispatch(state.interests, id, value)
     end)
 
-    # Find derived nodes affected by dirty sources (this shard only).
-    derived_to_recompute =
-      dirty_sources
-      |> Enum.flat_map(&:ets.lookup(NodeDAG.dependents_table(), &1))
-      |> Enum.map(fn {_dep, derived_id} -> derived_id end)
-      |> Enum.uniq()
-      |> Enum.filter(&local_node?(&1, state.idx))
+    # Dispatch derived only when their value changed.
+    Enum.each(derived_changed, fn id ->
+      dispatch(state.interests, id, DAG.fetch!(dag, id))
+    end)
 
-    Enum.each(derived_to_recompute, fn node_id ->
-      case :ets.lookup(NodeDAG.nodes_table(), node_id) do
-        [{^node_id, {:derived, compute_fn, dep_ids}}] ->
-          dep_values = read_dep_values(dep_ids)
-          value = compute_fn.(dep_values)
-          :ets.insert(NodeDAG.values_table(), {node_id, value})
+    %{
+      state
+      | dag: dag,
+        buffer_node_ids: MapSet.new(),
+        buffer_size: 0,
+        flush_scheduled?: false
+    }
+  end
 
-          pids = Map.get(interests, node_id, MapSet.new())
+  defp load_sources(node_ids, state) do
+    # Run loads in parallel via Task.Supervisor; reconcile drifted keys.
+    {results, sources} =
+      node_ids
+      |> Enum.map(fn node_id ->
+        {load_fn, registered_keys} = Map.fetch!(state.sources, node_id)
 
-          if MapSet.size(pids) > 0 do
-            spawn_dispatch(pids, {:dag_value, node_id, value})
+        task =
+          Task.Supervisor.async_nolink(NodeDAG.task_sup(), fn ->
+            {value, current_keys} = load_fn.()
+            {node_id, value, current_keys}
+          end)
+
+        {Task.await(task, 30_000), load_fn, registered_keys}
+      end)
+      |> Enum.map_reduce(state.sources, fn {{node_id, value, current_keys}, load_fn,
+                                             registered_keys},
+                                            sources ->
+        sources =
+          if current_keys != registered_keys do
+            reconcile_index(node_id, registered_keys, current_keys)
+            Map.put(sources, node_id, {load_fn, current_keys})
+          else
+            sources
           end
 
-        _ ->
-          :ok
-      end
-    end)
-
-    %{state | buffer_node_ids: MapSet.new(), buffer_size: 0, flush_scheduled?: false}
-  end
-
-  defp load_sources(node_ids) do
-    # Run loads in parallel via Task.Supervisor; gather results.
-    node_ids
-    |> Enum.map(fn node_id ->
-      Task.Supervisor.async_nolink(NodeDAG.task_sup(), fn ->
-        case :ets.lookup(NodeDAG.nodes_table(), node_id) do
-          [{^node_id, {:source, load_fn, _keys}}] ->
-            value = load_fn.()
-            :ets.insert(NodeDAG.values_table(), {node_id, value})
-            {node_id, value}
-
-          _ ->
-            {node_id, nil}
-        end
+        {{node_id, value}, sources}
       end)
-    end)
-    |> Enum.map(&Task.await(&1, 30_000))
+
+    {results, %{state | sources: sources}}
   end
 
-  defp read_dep_values(dep_ids) do
-    Enum.into(dep_ids, %{}, fn dep ->
-      case :ets.lookup(NodeDAG.values_table(), dep) do
-        [{^dep, value}] -> {dep, value}
-        _ -> {dep, nil}
-      end
-    end)
-  end
+  defp reconcile_index(node_id, old_keys, new_keys) do
+    old_set = MapSet.new(old_keys)
+    new_set = MapSet.new(new_keys)
 
-  defp spawn_dispatch(pids, msg) do
-    Task.Supervisor.start_child(NodeDAG.task_sup(), fn ->
-      Enum.each(pids, &send(&1, msg))
+    Enum.each(MapSet.difference(old_set, new_set), fn key ->
+      :ets.delete_object(NodeDAG.index_table(), {key, node_id})
+    end)
+
+    Enum.each(MapSet.difference(new_set, old_set), fn key ->
+      :ets.insert(NodeDAG.index_table(), {key, node_id})
     end)
   end
 
-  defp local_node?(node_id, idx) do
-    shards = :persistent_term.get({NodeDAG, :shards})
-    :erlang.phash2(node_id, shards) == idx
+  defp dispatch(interests, node_id, value) do
+    pids = Map.get(interests, node_id, MapSet.new())
+
+    if MapSet.size(pids) > 0 do
+      msg = {:dag_value, node_id, value}
+
+      Task.Supervisor.start_child(NodeDAG.task_sup(), fn ->
+        Enum.each(pids, &send(&1, msg))
+      end)
+    end
   end
 
   ## Interest bookkeeping
@@ -226,7 +249,7 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
           new_set = MapSet.delete(set, pid)
 
           if MapSet.size(new_set) == 0 do
-            remove_node_from_index(node_id)
+            remove_node(state, node_id)
             Map.delete(state.interests, node_id)
           else
             Map.put(state.interests, node_id, new_set)
@@ -246,29 +269,30 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
             else: Map.put(state.pid_nodes, pid, new_set)
       end
 
-    %{state | interests: interests, pid_nodes: pid_nodes}
+    state = %{state | interests: interests, pid_nodes: pid_nodes}
+
+    if not Map.has_key?(state.interests, node_id) do
+      %{
+        state
+        | sources: Map.delete(state.sources, node_id),
+          dag: DAG.remove_subgraph(state.dag, node_id)
+      }
+    else
+      state
+    end
   end
 
-  defp remove_node_from_index(node_id) do
-    case :ets.lookup(NodeDAG.nodes_table(), node_id) do
-      [{^node_id, {:source, _load_fn, keys}}] ->
+  defp remove_node(state, node_id) do
+    case Map.get(state.sources, node_id) do
+      {_load_fn, keys} ->
         Enum.each(keys, fn key ->
           :ets.delete_object(NodeDAG.index_table(), {key, node_id})
         end)
 
-        :ets.delete(NodeDAG.nodes_table(), node_id)
-        :ets.delete(NodeDAG.values_table(), node_id)
-
-      [{^node_id, {:derived, _compute_fn, dep_ids}}] ->
-        Enum.each(dep_ids, fn dep ->
-          :ets.delete_object(NodeDAG.dependents_table(), {dep, node_id})
-        end)
-
-        :ets.delete(NodeDAG.nodes_table(), node_id)
-        :ets.delete(NodeDAG.values_table(), node_id)
-
       _ ->
         :ok
     end
+
+    :ets.delete(NodeDAG.nodes_table(), node_id)
   end
 end

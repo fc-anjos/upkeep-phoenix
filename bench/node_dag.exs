@@ -49,17 +49,20 @@ defmodule Bench.Sub do
   def spawn_many(count, pool, queries, deliveries) do
     parent = self()
 
-    load_fn = fn ->
-      :counters.add(queries, 1, 1)
-      Bench.Q.fake_query()
-    end
-
     pids =
       for _ <- 1..count do
         spawn_link(fn ->
           Enum.each(pool, fn event ->
             node_id = {event.__struct__, event.id}
-            Upkeep.Coordinator.NodeDAG.register_source(node_id, [Bench.Keys.narrow(event)], load_fn)
+            keys = [Bench.Keys.narrow(event)]
+
+            load_fn = fn ->
+              :counters.add(queries, 1, 1)
+              Bench.Q.fake_query()
+              {:loaded, keys}
+            end
+
+            Upkeep.Coordinator.NodeDAG.register_source(node_id, keys, load_fn)
           end)
 
           send(parent, :ready)

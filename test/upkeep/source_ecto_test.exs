@@ -263,7 +263,7 @@ defmodule Upkeep.SourceEctoTest do
     Repo.insert!(issue(id: 2, project_id: 1, assignee_id: 10, title: "Other", position: 1))
     Repo.insert!(issue(id: 3, project_id: 1, assignee_id: 9, title: "First", position: 1))
 
-    issues = ProjectIssues.load(%{project_id: 1, user_id: 9})
+    {issues, _deps} = Upkeep.Source.load(ProjectIssues, %{project_id: 1, user_id: 9})
 
     assert Enum.map(issues, & &1.title) == ["First", "Mine"]
   end

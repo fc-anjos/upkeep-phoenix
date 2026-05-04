@@ -43,7 +43,9 @@ defmodule Upkeep.DAG do
     dag
   end
 
-  def put_derived(%__MODULE__{} = dag, id, deps, compute)
+  def put_derived(dag, id, deps, compute, opts \\ [])
+
+  def put_derived(%__MODULE__{} = dag, id, deps, compute, opts)
       when is_list(deps) and is_function(compute, 1) do
     missing = Enum.reject(deps, &Map.has_key?(dag.nodes, &1))
 
@@ -56,13 +58,20 @@ defmodule Upkeep.DAG do
       |> put_node(id, :derived, deps, compute)
       |> ensure_acyclic!()
 
-    value = compute_dep_values(dag, id)
+    value =
+      case Keyword.fetch(opts, :initial_value) do
+        {:ok, value} -> value
+        :error -> compute_dep_values(dag, id)
+      end
+
     {dag, _changed?} = put_value(dag, id, value)
 
     dag
   end
 
   def fetch!(%__MODULE__{} = dag, id), do: Map.fetch!(dag.values, id)
+
+  def has_node?(%__MODULE__{} = dag, id), do: Map.has_key?(dag.nodes, id)
 
   def recompute(%__MODULE__{} = dag, changed_ids) do
     changed_ids = MapSet.new(changed_ids)

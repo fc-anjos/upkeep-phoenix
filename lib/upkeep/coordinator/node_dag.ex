@@ -54,8 +54,6 @@ defmodule Upkeep.Coordinator.NodeDAG do
   ## ETS table names
   @index_table :upkeep_node_dag_index
   @nodes_table :upkeep_node_dag_nodes
-  @values_table :upkeep_node_dag_values
-  @dependents_table :upkeep_node_dag_dependents
 
   ## Public API
 
@@ -162,22 +160,6 @@ defmodule Upkeep.Coordinator.NodeDAG do
       write_concurrency: true
     ])
 
-    ensure_table(@values_table, [
-      :set,
-      :public,
-      :named_table,
-      read_concurrency: true,
-      write_concurrency: true
-    ])
-
-    ensure_table(@dependents_table, [
-      :bag,
-      :public,
-      :named_table,
-      read_concurrency: true,
-      write_concurrency: true
-    ])
-
     children = [
       {Task.Supervisor, name: task_sup()}
       | for idx <- 0..(shards - 1) do
@@ -209,8 +191,4 @@ defmodule Upkeep.Coordinator.NodeDAG do
   def index_table, do: @index_table
   @doc false
   def nodes_table, do: @nodes_table
-  @doc false
-  def values_table, do: @values_table
-  @doc false
-  def dependents_table, do: @dependents_table
 end
