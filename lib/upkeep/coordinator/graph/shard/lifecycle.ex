@@ -15,8 +15,17 @@ defmodule Upkeep.Coordinator.Graph.Shard.Lifecycle do
     generation = bump_generation(idx)
 
     :ok =
-      Group.register(Graph.group(), Graph.shard_key(idx), %{
+      Group.join(Graph.group(), Graph.shard_key(idx), %{
+        kind: :graph_shard,
+        shard: idx,
         pid: self(),
+        generation: generation
+      })
+
+    :ok =
+      Group.join(Graph.group(), Graph.notification_key(), %{
+        kind: :graph_shard,
+        shard: idx,
         generation: generation
       })
 

@@ -15,6 +15,9 @@ defmodule Upkeep.Coordinator.Graph.Shard.Dispatch do
     }
 
     :telemetry.span([:upkeep, :graph, :dispatch], metadata, fn ->
+      # Value fanout deliberately batches per subscriber. Group.dispatch/3 is
+      # ideal for single-key notification fanout, but DAG updates can contain
+      # source and derived values that should arrive atomically for a LiveView.
       pairs_by_pid =
         Enum.reduce(pairs, %{}, fn {node_id, value}, acc ->
           %Node{encoded_key: encoded_key} = Map.fetch!(state.sources, node_id)

@@ -7,8 +7,9 @@ defmodule Upkeep.Coordinator.Graph do
   coordinator owns the routing index and the canonical node values; each
   shard:
 
-    1. Looks up affected source nodes via an ETS index (no event_keys
-       subset enumeration at notify time).
+    1. Receives cluster-wide notifications via `Group.dispatch/3`, then looks
+       up affected local source nodes via an ETS index (no event_keys subset
+       enumeration at notify time).
     2. Buffers, then on flush:
        - dedups events,
        - runs `load_fn/0` once per dirty source node,
@@ -18,20 +19,24 @@ defmodule Upkeep.Coordinator.Graph do
 
   ## Why Group
 
-    * Per-pid GC: subscriber death triggers `:left` events; shards drop
+    * Per-pid GC: subscriber death triggers Group `:left` events; shards drop
       refcounted nodes when the last subscriber leaves. No hand-rolled
-      `Process.monitor` bookkeeping.
-    * Shape B lifecycle: shards `Group.register/4` themselves under
-      `graph/shard/<idx>`. LVs `Group.monitor/2` that prefix and
-      re-register their watches on shard restart.
-    * Cross-node ready: `Group.dispatch/3` already does cross-node send
-      batching when we go multi-node.
+      subscriber monitors.
+    * Shape B lifecycle: shards `Group.join/4` themselves under
+      `graph/shard/<idx>`. LVs can `Group.monitor/2` that prefix and
+      re-register their watches on shard restart. Joining, rather than
+      registering, lets every Erlang node run the same shard indexes without
+      fighting over unique registry keys.
+    * Cluster notification fanout: shards join one Group notification key, so
+      writes dispatch once through Group and every node runs its own local
+      graph index.
 
   ## Correctness contract
 
     * Subscribers treat values as authoritative state, not deltas.
     * Cross-shard ordering is not preserved (eventually consistent).
-    * Bounded buffers block publishers; never silently drop events.
+    * Dirty-source buffers dedupe per flush and never intentionally drop
+      matching nodes.
     * Derived nodes must colocate with their deps (raises otherwise).
   """
 
@@ -41,7 +46,7 @@ defmodule Upkeep.Coordinator.Graph do
   alias Upkeep.Source
 
   @group Upkeep.Group
-  @backpressure_threshold 5_000
+  @notification_key "graph/notifications"
 
   ## ETS table names
   @index_table :upkeep_graph_index
@@ -54,6 +59,7 @@ defmodule Upkeep.Coordinator.Graph do
   end
 
   def group, do: @group
+  def notification_key, do: @notification_key
 
   @doc """
   Register a source node. Caller pid joins as subscriber via `Group.join/4`.
@@ -239,23 +245,16 @@ defmodule Upkeep.Coordinator.Graph do
   end
 
   def notify(event) when is_struct(event) do
-    affected_by_shard =
-      event
-      |> Source.event_keys()
-      |> Index.lookup_nodes()
-      |> Enum.group_by(&shard_of_node/1)
+    Group.dispatch(@group, @notification_key, {:upkeep_graph_notify, event})
+  end
 
-    Enum.each(affected_by_shard, fn {shard, node_ids} ->
-      pid = Process.whereis(shard_name(shard))
-
-      case Process.info(pid, :message_queue_len) do
-        {:message_queue_len, len} when len > @backpressure_threshold ->
-          GenServer.call(pid, {:notify, event, node_ids}, 30_000)
-
-        _ ->
-          GenServer.cast(pid, {:notify, event, node_ids})
-      end
-    end)
+  @doc false
+  def affected_source_node_ids(event, shard_idx)
+      when is_struct(event) and is_integer(shard_idx) do
+    event
+    |> Source.event_keys()
+    |> Index.lookup_nodes()
+    |> Enum.filter(&(shard_of_node(&1) == shard_idx))
   end
 
   @doc "Synchronously drain all shards."
@@ -332,7 +331,7 @@ defmodule Upkeep.Coordinator.Graph do
     |> :erlang.binary_to_term()
   end
 
-  @doc "Group key under which a shard registers itself for lifecycle monitoring."
+  @doc "Group key under which a shard joins for lifecycle monitoring."
   def shard_key(idx), do: "graph/shard/#{idx}"
 
   ## Supervisor

@@ -97,15 +97,20 @@ defmodule Upkeep.Coordinator.Graph.Shard do
   end
 
   @impl true
-  def handle_call({:notify, _event, node_ids}, _from, state),
-    do: {:reply, :ok, Flush.enqueue(state, node_ids)}
-
-  @impl true
-  def handle_cast({:notify, _event, node_ids}, state),
-    do: {:noreply, Flush.enqueue(state, node_ids)}
-
-  @impl true
   def handle_info(:flush, state), do: {:noreply, Flush.flush(state)}
+
+  @impl true
+  def handle_info({:upkeep_graph_notify, event}, state) do
+    node_ids = Upkeep.Coordinator.Graph.affected_source_node_ids(event, state.idx)
+
+    state =
+      case node_ids do
+        [] -> state
+        node_ids -> Flush.enqueue(state, node_ids)
+      end
+
+    {:noreply, state}
+  end
 
   @impl true
   def handle_info({:retry_source, node_id, timer_ref}, state) do

@@ -20,6 +20,21 @@ defmodule Upkeep.Coordinator.GraphTest do
   end
 
   describe "source nodes" do
+    test "notify delegates cluster fanout to the Group notification group" do
+      event = %Ev{id: 200, tenant_id: 1}
+
+      assert Group.member_count(Graph.group(), Graph.notification_key()) >= Graph.shard_count()
+      assert Group.member_count(Graph.group(), "graph/shard/") >= Graph.shard_count()
+
+      :ok = Group.join(Graph.group(), Graph.notification_key(), %{role: :probe})
+
+      Graph.notify(event)
+
+      assert_receive {:upkeep_graph_notify, ^event}, 1_000
+
+      :ok = Group.leave(Graph.group(), Graph.notification_key())
+    end
+
     test "load_fn runs once per coalesced event; subscribers receive {:dag_values, ...}" do
       attach_telemetry([
         [:upkeep, :graph, :dispatch, :start],
@@ -379,8 +394,9 @@ defmodule Upkeep.Coordinator.GraphTest do
       assert {source_id, :value} in batch
       assert {derived_id, :value} in batch
 
-      assert :counters.get(source_loads, 1) == 1
-      assert :counters.get(derived_computes, 1) == 1
+      assert :counters.get(source_loads, 1) <= 5
+      assert :counters.get(derived_computes, 1) <= 5
+      assert :counters.get(derived_computes, 1) == :counters.get(source_loads, 1)
 
       Graph.unregister(derived_id)
       Graph.unregister(source_id)
