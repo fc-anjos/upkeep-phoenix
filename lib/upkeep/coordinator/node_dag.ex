@@ -77,26 +77,48 @@ defmodule Upkeep.Coordinator.NodeDAG do
   @doc """
   Register a derived node. `dep_node_ids` must already be registered.
   `compute_fn` takes a map of `dep_node_id => value` and returns the
-  derived value. **Constraint**: deps must reside on the same shard as
-  the derived node. Use `:erlang.phash2` symmetry to ensure this — for
-  the prototype, deps and derived should share a common shard key.
+  derived value.
+
+  Derived nodes are placed on the same shard as their dependencies so
+  recompute can run locally. If `dep_node_ids` span multiple shards this
+  raises — a deliberate guardrail until cross-shard recompute exists.
   """
   def register_derived(node_id, dep_node_ids, compute_fn, pid \\ nil)
       when is_list(dep_node_ids) and is_function(compute_fn, 1) do
     pid = pid || self()
-    shard = shard_of(node_id)
-    GenServer.call(shard_name(shard), {:register_derived, pid, node_id, dep_node_ids, compute_fn})
+    target_shard = derived_shard!(node_id, dep_node_ids)
+
+    GenServer.call(
+      shard_name(target_shard),
+      {:register_derived, pid, node_id, dep_node_ids, compute_fn}
+    )
+  end
+
+  defp derived_shard!(node_id, dep_node_ids) do
+    case dep_node_ids |> Enum.map(&shard_of_node/1) |> Enum.uniq() do
+      [shard] ->
+        shard
+
+      [] ->
+        raise ArgumentError,
+              "register_derived/3 for #{inspect(node_id)} requires at least one dep"
+
+      multiple ->
+        raise ArgumentError,
+              "register_derived/3 for #{inspect(node_id)} has deps split across shards " <>
+                "#{inspect(multiple)}. Reshape node_ids so all deps share a shard, or " <>
+                "wait for cross-shard recompute support."
+    end
   end
 
   def unregister(node_id, pid \\ nil) do
     pid = pid || self()
-    shard = shard_of(node_id)
-    GenServer.call(shard_name(shard), {:unregister, pid, node_id})
+    GenServer.call(shard_name(shard_of_node(node_id)), {:unregister, pid, node_id})
   end
 
   @doc "Return the set of pids currently subscribed to `node_id`."
   def subscribers(node_id) do
-    GenServer.call(shard_name(shard_of(node_id)), {:subscribers, node_id})
+    GenServer.call(shard_name(shard_of_node(node_id)), {:subscribers, node_id})
   end
 
   @doc "Return true if `pid` is currently subscribed to `node_id`."
@@ -183,6 +205,15 @@ defmodule Upkeep.Coordinator.NodeDAG do
   defp shard_of(node_id) do
     shards = :persistent_term.get({__MODULE__, :shards})
     :erlang.phash2(node_id, shards)
+  end
+
+  # Sources hash to their shard; derived nodes have an explicit override
+  # stored in nodes_table so they can colocate with their deps.
+  defp shard_of_node(node_id) do
+    case :ets.lookup(@nodes_table, node_id) do
+      [{^node_id, _kind, shard_idx}] -> shard_idx
+      _ -> shard_of(node_id)
+    end
   end
 
   ## Shared accessors used by Shard

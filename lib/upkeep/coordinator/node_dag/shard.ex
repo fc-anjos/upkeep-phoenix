@@ -41,7 +41,7 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
       if Map.has_key?(state.sources, node_id) do
         state
       else
-        :ets.insert(NodeDAG.nodes_table(), {node_id, :source})
+        :ets.insert(NodeDAG.nodes_table(), {node_id, :source, state.idx})
         Enum.each(interest_keys, &:ets.insert(NodeDAG.index_table(), {&1, node_id}))
         {dag, _changed?} = DAG.put_source(state.dag, node_id, nil, [])
 
@@ -61,7 +61,7 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
       if DAG.has_node?(state.dag, node_id) do
         state
       else
-        :ets.insert(NodeDAG.nodes_table(), {node_id, :derived})
+        :ets.insert(NodeDAG.nodes_table(), {node_id, :derived, state.idx})
 
         %{
           state
@@ -145,12 +145,12 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
 
     # Dispatch source values unconditionally (matches current contract).
     Enum.each(sources_loaded, fn {id, value} ->
-      dispatch(state.interests, id, value)
+      dispatch(state, id, value, :source)
     end)
 
     # Dispatch derived only when their value changed.
     Enum.each(derived_changed, fn id ->
-      dispatch(state.interests, id, DAG.fetch!(dag, id))
+      dispatch(state, id, DAG.fetch!(dag, id), :derived)
     end)
 
     %{
@@ -207,14 +207,19 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
     end)
   end
 
-  defp dispatch(interests, node_id, value) do
-    pids = Map.get(interests, node_id, MapSet.new())
+  defp dispatch(state, node_id, value, node_kind) do
+    pids = Map.get(state.interests, node_id, MapSet.new())
+    pid_count = MapSet.size(pids)
 
-    if MapSet.size(pids) > 0 do
+    if pid_count > 0 do
       msg = {:dag_value, node_id, value}
+      metadata = %{shard: state.idx, node_id: node_id, node_kind: node_kind, pid_count: pid_count}
 
       Task.Supervisor.start_child(NodeDAG.task_sup(), fn ->
-        Enum.each(pids, &send(&1, msg))
+        :telemetry.span([:upkeep, :node_dag, :dispatch], metadata, fn ->
+          Enum.each(pids, &send(&1, msg))
+          {:ok, metadata}
+        end)
       end)
     end
   end

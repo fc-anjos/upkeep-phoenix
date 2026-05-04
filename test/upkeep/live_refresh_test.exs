@@ -689,7 +689,7 @@ defmodule Upkeep.LiveRefreshTest do
     subscribed? =
       Upkeep.Coordinator.NodeDAG.nodes_table()
       |> :ets.tab2list()
-      |> Enum.any?(fn {node_id, _node} ->
+      |> Enum.any?(fn {node_id, _kind, _shard_idx} ->
         source_id_matches?(node_id, source, params) and
           Upkeep.Coordinator.NodeDAG.subscribed?(node_id, self())
       end)

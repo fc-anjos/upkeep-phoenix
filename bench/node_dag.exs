@@ -46,20 +46,24 @@ defmodule Bench.Keys do
 end
 
 defmodule Bench.Sub do
-  def spawn_many(count, pool, queries, deliveries) do
+  # Half the subs subscribe to source nodes; half subscribe to derived nodes
+  # that auto-colocate with their source. This exercises multi-shard
+  # source dispatch + multi-shard derived recompute simultaneously.
+  def spawn_many(count, pool, queries, derived_computes, deliveries) do
     parent = self()
+    half = div(count, 2)
 
-    pids =
-      for _ <- 1..count do
+    source_pids =
+      for _ <- 1..(count - half) do
         spawn_link(fn ->
           Enum.each(pool, fn event ->
-            node_id = {event.__struct__, event.id}
+            node_id = {:src, event.__struct__, event.id}
             keys = [Bench.Keys.narrow(event)]
 
             load_fn = fn ->
               :counters.add(queries, 1, 1)
               Bench.Q.fake_query()
-              {:loaded, keys}
+              {1, keys}
             end
 
             Upkeep.Coordinator.NodeDAG.register_source(node_id, keys, load_fn)
@@ -70,8 +74,36 @@ defmodule Bench.Sub do
         end)
       end
 
+    derived_pids =
+      for _ <- 1..half do
+        spawn_link(fn ->
+          Enum.each(pool, fn event ->
+            source_id = {:src, event.__struct__, event.id}
+            derived_id = {:der, event.__struct__, event.id}
+            keys = [Bench.Keys.narrow(event)]
+
+            load_fn = fn ->
+              :counters.add(queries, 1, 1)
+              Bench.Q.fake_query()
+              {1, keys}
+            end
+
+            compute_fn = fn deps ->
+              :counters.add(derived_computes, 1, 1)
+              Map.fetch!(deps, source_id) * 2
+            end
+
+            Upkeep.Coordinator.NodeDAG.register_source(source_id, keys, load_fn)
+            Upkeep.Coordinator.NodeDAG.register_derived(derived_id, [source_id], compute_fn)
+          end)
+
+          send(parent, :ready)
+          loop(deliveries)
+        end)
+      end
+
     for _ <- 1..count, do: receive do: (:ready -> :ok)
-    pids
+    source_pids ++ derived_pids
   end
 
   defp loop(d) do
@@ -121,6 +153,7 @@ defmodule Bench.Run do
 end
 
 queries = :counters.new(1, [:atomics])
+derived_computes = :counters.new(1, [:atomics])
 deliveries = :counters.new(1, [:atomics])
 pool = Bench.Run.event_pool()
 
@@ -128,18 +161,21 @@ n_subs = 100
 duration_ms = 3_000
 publisher_levels = [1, 4, 8, 16]
 
-_subs = Bench.Sub.spawn_many(n_subs, pool, queries, deliveries)
+_subs = Bench.Sub.spawn_many(n_subs, pool, queries, derived_computes, deliveries)
 Process.sleep(200)
 
-IO.puts("subscribers=#{n_subs} pool_size=#{length(pool)} query_us=#{Bench.Q.query_us()}")
+IO.puts(
+  "subscribers=#{n_subs} (50 source + 50 derived) pool_size=#{length(pool)} query_us=#{Bench.Q.query_us()}"
+)
 
 IO.puts(
-  "\n#{String.pad_trailing("pubs", 5)} #{String.pad_trailing("calls/s", 11)} #{String.pad_trailing("delivered/s", 13)} #{String.pad_trailing("queries/s", 11)} q/event"
+  "\n#{String.pad_trailing("pubs", 5)} #{String.pad_trailing("calls/s", 11)} #{String.pad_trailing("delivered/s", 13)} #{String.pad_trailing("queries/s", 11)} #{String.pad_trailing("derived/s", 11)} q/event"
 )
 
 results =
   for p <- publisher_levels do
     :counters.put(queries, 1, 0)
+    :counters.put(derived_computes, 1, 0)
     :counters.put(deliveries, 1, 0)
 
     calls = Bench.Run.run(p, duration_ms, pool)
@@ -147,11 +183,13 @@ results =
     Process.sleep(500)
 
     q = :counters.get(queries, 1)
+    dc = :counters.get(derived_computes, 1)
     d = :counters.get(deliveries, 1)
 
     calls_per_s = calls * 1_000 / duration_ms
     delivered_per_s = d * 1_000 / duration_ms
     queries_per_s = q * 1_000 / duration_ms
+    derived_per_s = dc * 1_000 / duration_ms
     q_per_event = if calls == 0, do: 0.0, else: q / calls
 
     IO.puts(
@@ -160,12 +198,13 @@ results =
         String.pad_trailing(:erlang.float_to_binary(calls_per_s, decimals: 0), 11),
         String.pad_trailing(:erlang.float_to_binary(delivered_per_s, decimals: 0), 13),
         String.pad_trailing(:erlang.float_to_binary(queries_per_s, decimals: 0), 11),
+        String.pad_trailing(:erlang.float_to_binary(derived_per_s, decimals: 0), 11),
         :erlang.float_to_binary(q_per_event, decimals: 2)
       ]
       |> Enum.join(" ")
     )
 
-    %{pubs: p, calls_per_s: calls_per_s, queries_per_s: queries_per_s, q_per_event: q_per_event}
+    %{pubs: p, calls_per_s: calls_per_s, queries_per_s: queries_per_s, q_per_event: q_per_event, derived_per_s: derived_per_s}
   end
 
 # Regression gates: thresholds from the M2 baseline at 16 publishers.

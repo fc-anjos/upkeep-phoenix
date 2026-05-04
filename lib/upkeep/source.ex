@@ -349,15 +349,6 @@ defmodule Upkeep.Source do
 
   def source_id(source, params) when is_atom(source) and is_map(params), do: {source, params}
 
-  def group_key(term) do
-    encoded =
-      term
-      |> :erlang.term_to_binary()
-      |> Base.url_encode64(padding: false)
-
-    "upkeep/source-interest/" <> encoded
-  end
-
   def event_keys(%Upkeep.Change{} = change) do
     field_keys =
       change
