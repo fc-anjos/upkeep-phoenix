@@ -14,6 +14,25 @@ defmodule Upkeep.SourceEctoTest do
     end
   end
 
+  defmodule Tag do
+    use Ecto.Schema
+
+    @primary_key {:id, :integer, autogenerate: false}
+    schema "upkeep_source_ecto_test_tags" do
+      field :name, :string
+    end
+  end
+
+  defmodule IssueTag do
+    use Ecto.Schema
+
+    @primary_key false
+    schema "upkeep_source_ecto_test_issue_tags" do
+      field :issue_id, :integer
+      field :tag_id, :integer
+    end
+  end
+
   defmodule Issue do
     use Ecto.Schema
 
@@ -27,6 +46,11 @@ defmodule Upkeep.SourceEctoTest do
       field :position, :integer
 
       belongs_to :column, Upkeep.SourceEctoTest.Column, define_field: false
+      has_many :comments, Upkeep.SourceEctoTest.Comment
+
+      many_to_many :tags, Upkeep.SourceEctoTest.Tag,
+        join_through: Upkeep.SourceEctoTest.IssueTag,
+        join_keys: [issue_id: :id, tag_id: :id]
     end
   end
 
@@ -168,6 +192,21 @@ defmodule Upkeep.SourceEctoTest do
     end
   end
 
+  defmodule PreloadedProjectIssues do
+    use Upkeep.Source, repo: Upkeep.Repo
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.Issue
+
+    def query(%{project_id: project_id}) do
+      from i in Issue,
+        where: i.project_id == ^project_id,
+        order_by: [asc: i.position],
+        preload: [:column, :comments, :tags]
+    end
+  end
+
   defmodule SchemalessProjectIssues do
     use Upkeep.Source
 
@@ -223,6 +262,8 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   setup do
+    Repo.query!("DROP TABLE IF EXISTS upkeep_source_ecto_test_issue_tags")
+    Repo.query!("DROP TABLE IF EXISTS upkeep_source_ecto_test_tags")
     Repo.query!("DROP TABLE IF EXISTS upkeep_source_ecto_test_comments")
     Repo.query!("DROP TABLE IF EXISTS upkeep_source_ecto_test_columns")
     Repo.query!("DROP TABLE IF EXISTS upkeep_source_ecto_test_issues")
@@ -254,6 +295,20 @@ defmodule Upkeep.SourceEctoTest do
       project_id INTEGER NOT NULL,
       issue_id INTEGER NOT NULL,
       body TEXT NOT NULL
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE upkeep_source_ecto_test_tags (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE upkeep_source_ecto_test_issue_tags (
+      issue_id INTEGER NOT NULL,
+      tag_id INTEGER NOT NULL
     )
     """)
 
@@ -493,6 +548,59 @@ defmodule Upkeep.SourceEctoTest do
              comment(project_id: 2) |> Upkeep.Change.inserted(),
              params
            )
+  end
+
+  test "preloads add broad dependencies for associated schemas" do
+    params = %{project_id: 1}
+
+    assert PreloadedProjectIssues.__upkeep_interest_keys__(params) |> sort_terms() ==
+             [
+               {:upkeep_change, :inserted, Column},
+               {:upkeep_change, :updated, Column},
+               {:upkeep_change, :deleted, Column},
+               {:upkeep_change, :inserted, Comment},
+               {:upkeep_change, :updated, Comment},
+               {:upkeep_change, :deleted, Comment},
+               {:upkeep_change, :inserted, IssueTag},
+               {:upkeep_change, :updated, IssueTag},
+               {:upkeep_change, :deleted, IssueTag},
+               {:upkeep_change, :inserted, Issue, [project_id: 1]},
+               {:upkeep_change, :updated, Issue, [project_id: 1]},
+               {:upkeep_change, :deleted, Issue, [project_id: 1]},
+               {:upkeep_change, :inserted, Tag},
+               {:upkeep_change, :updated, Tag},
+               {:upkeep_change, :deleted, Tag}
+             ]
+             |> sort_terms()
+
+    assert PreloadedProjectIssues.reacts_to?(
+             comment(project_id: 99) |> Upkeep.Change.inserted(),
+             params
+           )
+  end
+
+  test "preloaded query sources refresh after associated records change" do
+    Repo.insert!(%Column{id: 1, project_id: 1, name: "Backlog", position: 1})
+    Repo.insert!(issue(id: 1, project_id: 1, column_id: 1, title: "With comments"), upkeep: false)
+
+    socket =
+      new_socket()
+      |> Live.watch(:issues, PreloadedProjectIssues, project_id: 1)
+
+    assert [%Issue{comments: []}] = socket.assigns.issues
+
+    {:ok, %Comment{}} =
+      Upkeep.mutate(fn ->
+        Repo.insert!(comment(id: 1, project_id: 1, issue_id: 1, body: "New comment"))
+      end)
+
+    :ok = Upkeep.Coordinator.Graph.drain()
+
+    source_id = {PreloadedProjectIssues, %{project_id: 1}}
+
+    assert_receive {:dag_values,
+                    [{^source_id, [%Issue{comments: [%Comment{body: "New comment"}]}]}]},
+                   1_000
   end
 
   test "fragments intentionally fall back to broad schema invalidation" do

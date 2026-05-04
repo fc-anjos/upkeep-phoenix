@@ -21,6 +21,7 @@ defmodule Upkeep.Ecto.QueryDeps do
     %__MODULE__{bindings: bindings, schemas: bindings |> Map.values() |> MapSet.new()}
     |> collect_query_fields(query)
     |> collect_where_equalities(query.wheres)
+    |> collect_preload_deps(query)
     |> collect_subquery_deps(query)
     |> mark_broad_for_unsupported(query)
   end
@@ -224,6 +225,72 @@ defmodule Upkeep.Ecto.QueryDeps do
     |> Enum.reduce(deps, fn %Ecto.SubQuery{query: query}, deps ->
       merge_deps(deps, from_query(query))
     end)
+  end
+
+  defp collect_preload_deps(deps, query) do
+    query
+    |> preload_schemas()
+    |> Enum.reduce(deps, fn schema, deps ->
+      %{deps | schemas: MapSet.put(deps.schemas, schema)}
+    end)
+  end
+
+  defp preload_schemas(query) do
+    root_schema = Map.get(Upkeep.Ecto.QueryDeps.Bindings.from_query(query), 0)
+
+    query.preloads
+    |> schemas_for_preloads(root_schema)
+    |> Enum.concat(schemas_for_assocs(query.assocs, query))
+    |> Enum.uniq()
+  end
+
+  defp schemas_for_preloads(_preloads, nil), do: []
+
+  defp schemas_for_preloads(preloads, owner_schema) when is_list(preloads) do
+    Enum.flat_map(preloads, fn
+      assoc when is_atom(assoc) ->
+        association_schemas(owner_schema, assoc)
+
+      {assoc, nested} when is_atom(assoc) ->
+        case association_schemas(owner_schema, assoc) do
+          [] -> []
+          [schema | _] = schemas -> schemas ++ schemas_for_preloads(List.wrap(nested), schema)
+        end
+
+      _other ->
+        []
+    end)
+  end
+
+  defp schemas_for_preloads(_preloads, _owner_schema), do: []
+
+  defp schemas_for_assocs(assocs, query) when is_list(assocs) do
+    bindings = Upkeep.Ecto.QueryDeps.Bindings.from_query(query)
+
+    Enum.flat_map(assocs, fn
+      {assoc, {binding, nested}} when is_atom(assoc) and is_integer(binding) ->
+        case Map.fetch(bindings, binding) do
+          {:ok, schema} -> [schema | schemas_for_preloads(List.wrap(nested), schema)]
+          :error -> []
+        end
+
+      _other ->
+        []
+    end)
+  end
+
+  defp schemas_for_assocs(_assocs, _query), do: []
+
+  defp association_schemas(owner_schema, assoc) when is_atom(owner_schema) and is_atom(assoc) do
+    with true <- function_exported?(owner_schema, :__schema__, 2),
+         association when not is_nil(association) <- owner_schema.__schema__(:association, assoc) do
+      [Map.get(association, :related), Map.get(association, :join_through)]
+      |> Enum.filter(&((is_atom(&1) and not is_nil(&1)) or is_binary(&1)))
+    else
+      _ -> []
+    end
+  rescue
+    _ -> []
   end
 
   defp merge_deps(left, right) do
