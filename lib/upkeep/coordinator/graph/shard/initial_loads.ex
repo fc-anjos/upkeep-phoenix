@@ -31,7 +31,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
         state = %{
           state
           | initial_loads:
-              Map.put(state.initial_loads, node_id, %{ref: task.ref, waiters: [from]}),
+              Map.put(state.initial_loads, node_id, %{ref: task.ref, waiters: [from], node: node}),
             initial_load_refs: Map.put(state.initial_load_refs, task.ref, node_id)
         }
 
@@ -131,7 +131,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
     case Map.fetch(state.initial_load_refs, ref) do
       {:ok, node_id} ->
         {load, state} = pop_source(state, ref, node_id)
-        emit_exception([:upkeep, :graph, :source_load, :exception], state.idx, reason)
+        emit_exception([:upkeep, :graph, :source_load, :exception], state, node_id, load, reason)
         Enum.each(load.waiters, &GenServer.reply(&1, {:error, reason}))
         state
 
@@ -196,7 +196,24 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
     )
   end
 
+  defp emit_exception(event, state, node_id, %{node: %Node{} = node}, reason) do
+    metadata =
+      node.loader
+      |> Loaders.exception_metadata(reason)
+      |> Map.put(:shard, state.idx)
+      |> Map.put(:node_id, node_id)
+      |> Map.put(:subscriber_count, subscriber_count(node))
+
+    :telemetry.execute(event, %{count: 1}, metadata)
+  end
+
   defp emit_exception(event, shard, reason) do
     :telemetry.execute(event, %{count: 1}, %{shard: shard, reason: reason})
+  end
+
+  defp subscriber_count(%Node{encoded_key: encoded_key}) do
+    Graph.group()
+    |> Group.members(encoded_key)
+    |> length()
   end
 end

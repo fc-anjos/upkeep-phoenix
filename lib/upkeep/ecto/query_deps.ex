@@ -257,6 +257,7 @@ defmodule Upkeep.Ecto.QueryDeps do
   end
 
   defp collect_preload_deps(deps, query) do
+    preload_deps = preload_query_deps(query.preloads)
     schemas = preload_schemas(query)
     warnings = preload_warnings(query.preloads)
 
@@ -265,13 +266,34 @@ defmodule Upkeep.Ecto.QueryDeps do
         %{deps | schemas: MapSet.put(deps.schemas, schema)}
       end)
 
-    %{deps | warnings: Enum.uniq(warnings ++ deps.warnings)}
+    deps
+    |> merge_deps(preload_deps)
+    |> then(fn deps -> %{deps | warnings: Enum.uniq(warnings ++ deps.warnings)} end)
   end
+
+  defp preload_query_deps(preloads) when is_list(preloads) do
+    preloads
+    |> Enum.map(&preload_entry_deps/1)
+    |> Enum.reduce(%__MODULE__{}, &merge_deps/2)
+  end
+
+  defp preload_query_deps(_preloads), do: %__MODULE__{}
+
+  defp preload_entry_deps({_assoc, %Ecto.Query{} = query}), do: from_query(query)
+
+  defp preload_entry_deps({_assoc, nested}) do
+    nested
+    |> List.wrap()
+    |> preload_query_deps()
+  end
+
+  defp preload_entry_deps(%Ecto.Query{} = query), do: from_query(query)
+  defp preload_entry_deps(_other), do: %__MODULE__{}
 
   defp preload_warnings(preloads) when is_list(preloads) do
     Enum.flat_map(preloads, fn
       {_assoc, %Ecto.Query{}} ->
-        [%{reason: :unsupported_preload_query}]
+        []
 
       {_assoc, fun} when is_function(fun) ->
         [%{reason: :unsupported_preload_function}]
@@ -280,7 +302,7 @@ defmodule Upkeep.Ecto.QueryDeps do
         preload_warnings(List.wrap(nested))
 
       %Ecto.Query{} ->
-        [%{reason: :unsupported_preload_query}]
+        []
 
       fun when is_function(fun) ->
         [%{reason: :unsupported_preload_function}]
@@ -311,11 +333,17 @@ defmodule Upkeep.Ecto.QueryDeps do
       assoc when is_atom(assoc) ->
         association_schemas(owner_schema, assoc)
 
+      {assoc, %Ecto.Query{}} when is_atom(assoc) ->
+        association_join_schemas(owner_schema, assoc)
+
       {assoc, nested} when is_atom(assoc) ->
-        case association_schemas(owner_schema, assoc) do
-          [] -> []
-          [schema | _] = schemas -> schemas ++ schemas_for_preloads(List.wrap(nested), schema)
-        end
+        nested_schemas =
+          case association_schemas(owner_schema, assoc) do
+            [] -> []
+            [schema | _] -> schemas_for_preloads(List.wrap(nested), schema)
+          end
+
+        association_schemas(owner_schema, assoc) ++ nested_schemas
 
       _other ->
         []
@@ -353,6 +381,23 @@ defmodule Upkeep.Ecto.QueryDeps do
     _ -> []
   end
 
+  defp association_join_schemas(owner_schema, assoc)
+       when is_atom(owner_schema) and is_atom(assoc) do
+    with true <- function_exported?(owner_schema, :__schema__, 2),
+         association when not is_nil(association) <- owner_schema.__schema__(:association, assoc) do
+      association
+      |> Map.get(:join_through)
+      |> then(fn
+        value when (is_atom(value) and not is_nil(value)) or is_binary(value) -> [value]
+        _other -> []
+      end)
+    else
+      _ -> []
+    end
+  rescue
+    _ -> []
+  end
+
   defp merge_deps(left, right) do
     %{
       left
@@ -377,8 +422,7 @@ defmodule Upkeep.Ecto.QueryDeps do
   defp unknown_warning?(%{reason: reason})
        when reason in [
               :unsupported_preload,
-              :unsupported_preload_function,
-              :unsupported_preload_query
+              :unsupported_preload_function
             ],
        do: true
 

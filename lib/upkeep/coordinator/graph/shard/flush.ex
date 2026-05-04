@@ -59,7 +59,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
   end
 
   defp load_sources(node_ids, state) do
-    {results, sources} =
+    stream =
       Task.Supervisor.async_stream_nolink(
         Graph.task_sup(),
         node_ids,
@@ -69,12 +69,17 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
           {value, current_keys, tracked_deps} = Loaders.run_with_deps(node.loader)
           {node_id, value, current_keys, tracked_deps, node}
         end,
-        ordered: false,
+        ordered: true,
         timeout: 30_000,
         on_timeout: :kill_task
       )
+
+    {results, sources} =
+      node_ids
+      |> Stream.zip(stream)
       |> Enum.reduce({[], state.sources}, fn
-        {:ok, {node_id, value, current_keys, tracked_deps, %Node{} = node}}, {results, sources} ->
+        {_node_id, {:ok, {node_id, value, current_keys, tracked_deps, %Node{} = node}}},
+        {results, sources} ->
           if current_keys != node.registered_keys do
             Index.reconcile_source(node_id, state.idx, node.registered_keys, current_keys)
           end
@@ -89,16 +94,33 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
 
           {[{node_id, value} | results], sources}
 
-        {:exit, reason}, {results, sources} ->
+        {node_id, {:exit, reason}}, {results, sources} ->
+          node = Map.fetch!(state.sources, node_id)
+
           :telemetry.execute(
             [:upkeep, :graph, :source_load, :exception],
             %{count: 1},
-            %{shard: state.idx, reason: reason}
+            node
+            |> exception_metadata(state, reason)
+            |> Map.put(:node_id, node_id)
           )
 
           {results, sources}
       end)
 
     {Enum.reverse(results), %{state | sources: sources}}
+  end
+
+  defp exception_metadata(%Node{} = node, state, reason) do
+    node.loader
+    |> Loaders.exception_metadata(reason)
+    |> Map.put(:shard, state.idx)
+    |> Map.put(:subscriber_count, subscriber_count(node))
+  end
+
+  defp subscriber_count(%Node{encoded_key: encoded_key}) do
+    Graph.group()
+    |> Group.members(encoded_key)
+    |> length()
   end
 end

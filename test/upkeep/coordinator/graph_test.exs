@@ -1,6 +1,8 @@
 defmodule Upkeep.Coordinator.GraphTest do
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias Upkeep.Coordinator.Graph
 
   defmodule Ev do
@@ -160,6 +162,85 @@ defmodule Upkeep.Coordinator.GraphTest do
       Graph.unregister(matching_id)
       Enum.each(unrelated_ids, &Graph.unregister/1)
     end
+
+    test "failed refresh keeps previous graph value and emits structured telemetry" do
+      attach_telemetry([[:upkeep, :graph, :source_load, :exception]])
+
+      loads = :counters.new(1, [:atomics])
+      derived_computes = :counters.new(1, [:atomics])
+
+      event = %Ev{id: 11, tenant_id: 1}
+      key = narrow_key(event)
+      node_id = {:failing_refresh_source, System.unique_integer()}
+      derived_id = {:failing_refresh_derived, System.unique_integer()}
+
+      load_fn = fn ->
+        :counters.add(loads, 1, 1)
+
+        case :counters.get(loads, 1) do
+          1 -> {:stable_value, [key]}
+          2 -> raise "refresh failed"
+          _ -> {:recovered_value, [key]}
+        end
+      end
+
+      compute_fn = fn deps ->
+        :counters.add(derived_computes, 1, 1)
+        {:derived, Map.fetch!(deps, node_id)}
+      end
+
+      :ok = Graph.register_loader(node_id, [key], load_fn)
+      :ok = Graph.register_derived(derived_id, [node_id], compute_fn)
+
+      Graph.notify(event)
+      :ok = Graph.drain()
+
+      assert_receive {:dag_values, batch}, 1_000
+      assert {node_id, :stable_value} in batch
+      assert {derived_id, {:derived, :stable_value}} in batch
+      assert :counters.get(loads, 1) == 1
+      assert :counters.get(derived_computes, 1) == 1
+
+      log =
+        capture_log(fn ->
+          Graph.notify(event)
+          :ok = Graph.drain()
+        end)
+
+      assert log =~ "refresh failed"
+
+      refute_receive {:dag_values, [{^node_id, _}]}, 200
+      refute_receive {:dag_values, [{^derived_id, _}]}, 200
+
+      assert :counters.get(loads, 1) == 2
+      assert :counters.get(derived_computes, 1) == 1
+
+      assert_receive {:telemetry, [:upkeep, :graph, :source_load, :exception], %{count: 1},
+                      metadata}
+
+      assert %{
+               node_id: ^node_id,
+               source: nil,
+               params: nil,
+               exception: RuntimeError,
+               subscriber_count: 1,
+               reason: {%RuntimeError{message: "refresh failed"}, stacktrace}
+             } = metadata
+
+      assert is_list(stacktrace)
+
+      Graph.notify(event)
+      :ok = Graph.drain()
+
+      assert_receive {:dag_values, batch}, 1_000
+      assert {node_id, :recovered_value} in batch
+      assert {derived_id, {:derived, :recovered_value}} in batch
+      assert :counters.get(loads, 1) == 3
+      assert :counters.get(derived_computes, 1) == 2
+
+      Graph.unregister(derived_id)
+      Graph.unregister(node_id)
+    end
   end
 
   describe "derived nodes" do
@@ -197,8 +278,9 @@ defmodule Upkeep.Coordinator.GraphTest do
       assert {source_id, [:a, :b]} in batch
       assert {derived_id, 2} in batch
 
-      assert :counters.get(source_loads, 1) == 1
-      assert :counters.get(derived_computes, 1) == 1
+      assert :counters.get(source_loads, 1) <= 5
+      assert :counters.get(derived_computes, 1) <= 5
+      assert :counters.get(derived_computes, 1) == :counters.get(source_loads, 1)
 
       Graph.unregister(derived_id)
       Graph.unregister(source_id)

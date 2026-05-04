@@ -62,6 +62,8 @@ defmodule Upkeep.SourceEctoTest do
       field :project_id, :integer
       field :issue_id, :integer
       field :body, :string
+
+      belongs_to :issue, Upkeep.SourceEctoTest.Issue, define_field: false
     end
   end
 
@@ -222,6 +224,24 @@ defmodule Upkeep.SourceEctoTest do
       from i in Issue,
         where: i.project_id == ^project_id,
         preload: [comments: ^visible_comments]
+    end
+  end
+
+  defmodule NestedQueryPreloadedComments do
+    use Upkeep.Source, repo: Upkeep.Repo
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.{Comment, Issue}
+
+    def query(%{project_id: project_id}) do
+      issue_query =
+        from i in Issue,
+          where: i.project_id == ^project_id
+
+      from c in Comment,
+        where: c.body == "visible",
+        preload: [issue: ^issue_query]
     end
   end
 
@@ -621,17 +641,23 @@ defmodule Upkeep.SourceEctoTest do
     assert %{schema: IssueTag, reason: :no_precise_filters} in coverage.broad
   end
 
-  test "coverage reports query preloads as unknown" do
+  test "coverage merges query preload deps" do
     Repo.insert!(issue(id: 1, project_id: 1, title: "With query preload"))
 
-    coverage = Upkeep.Source.coverage(QueryPreloadedProjectIssues, %{project_id: 1})
+    coverage = Upkeep.Test.assert_source_reactive!(QueryPreloadedProjectIssues, %{project_id: 1})
 
-    assert %{reason: :unsupported_preload_query} in coverage.unknown
-    assert %{schema: Comment, reason: :no_precise_filters} in coverage.broad
+    assert coverage.unknown == []
+    assert %{schema: Issue, fields: [:project_id]} in coverage.precise
+    assert %{schema: Comment, fields: [:body]} in coverage.precise
+    refute %{schema: Comment, reason: :no_precise_filters} in coverage.broad
+  end
 
-    assert_raise ExUnit.AssertionError, ~r/unknown entries/, fn ->
-      Upkeep.Test.assert_source_reactive!(QueryPreloadedProjectIssues, %{project_id: 1})
-    end
+  test "coverage recursively merges nested query preload deps" do
+    coverage = Upkeep.Test.assert_source_reactive!(NestedQueryPreloadedComments, %{project_id: 1})
+
+    assert coverage.unknown == []
+    assert %{schema: Comment, fields: [:body]} in coverage.precise
+    assert %{schema: Issue, fields: [:project_id]} in coverage.precise
   end
 
   test "preloaded query sources refresh after associated records change" do
@@ -655,6 +681,25 @@ defmodule Upkeep.SourceEctoTest do
 
     assert_receive {:dag_values,
                     [{^source_id, [%Issue{comments: [%Comment{body: "New comment"}]}]}]},
+                   1_000
+  end
+
+  test "query preload sources refresh from analyzed preload query deps" do
+    Repo.insert!(issue(id: 1, project_id: 1, title: "With visible comments"), upkeep: false)
+
+    new_socket()
+    |> Live.watch(:issues, QueryPreloadedProjectIssues, project_id: 1)
+
+    {:ok, %Comment{}} =
+      Upkeep.mutate(fn ->
+        Repo.insert!(comment(id: 1, project_id: 1, issue_id: 1, body: "visible"))
+      end)
+
+    :ok = Upkeep.Coordinator.Graph.drain()
+
+    source_id = {QueryPreloadedProjectIssues, %{project_id: 1}}
+
+    assert_receive {:dag_values, [{^source_id, [%Issue{comments: [%Comment{body: "visible"}]}]}]},
                    1_000
   end
 

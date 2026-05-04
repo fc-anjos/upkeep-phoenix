@@ -22,4 +22,21 @@ defmodule Upkeep.Coordinator.Graph.Shard.Loaders do
 
   def metadata({:fun, _load_fn}), do: %{source: nil, params: nil}
   def metadata(nil), do: %{source: nil, params: nil}
+
+  def exception_metadata(loader, reason) do
+    loader
+    |> metadata()
+    |> Map.merge(%{
+      reason: reason,
+      exception: exception(reason),
+      stacktrace: stacktrace(reason)
+    })
+  end
+
+  defp exception({%module{}, _stacktrace}), do: module
+  defp exception(%module{}), do: module
+  defp exception(reason), do: reason
+
+  defp stacktrace({_exception, stacktrace}) when is_list(stacktrace), do: stacktrace
+  defp stacktrace(_reason), do: []
 end
