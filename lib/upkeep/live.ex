@@ -154,7 +154,7 @@ defmodule Upkeep.Live do
       |> fun.()
     end
 
-    initial_value =
+    {initial_value, graph_node_id} =
       shared_initial_derived_value(socket, assign_name, dep_node_ids, dep_pairs, fun, compute)
 
     dag =
@@ -167,6 +167,7 @@ defmodule Upkeep.Live do
     socket
     |> State.put_dag(dag)
     |> State.put_assign_node(assign_name, node_id)
+    |> maybe_put_shared_derived_node(node_id, graph_node_id)
     |> assign(assign_name, value)
   end
 
@@ -401,12 +402,15 @@ defmodule Upkeep.Live do
 
   defp shared_initial_derived_value(socket, assign_name, dep_node_ids, dep_pairs, fun, compute) do
     with true <- Subscriptions.shared_initial_load?(socket),
-         {:ok, graph_dep_ids} <- graph_source_dep_ids(dep_node_ids),
+         {:ok, graph_dep_ids, local_to_graph} <- shared_graph_dep_ids(socket, dep_node_ids),
          {:ok, fun_identity} <- external_fun_identity(fun) do
+      dep_values = shared_graph_dep_values(socket, local_to_graph)
+
       graph_compute = fn graph_node_values ->
         dep_pairs
-        |> Map.new(fn
-          {dep, {:source, source_id}} -> {dep, Map.fetch!(graph_node_values, source_id)}
+        |> Map.new(fn {dep, local_node_id} ->
+          graph_node_id = Map.fetch!(local_to_graph, local_node_id)
+          {dep, Map.fetch!(graph_node_values, graph_node_id)}
         end)
         |> fun.()
       end
@@ -428,34 +432,53 @@ defmodule Upkeep.Live do
       case Subscriptions.register_derived_and_compute(
              graph_node_id,
              graph_dep_ids,
+             dep_values,
              graph_compute,
              metadata
            ) do
-        {:ok, value} -> value
+        {:ok, value} -> {value, graph_node_id}
       end
     else
-      _ -> compute_initial_value(socket, dep_node_ids, compute)
+      _ -> {compute_initial_value(socket, dep_node_ids, compute), nil}
     end
   rescue
-    ArgumentError -> compute_initial_value(socket, dep_node_ids, compute)
+    ArgumentError -> {compute_initial_value(socket, dep_node_ids, compute), nil}
   end
 
-  defp graph_source_dep_ids(dep_node_ids) do
+  defp shared_graph_dep_ids(socket, dep_node_ids) do
     dep_node_ids
-    |> Enum.reduce_while({:ok, []}, fn
+    |> Enum.reduce_while({:ok, [], %{}}, fn
       {:source, {:scoped, _component, _source_id}}, _acc ->
         {:halt, :error}
 
-      {:source, source_id}, {:ok, ids} ->
-        {:cont, {:ok, [source_id | ids]}}
+      {:source, source_id} = local_node_id, {:ok, ids, local_to_graph} ->
+        {:cont, {:ok, [source_id | ids], Map.put(local_to_graph, local_node_id, source_id)}}
+
+      {:derived, _assign_name} = local_node_id, {:ok, ids, local_to_graph} ->
+        case Map.fetch(State.shared_derived_nodes(socket), local_node_id) do
+          {:ok, graph_node_id} ->
+            {:cont,
+             {:ok, [graph_node_id | ids], Map.put(local_to_graph, local_node_id, graph_node_id)}}
+
+          :error ->
+            {:halt, :error}
+        end
 
       _node_id, _acc ->
         {:halt, :error}
     end)
     |> case do
-      {:ok, ids} -> {:ok, Enum.reverse(ids)}
+      {:ok, ids, local_to_graph} -> {:ok, Enum.reverse(ids), local_to_graph}
       :error -> :error
     end
+  end
+
+  defp shared_graph_dep_values(socket, local_to_graph) do
+    dag = State.dag(socket)
+
+    Map.new(local_to_graph, fn {local_node_id, graph_node_id} ->
+      {graph_node_id, Upkeep.DAG.fetch!(dag, local_node_id)}
+    end)
   end
 
   defp external_fun_identity(fun) do
@@ -480,6 +503,12 @@ defmodule Upkeep.Live do
       |> Map.new(fn dep_node_id -> {dep_node_id, Upkeep.DAG.fetch!(dag, dep_node_id)} end)
       |> compute.()
     end)
+  end
+
+  defp maybe_put_shared_derived_node(socket, _node_id, nil), do: socket
+
+  defp maybe_put_shared_derived_node(socket, node_id, graph_node_id) do
+    State.put_shared_derived_node(socket, node_id, graph_node_id)
   end
 
   defp reacts_to?(watch, event) do

@@ -104,7 +104,7 @@ defmodule Upkeep.Coordinator.Graph.Shard do
 
   @impl true
   def handle_call(
-        {:register_derived_and_compute, node_id, dep_ids, compute_fn, metadata},
+        {:register_derived_and_compute, node_id, dep_ids, dep_values, compute_fn, metadata},
         from,
         state
       ) do
@@ -116,7 +116,6 @@ defmodule Upkeep.Coordinator.Graph.Shard do
         {:noreply, state}
 
       :error ->
-        dep_values = Map.new(dep_ids, fn dep_id -> {dep_id, DAG.fetch!(state.dag, dep_id)} end)
         emit_initial_derived(:miss, state.idx, node_id, dep_ids, metadata)
 
         task =

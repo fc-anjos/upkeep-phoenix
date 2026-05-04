@@ -16,8 +16,8 @@ defmodule Upkeep.BenchmarkGateTest do
     output = run_benchmark!("bench/initial_derived_sharing.exs")
 
     assert output =~ "connected_derives=1000"
-    assert output =~ ~r/same\s+1\s+\d+\.\d+/
-    assert output =~ ~r/distinct\s+1000\s+\d+\.\d+/
+    assert output =~ ~r/same\s+1\s+1\s+\d+\.\d+/
+    assert output =~ ~r/distinct\s+1000\s+1000\s+\d+\.\d+/
     assert output =~ "\nOK\n"
   end
 

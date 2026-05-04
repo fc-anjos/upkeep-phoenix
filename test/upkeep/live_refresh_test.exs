@@ -385,6 +385,82 @@ defmodule Upkeep.LiveRefreshTest do
     assert load_count(:shared_issue_names, user_b) == 1
   end
 
+  test "concurrent connected derives share a chain of initial computes", %{table: table} do
+    test_pid = self()
+    user_id = System.unique_integer([:positive])
+    put_scoped_user(table, user_id, [{user_id, :user_issue}])
+    :ets.insert(table, {{:loads, :shared_issue_stats, user_id}, 0})
+    :ets.insert(table, {{:loads, :shared_issue_label, user_id}, 0})
+    :ets.insert(table, {{:derive_test_pid, user_id}, test_pid})
+
+    task_a =
+      Task.async(fn ->
+        connected_live_socket()
+        |> Live.watch(:issues, ScopedIssues, user_id: user_id)
+        |> Live.derive(:issue_stats, [:issues], &__MODULE__.shared_issue_stats/1)
+        |> Live.derive(:issue_label, [:issue_stats], &__MODULE__.shared_issue_label/1)
+      end)
+
+    assert_receive {:derived_compute_started, count_pid, ^user_id}
+
+    task_b =
+      Task.async(fn ->
+        connected_live_socket()
+        |> Live.watch(:issues, ScopedIssues, user_id: user_id)
+        |> Live.derive(:issue_stats, [:issues], &__MODULE__.shared_issue_stats/1)
+        |> Live.derive(:issue_label, [:issue_stats], &__MODULE__.shared_issue_label/1)
+      end)
+
+    refute_receive {:derived_compute_started, _second_count_pid, ^user_id}, 50
+    send(count_pid, :continue)
+
+    assert_receive {:derived_label_started, label_pid, ^user_id}
+    refute_receive {:derived_label_started, _second_label_pid, ^user_id}, 50
+    send(label_pid, :continue)
+
+    socket_a = Task.await(task_a)
+    socket_b = Task.await(task_b)
+
+    assert socket_a.assigns.issue_stats == %{user_id: user_id, count: 1}
+    assert socket_a.assigns.issue_label == "1 issue"
+    assert socket_b.assigns.issue_stats == %{user_id: user_id, count: 1}
+    assert socket_b.assigns.issue_label == "1 issue"
+    assert load_count(:shared_issue_stats, user_id) == 1
+    assert load_count(:shared_issue_label, user_id) == 1
+  end
+
+  test "connected chained derived sharing does not leak values across source params", %{
+    table: table
+  } do
+    user_a = System.unique_integer([:positive])
+    user_b = System.unique_integer([:positive])
+    put_scoped_user(table, user_a, [{user_a, :user_a_issue}])
+    put_scoped_user(table, user_b, [{user_b, :user_b_issue}])
+    :ets.insert(table, {{:loads, :shared_issue_stats, user_a}, 0})
+    :ets.insert(table, {{:loads, :shared_issue_stats, user_b}, 0})
+    :ets.insert(table, {{:loads, :shared_user_label, user_a}, 0})
+    :ets.insert(table, {{:loads, :shared_user_label, user_b}, 0})
+
+    socket_a =
+      connected_live_socket()
+      |> Live.watch(:issues, ScopedIssues, user_id: user_a)
+      |> Live.derive(:issue_stats, [:issues], &__MODULE__.shared_issue_stats/1)
+      |> Live.derive(:user_label, [:issue_stats], &__MODULE__.shared_user_label/1)
+
+    socket_b =
+      connected_live_socket()
+      |> Live.watch(:issues, ScopedIssues, user_id: user_b)
+      |> Live.derive(:issue_stats, [:issues], &__MODULE__.shared_issue_stats/1)
+      |> Live.derive(:user_label, [:issue_stats], &__MODULE__.shared_user_label/1)
+
+    assert socket_a.assigns.user_label == "user #{user_a}: 1 issue"
+    assert socket_b.assigns.user_label == "user #{user_b}: 1 issue"
+    assert load_count(:shared_issue_stats, user_a) == 1
+    assert load_count(:shared_issue_stats, user_b) == 1
+    assert load_count(:shared_user_label, user_a) == 1
+    assert load_count(:shared_user_label, user_b) == 1
+  end
+
   test "watch is idempotent for the same source identity" do
     socket =
       new_socket()
@@ -914,6 +990,51 @@ defmodule Upkeep.LiveRefreshTest do
   def shared_issue_names(%{issues: [{user_id, _name} | _] = issues}) do
     bump_load({:loads, :shared_issue_names, user_id})
     Enum.map(issues, fn {_user_id, name} -> name end)
+  end
+
+  def shared_issue_stats(%{issues: [{user_id, _name} | _] = issues}) do
+    bump_load({:loads, :shared_issue_stats, user_id})
+
+    case :ets.lookup(__MODULE__, {:derive_test_pid, user_id}) do
+      [{_, test_pid}] ->
+        send(test_pid, {:derived_compute_started, self(), user_id})
+
+        receive do
+          :continue -> :ok
+        after
+          1_000 -> raise "blocking derived compute was not released"
+        end
+
+      [] ->
+        :ok
+    end
+
+    %{user_id: user_id, count: length(issues)}
+  end
+
+  def shared_issue_label(%{issue_stats: %{user_id: user_id, count: count}}) do
+    bump_load({:loads, :shared_issue_label, user_id})
+
+    case :ets.lookup(__MODULE__, {:derive_test_pid, user_id}) do
+      [{_, test_pid}] ->
+        send(test_pid, {:derived_label_started, self(), user_id})
+
+        receive do
+          :continue -> :ok
+        after
+          1_000 -> raise "blocking derived label compute was not released"
+        end
+
+      [] ->
+        :ok
+    end
+
+    "#{count} issue"
+  end
+
+  def shared_user_label(%{issue_stats: %{user_id: user_id, count: count}}) do
+    bump_load({:loads, :shared_user_label, user_id})
+    "user #{user_id}: #{count} issue"
   end
 
   defp load_count(source) do

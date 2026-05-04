@@ -74,6 +74,22 @@ defmodule Upkeep.Live.State do
     |> Enum.map(fn {assign_name, _node_id} -> assign_name end)
   end
 
+  def put_shared_derived_node(socket, node_id, graph_node_id) do
+    private = socket.private || %{}
+
+    shared_derived_nodes =
+      Map.put(Map.get(private, :upkeep_shared_derived_nodes, %{}), node_id, graph_node_id)
+
+    %{socket | private: Map.put(private, :upkeep_shared_derived_nodes, shared_derived_nodes)}
+  end
+
+  def shared_derived_nodes(socket) do
+    case socket.private do
+      %{upkeep_shared_derived_nodes: shared_derived_nodes} -> shared_derived_nodes
+      _ -> %{}
+    end
+  end
+
   def queue_refresh(socket, source_id) do
     private = socket.private || %{}
     pending = MapSet.put(Map.get(private, :upkeep_pending_refreshes, MapSet.new()), source_id)

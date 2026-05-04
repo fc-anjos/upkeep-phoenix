@@ -142,14 +142,15 @@ defmodule Upkeep.Coordinator.Graph do
   later derived dispatches; steady-state graph-derived subscriptions are handled
   by `register_derived/3`.
   """
-  def register_derived_and_compute(node_id, dep_node_ids, compute_fn, metadata \\ %{})
-      when is_list(dep_node_ids) and is_function(compute_fn, 1) and is_map(metadata) do
-    target_shard = derived_shard!(node_id, dep_node_ids)
+  def register_derived_and_compute(node_id, dep_node_ids, dep_values, compute_fn, metadata \\ %{})
+      when is_list(dep_node_ids) and is_map(dep_values) and is_function(compute_fn, 1) and
+             is_map(metadata) do
+    target_shard = shard_of(node_id)
 
     {:ok, value} =
       GenServer.call(
         shard_name(target_shard),
-        {:register_derived_and_compute, node_id, dep_node_ids, compute_fn, metadata},
+        {:register_derived_and_compute, node_id, dep_node_ids, dep_values, compute_fn, metadata},
         30_000
       )
 
