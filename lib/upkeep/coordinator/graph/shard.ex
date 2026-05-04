@@ -2,7 +2,7 @@ defmodule Upkeep.Coordinator.Graph.Shard do
   @moduledoc false
   use GenServer
 
-  alias Upkeep.Coordinator.Graph.Shard.{Flush, InitialLoads, Lifecycle, Nodes}
+  alias Upkeep.Coordinator.Graph.Shard.{Flush, InitialLoads, Lifecycle, Nodes, Retries}
   alias Upkeep.DAG
 
   ## Public
@@ -29,6 +29,8 @@ defmodule Upkeep.Coordinator.Graph.Shard do
        initial_load_refs: %{},
        initial_derived_loads: %{},
        initial_derived_load_refs: %{},
+       retry_attempts: %{},
+       retry_timers: %{},
        buffer_node_ids: MapSet.new(),
        buffer_size: 0,
        flush_scheduled?: false
@@ -76,6 +78,7 @@ defmodule Upkeep.Coordinator.Graph.Shard do
     state =
       state
       |> demonitor_initial_loads()
+      |> Retries.cancel_all()
       |> Map.merge(%{
         dag: DAG.new(),
         sources: %{},
@@ -83,6 +86,8 @@ defmodule Upkeep.Coordinator.Graph.Shard do
         initial_load_refs: %{},
         initial_derived_loads: %{},
         initial_derived_load_refs: %{},
+        retry_attempts: %{},
+        retry_timers: %{},
         buffer_node_ids: MapSet.new(),
         buffer_size: 0,
         flush_scheduled?: false
@@ -101,6 +106,24 @@ defmodule Upkeep.Coordinator.Graph.Shard do
 
   @impl true
   def handle_info(:flush, state), do: {:noreply, Flush.flush(state)}
+
+  @impl true
+  def handle_info({:retry_source, node_id, timer_ref}, state) do
+    case Retries.pop_timer(state, node_id, timer_ref) do
+      {:ok, state} ->
+        state =
+          if Map.has_key?(state.sources, node_id) do
+            Flush.enqueue_retry(state, [node_id])
+          else
+            state
+          end
+
+        {:noreply, state}
+
+      :stale ->
+        {:noreply, state}
+    end
+  end
 
   @impl true
   def handle_info(

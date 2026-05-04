@@ -163,7 +163,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       Enum.each(unrelated_ids, &Graph.unregister/1)
     end
 
-    test "failed refresh keeps previous graph value and emits structured telemetry" do
+    test "failed refresh retries with backoff and publishes recovered value once" do
       attach_telemetry([[:upkeep, :graph, :source_load, :exception]])
 
       loads = :counters.new(1, [:atomics])
@@ -209,9 +209,6 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       assert log =~ "refresh failed"
 
-      refute_receive {:dag_values, [{^node_id, _}]}, 200
-      refute_receive {:dag_values, [{^derived_id, _}]}, 200
-
       assert :counters.get(loads, 1) == 2
       assert :counters.get(derived_computes, 1) == 1
 
@@ -224,13 +221,16 @@ defmodule Upkeep.Coordinator.GraphTest do
                params: nil,
                exception: RuntimeError,
                subscriber_count: 1,
+               retry?: true,
+               retry_attempt: 1,
+               retry_max_attempts: 3,
+               retry_delay_ms: retry_delay_ms,
                reason: {%RuntimeError{message: "refresh failed"}, stacktrace}
              } = metadata
 
       assert is_list(stacktrace)
-
-      Graph.notify(event)
-      :ok = Graph.drain()
+      assert is_integer(retry_delay_ms)
+      assert retry_delay_ms > 0
 
       assert_receive {:dag_values, batch}, 1_000
       assert {node_id, :recovered_value} in batch
@@ -240,6 +240,69 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       Graph.unregister(derived_id)
       Graph.unregister(node_id)
+    end
+
+    test "automatic retry stops after a bounded budget and resumes on later notification" do
+      attach_telemetry([[:upkeep, :graph, :source_load, :exception]])
+
+      table = :ets.new(:retry_modes, [:set, :public])
+      :ets.insert(table, {:mode, :fail})
+
+      loads = :counters.new(1, [:atomics])
+      event = %Ev{id: 12, tenant_id: 1}
+      key = narrow_key(event)
+      node_id = {:bounded_retry_source, System.unique_integer()}
+
+      load_fn = fn ->
+        :counters.add(loads, 1, 1)
+
+        case :counters.get(loads, 1) do
+          1 ->
+            {:stable_value, [key]}
+
+          _ ->
+            case :ets.lookup(table, :mode) do
+              [{:mode, :recover}] -> {:recovered_value, [key]}
+              _ -> raise "still broken"
+            end
+        end
+      end
+
+      :ok = Graph.register_loader(node_id, [key], load_fn)
+
+      Graph.notify(event)
+      :ok = Graph.drain()
+      assert_receive {:dag_values, [{^node_id, :stable_value}]}, 1_000
+
+      parent = self()
+
+      log =
+        capture_log(fn ->
+          Graph.notify(event)
+          :ok = Graph.drain()
+          send(parent, {:retry_failures, receive_source_exception_metadata_until_exhausted()})
+        end)
+
+      assert log =~ "still broken"
+      assert_receive {:retry_failures, failures}, 1_000
+
+      assert Enum.map(failures, & &1.retry_attempt) == [1, 2, 3, 4]
+      assert Enum.map(failures, & &1.retry?) == [true, true, true, false]
+      assert Enum.all?(failures, &(&1.retry_max_attempts == 3))
+      assert %{retry_delay_ms: nil} = List.last(failures)
+      assert :counters.get(loads, 1) == 5
+
+      refute_receive {:dag_values, [{^node_id, _}]}, 100
+
+      :ets.insert(table, {:mode, :recover})
+      Graph.notify(event)
+      :ok = Graph.drain()
+
+      assert_receive {:dag_values, [{^node_id, :recovered_value}]}, 1_000
+      assert :counters.get(loads, 1) == 6
+
+      Graph.unregister(node_id)
+      :ets.delete(table)
     end
   end
 
@@ -445,5 +508,19 @@ defmodule Upkeep.Coordinator.GraphTest do
       )
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
+  end
+
+  defp receive_source_exception_metadata_until_exhausted(metadata \\ []) do
+    assert_receive {:telemetry, [:upkeep, :graph, :source_load, :exception], %{count: 1},
+                    next_metadata},
+                   1_000
+
+    metadata = metadata ++ [next_metadata]
+
+    if next_metadata.retry? do
+      receive_source_exception_metadata_until_exhausted(metadata)
+    else
+      metadata
+    end
   end
 end

@@ -3,6 +3,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
 
   alias Upkeep.Coordinator.Graph
   alias Upkeep.Coordinator.Graph.Index
+  alias Upkeep.Coordinator.Graph.Shard.Retries
   alias Upkeep.Coordinator.Node
   alias Upkeep.DAG
 
@@ -50,6 +51,8 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
 
   def remove(state, node_id) do
     Index.delete(node_id)
+
+    state = Retries.clear(state, node_id)
 
     %{
       state

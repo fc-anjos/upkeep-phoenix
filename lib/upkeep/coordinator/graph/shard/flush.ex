@@ -3,7 +3,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
 
   alias Upkeep.Coordinator.Graph
   alias Upkeep.Coordinator.Graph.Index
-  alias Upkeep.Coordinator.Graph.Shard.{Dispatch, Loaders}
+  alias Upkeep.Coordinator.Graph.Shard.{Dispatch, Loaders, Retries}
   alias Upkeep.Coordinator.Node
   alias Upkeep.DAG
 
@@ -11,6 +11,15 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
   @flush_threshold 1_000
 
   def enqueue(state, node_ids) do
+    state = Retries.reset(state, node_ids)
+    enqueue_dirty(state, node_ids)
+  end
+
+  def enqueue_retry(state, node_ids) do
+    enqueue_dirty(state, node_ids)
+  end
+
+  defp enqueue_dirty(state, node_ids) do
     new_buffer = Enum.reduce(node_ids, state.buffer_node_ids, &MapSet.put(&2, &1))
     state = %{state | buffer_node_ids: new_buffer, buffer_size: MapSet.size(new_buffer)}
 
@@ -74,41 +83,45 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
         on_timeout: :kill_task
       )
 
-    {results, sources} =
+    {results, state} =
       node_ids
       |> Stream.zip(stream)
-      |> Enum.reduce({[], state.sources}, fn
+      |> Enum.reduce({[], state}, fn
         {_node_id, {:ok, {node_id, value, current_keys, tracked_deps, %Node{} = node}}},
-        {results, sources} ->
+        {results, state} ->
           if current_keys != node.registered_keys do
             Index.reconcile_source(node_id, state.idx, node.registered_keys, current_keys)
           end
 
+          state = Retries.clear(state, node_id)
+
           sources =
-            Map.put(sources, node_id, %Node{
+            Map.put(state.sources, node_id, %Node{
               node
               | registered_keys: current_keys,
                 tracked_deps: tracked_deps,
                 loaded?: true
             })
 
-          {[{node_id, value} | results], sources}
+          {[{node_id, value} | results], %{state | sources: sources}}
 
-        {node_id, {:exit, reason}}, {results, sources} ->
+        {node_id, {:exit, reason}}, {results, state} ->
           node = Map.fetch!(state.sources, node_id)
+          {state, retry_metadata} = Retries.after_failure(state, node_id, node)
 
           :telemetry.execute(
             [:upkeep, :graph, :source_load, :exception],
             %{count: 1},
             node
             |> exception_metadata(state, reason)
+            |> Map.merge(retry_metadata)
             |> Map.put(:node_id, node_id)
           )
 
-          {results, sources}
+          {results, state}
       end)
 
-    {Enum.reverse(results), %{state | sources: sources}}
+    {Enum.reverse(results), state}
   end
 
   defp exception_metadata(%Node{} = node, state, reason) do
