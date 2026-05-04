@@ -1,7 +1,8 @@
 defmodule Upkeep.Runtime.DAGOperations do
   @moduledoc false
 
-  alias Upkeep.Live.{Assigns, Components, Ids, Telemetry}
+  alias Upkeep.Live.{Components, Ids, Telemetry}
+  alias Upkeep.Runtime.Effects
   alias Upkeep.Runtime.State
 
   def put_source(socket, source_id, value, deps) do
@@ -63,7 +64,7 @@ defmodule Upkeep.Runtime.DAGOperations do
     |> Enum.unzip()
   end
 
-  def recompute_derived(socket, []), do: socket
+  def recompute_derived(socket, []), do: {socket, []}
 
   def recompute_derived(socket, changed_source_nodes, remove_watch, opts \\ [])
       when is_function(remove_watch, 2) do
@@ -89,38 +90,58 @@ defmodule Upkeep.Runtime.DAGOperations do
     socket
     |> State.put_dag(dag)
     |> remove_changed_component_watches(changed_derived_nodes, remove_watch)
-    |> assign_derived_nodes(changed_derived_nodes)
+    |> then(fn {socket, remove_effects} ->
+      {socket, assign_effects} = assign_derived_nodes(socket, changed_derived_nodes)
+      {socket, remove_effects ++ assign_effects}
+    end)
   end
 
   defp remove_changed_component_watches(socket, node_ids, remove_watch) do
     node_ids
     |> Components.changed_component_ids()
-    |> Enum.reduce(socket, fn component_id, socket ->
+    |> Enum.reduce({socket, []}, fn component_id, {socket, effects} ->
       socket
       |> State.watches()
       |> Enum.filter(fn {_source_id, watch} -> watch.component == component_id end)
-      |> Enum.reduce(socket, fn {source_id, _watch}, socket ->
-        remove_watch.(socket, source_id)
+      |> Enum.reduce({socket, effects}, fn {source_id, _watch}, {socket, effects} ->
+        {socket, remove_effects} = remove_watch.(socket, source_id)
+        {socket, effects ++ remove_effects}
       end)
     end)
   end
 
   defp assign_derived_nodes(socket, node_ids) do
-    Enum.reduce(node_ids, socket, fn node_id, socket ->
+    Enum.reduce(node_ids, {socket, []}, fn node_id, {socket, effects} ->
       value = Upkeep.DAG.fetch!(State.dag(socket), node_id)
-      assign_node_value(socket, node_id, value)
+      {socket, effects ++ assign_node_effects(socket, node_id, value)}
     end)
   end
 
-  defp assign_node_value(socket, {:component, _component_id} = node_id, value) do
-    Assigns.assign_component_value(socket, node_id, value)
+  defp assign_node_effects(_socket, {:component, _component_id}, value) when is_map(value) do
+    value
+    |> Enum.flat_map(fn
+      {assign_name, assign_value} when is_atom(assign_name) ->
+        [Effects.assign(assign_name, assign_value)]
+
+      {_assign_name, _assign_value} ->
+        []
+    end)
   end
 
-  defp assign_node_value(socket, node_id, value) do
+  defp assign_node_effects(_socket, {:component, _component_id}, _value), do: []
+
+  defp assign_node_effects(socket, node_id, value) do
     socket
     |> State.assign_names_for_node(node_id)
-    |> Enum.reduce(socket, fn assign_name, socket ->
-      Assigns.assign_derived_value(socket, assign_name, value, node_id)
+    |> Enum.flat_map(fn assign_name ->
+      [
+        Effects.telemetry(
+          [:live, :assign],
+          %{count: 1},
+          %{assign: assign_name, node_id: node_id, kind: :derived}
+        ),
+        Effects.assign(assign_name, value)
+      ]
     end)
   end
 end
