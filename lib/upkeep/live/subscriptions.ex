@@ -16,6 +16,10 @@ defmodule Upkeep.Live.Subscriptions do
     Graph.register_source_and_load(source_id, interest_keys, source, params)
   end
 
+  def register_derived_and_compute(node_id, dep_node_ids, compute_fn, metadata) do
+    Graph.register_derived_and_compute(node_id, dep_node_ids, compute_fn, metadata)
+  end
+
   def unregister(source_id) do
     Graph.unregister(source_id)
   end

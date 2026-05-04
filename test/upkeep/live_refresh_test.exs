@@ -296,6 +296,95 @@ defmodule Upkeep.LiveRefreshTest do
                     }}
   end
 
+  test "concurrent connected derives share the in-flight initial compute for the same source identity",
+       %{
+         table: table
+       } do
+    attach_telemetry([
+      [:upkeep, :graph, :derived_initial, :miss],
+      [:upkeep, :graph, :derived_initial, :hit]
+    ])
+
+    test_pid = self()
+    user_id = System.unique_integer([:positive])
+    put_scoped_user(table, user_id, [{user_id, :user_issue}])
+    :ets.insert(table, {{:loads, :shared_issue_count, user_id}, 0})
+    :ets.insert(table, {{:derive_test_pid, user_id}, test_pid})
+    source_id = {ScopedIssues, %{user_id: user_id}}
+
+    graph_node_id =
+      {:derived, UpkeepWeb.KanbanLive, :issue_count, [source_id],
+       {__MODULE__, :shared_issue_count, 1}}
+
+    task_a =
+      Task.async(fn ->
+        connected_live_socket()
+        |> Live.watch(:issues, ScopedIssues, user_id: user_id)
+        |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
+      end)
+
+    assert_receive {:derived_compute_started, loader_pid, ^user_id}
+
+    task_b =
+      Task.async(fn ->
+        connected_live_socket()
+        |> Live.watch(:issues, ScopedIssues, user_id: user_id)
+        |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
+      end)
+
+    refute_receive {:derived_compute_started, _second_loader_pid, ^user_id}, 50
+    send(loader_pid, :continue)
+
+    socket_a = Task.await(task_a)
+    socket_b = Task.await(task_b)
+
+    assert socket_a.assigns.issue_count == 1
+    assert socket_b.assigns.issue_count == 1
+    assert load_count(:shared_issue_count, user_id) == 1
+
+    assert_receive {:telemetry, [:upkeep, :graph, :derived_initial, :miss], %{count: 1},
+                    %{
+                      node_id: ^graph_node_id,
+                      assign_name: :issue_count,
+                      view: UpkeepWeb.KanbanLive,
+                      dep_node_ids: [^source_id],
+                      fun: {__MODULE__, :shared_issue_count, 1}
+                    }}
+
+    assert_receive {:telemetry, [:upkeep, :graph, :derived_initial, :hit], %{count: 1},
+                    %{
+                      node_id: ^graph_node_id,
+                      assign_name: :issue_count,
+                      view: UpkeepWeb.KanbanLive,
+                      dep_node_ids: [^source_id],
+                      fun: {__MODULE__, :shared_issue_count, 1}
+                    }}
+  end
+
+  test "connected derived sharing does not leak values across source params", %{table: table} do
+    user_a = System.unique_integer([:positive])
+    user_b = System.unique_integer([:positive])
+    put_scoped_user(table, user_a, [{user_a, :user_a_issue}])
+    put_scoped_user(table, user_b, [{user_b, :user_b_issue}])
+    :ets.insert(table, {{:loads, :shared_issue_names, user_a}, 0})
+    :ets.insert(table, {{:loads, :shared_issue_names, user_b}, 0})
+
+    socket_a =
+      connected_live_socket()
+      |> Live.watch(:issues, ScopedIssues, user_id: user_a)
+      |> Live.derive(:issue_names, [:issues], &__MODULE__.shared_issue_names/1)
+
+    socket_b =
+      connected_live_socket()
+      |> Live.watch(:issues, ScopedIssues, user_id: user_b)
+      |> Live.derive(:issue_names, [:issues], &__MODULE__.shared_issue_names/1)
+
+    assert socket_a.assigns.issue_names == [:user_a_issue]
+    assert socket_b.assigns.issue_names == [:user_b_issue]
+    assert load_count(:shared_issue_names, user_a) == 1
+    assert load_count(:shared_issue_names, user_b) == 1
+  end
+
   test "watch is idempotent for the same source identity" do
     socket =
       new_socket()
@@ -800,6 +889,31 @@ defmodule Upkeep.LiveRefreshTest do
 
   def bump_load(key) do
     :ets.update_counter(__MODULE__, key, 1)
+  end
+
+  def shared_issue_count(%{issues: [{user_id, _name} | _] = issues}) do
+    bump_load({:loads, :shared_issue_count, user_id})
+
+    case :ets.lookup(__MODULE__, {:derive_test_pid, user_id}) do
+      [{_, test_pid}] ->
+        send(test_pid, {:derived_compute_started, self(), user_id})
+
+        receive do
+          :continue -> :ok
+        after
+          1_000 -> raise "blocking derived compute was not released"
+        end
+
+      [] ->
+        :ok
+    end
+
+    length(issues)
+  end
+
+  def shared_issue_names(%{issues: [{user_id, _name} | _] = issues}) do
+    bump_load({:loads, :shared_issue_names, user_id})
+    Enum.map(issues, fn {_user_id, name} -> name end)
   end
 
   defp load_count(source) do

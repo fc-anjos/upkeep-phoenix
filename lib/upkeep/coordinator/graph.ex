@@ -134,6 +134,28 @@ defmodule Upkeep.Coordinator.Graph do
     join_subscriber(node_id)
   end
 
+  @doc """
+  Return an initial derived value using a shared in-flight compute.
+
+  Like `register_source_and_load/4`, concurrent callers for the same derived
+  node join one in-flight initial compute. This does not subscribe callers to
+  later derived dispatches; steady-state graph-derived subscriptions are handled
+  by `register_derived/3`.
+  """
+  def register_derived_and_compute(node_id, dep_node_ids, compute_fn, metadata \\ %{})
+      when is_list(dep_node_ids) and is_function(compute_fn, 1) and is_map(metadata) do
+    target_shard = derived_shard!(node_id, dep_node_ids)
+
+    {:ok, value} =
+      GenServer.call(
+        shard_name(target_shard),
+        {:register_derived_and_compute, node_id, dep_node_ids, compute_fn, metadata},
+        30_000
+      )
+
+    {:ok, value}
+  end
+
   defp derived_shard!(node_id, dep_node_ids) do
     case dep_node_ids |> Enum.map(&shard_of_node/1) |> Enum.uniq() do
       [shard] ->

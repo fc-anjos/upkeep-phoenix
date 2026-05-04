@@ -154,10 +154,13 @@ defmodule Upkeep.Live do
       |> fun.()
     end
 
+    initial_value =
+      shared_initial_derived_value(socket, assign_name, dep_node_ids, dep_pairs, fun, compute)
+
     dag =
       socket
       |> State.dag()
-      |> Upkeep.DAG.put_derived(node_id, dep_node_ids, compute)
+      |> Upkeep.DAG.put_derived(node_id, dep_node_ids, compute, initial_value: initial_value)
 
     value = Upkeep.DAG.fetch!(dag, node_id)
 
@@ -394,6 +397,89 @@ defmodule Upkeep.Live do
       |> Enum.uniq()
 
     {value, tracked_deps, interest_keys}
+  end
+
+  defp shared_initial_derived_value(socket, assign_name, dep_node_ids, dep_pairs, fun, compute) do
+    with true <- Subscriptions.shared_initial_load?(socket),
+         {:ok, graph_dep_ids} <- graph_source_dep_ids(dep_node_ids),
+         {:ok, fun_identity} <- external_fun_identity(fun) do
+      graph_compute = fn graph_node_values ->
+        dep_pairs
+        |> Map.new(fn
+          {dep, {:source, source_id}} -> {dep, Map.fetch!(graph_node_values, source_id)}
+        end)
+        |> fun.()
+      end
+
+      graph_node_id = {
+        :derived,
+        socket.view,
+        assign_name,
+        graph_dep_ids,
+        fun_identity
+      }
+
+      metadata = %{
+        assign_name: assign_name,
+        view: socket.view,
+        fun: fun_identity
+      }
+
+      case Subscriptions.register_derived_and_compute(
+             graph_node_id,
+             graph_dep_ids,
+             graph_compute,
+             metadata
+           ) do
+        {:ok, value} -> value
+      end
+    else
+      _ -> compute_initial_value(socket, dep_node_ids, compute)
+    end
+  rescue
+    ArgumentError -> compute_initial_value(socket, dep_node_ids, compute)
+  end
+
+  defp graph_source_dep_ids(dep_node_ids) do
+    dep_node_ids
+    |> Enum.reduce_while({:ok, []}, fn
+      {:source, {:scoped, _component, _source_id}}, _acc ->
+        {:halt, :error}
+
+      {:source, source_id}, {:ok, ids} ->
+        {:cont, {:ok, [source_id | ids]}}
+
+      _node_id, _acc ->
+        {:halt, :error}
+    end)
+    |> case do
+      {:ok, ids} -> {:ok, Enum.reverse(ids)}
+      :error -> :error
+    end
+  end
+
+  defp external_fun_identity(fun) do
+    info = :erlang.fun_info(fun)
+
+    with {:env, []} <- List.keyfind(info, :env, 0),
+         {:type, :external} <- List.keyfind(info, :type, 0),
+         {:module, module} <- List.keyfind(info, :module, 0),
+         {:name, name} <- List.keyfind(info, :name, 0),
+         {:arity, arity} <- List.keyfind(info, :arity, 0) do
+      {:ok, {module, name, arity}}
+    else
+      _ -> :error
+    end
+  end
+
+  defp compute_initial_value(socket, dep_node_ids, compute) do
+    socket
+    |> State.dag()
+    |> then(fn dag ->
+      dep_node_ids
+      |> Map.new(fn dep_node_id -> {dep_node_id, Upkeep.DAG.fetch!(dag, dep_node_id)} end)
+      |> compute.()
+    end)
   end
 
   defp reacts_to?(watch, event) do

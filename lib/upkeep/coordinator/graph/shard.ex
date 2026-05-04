@@ -46,6 +46,8 @@ defmodule Upkeep.Coordinator.Graph.Shard do
        sources: %{},
        initial_loads: %{},
        initial_load_refs: %{},
+       initial_derived_loads: %{},
+       initial_derived_load_refs: %{},
        buffer_node_ids: MapSet.new(),
        buffer_size: 0,
        flush_scheduled?: false
@@ -97,16 +99,40 @@ defmodule Upkeep.Coordinator.Graph.Shard do
 
   @impl true
   def handle_call({:register_derived, node_id, dep_ids, compute_fn}, _from, state) do
-    encoded_key = Graph.source_key(node_id)
-    Index.put_derived(node_id, state.idx)
+    {:reply, :ok, register_derived_node(state, node_id, dep_ids, compute_fn)}
+  end
 
-    state = %{
-      state
-      | dag: DAG.put_derived(state.dag, node_id, dep_ids, compute_fn, initial_value: nil),
-        sources: Map.put_new(state.sources, node_id, {nil, [], encoded_key, [], true})
-    }
+  @impl true
+  def handle_call(
+        {:register_derived_and_compute, node_id, dep_ids, compute_fn, metadata},
+        from,
+        state
+      ) do
+    case Map.fetch(state.initial_derived_loads, node_id) do
+      {:ok, load} ->
+        emit_initial_derived(:hit, state.idx, node_id, dep_ids, metadata)
 
-    {:reply, :ok, state}
+        state = put_in(state.initial_derived_loads[node_id].waiters, [from | load.waiters])
+        {:noreply, state}
+
+      :error ->
+        dep_values = Map.new(dep_ids, fn dep_id -> {dep_id, DAG.fetch!(state.dag, dep_id)} end)
+        emit_initial_derived(:miss, state.idx, node_id, dep_ids, metadata)
+
+        task =
+          Task.Supervisor.async_nolink(Graph.task_sup(), fn ->
+            {node_id, compute_fn.(dep_values)}
+          end)
+
+        state = %{
+          state
+          | initial_derived_loads:
+              Map.put(state.initial_derived_loads, node_id, %{ref: task.ref, waiters: [from]}),
+            initial_derived_load_refs: Map.put(state.initial_derived_load_refs, task.ref, node_id)
+        }
+
+        {:noreply, state}
+    end
   end
 
   @impl true
@@ -151,6 +177,17 @@ defmodule Upkeep.Coordinator.Graph.Shard do
   end
 
   @impl true
+  def handle_info({ref, {node_id, value}}, state) do
+    Process.demonitor(ref, [:flush])
+
+    {load, state} = pop_initial_derived_load(state, ref, node_id)
+
+    Enum.each(load.waiters, &GenServer.reply(&1, {:ok, value}))
+
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
     case Map.fetch(state.initial_load_refs, ref) do
       {:ok, node_id} ->
@@ -166,7 +203,22 @@ defmodule Upkeep.Coordinator.Graph.Shard do
         {:noreply, state}
 
       :error ->
-        {:noreply, state}
+        case Map.fetch(state.initial_derived_load_refs, ref) do
+          {:ok, node_id} ->
+            {load, state} = pop_initial_derived_load(state, ref, node_id)
+
+            :telemetry.execute(
+              [:upkeep, :graph, :derived_initial, :exception],
+              %{count: 1},
+              %{shard: state.idx, reason: reason}
+            )
+
+            Enum.each(load.waiters, &GenServer.reply(&1, {:error, reason}))
+            {:noreply, state}
+
+          :error ->
+            {:noreply, state}
+        end
     end
   end
 
@@ -238,6 +290,17 @@ defmodule Upkeep.Coordinator.Graph.Shard do
     end
   end
 
+  defp register_derived_node(state, node_id, dep_ids, compute_fn) do
+    encoded_key = Graph.source_key(node_id)
+    Index.put_derived(node_id, state.idx)
+
+    %{
+      state
+      | dag: DAG.put_derived(state.dag, node_id, dep_ids, compute_fn, initial_value: nil),
+        sources: Map.put_new(state.sources, node_id, {nil, [], encoded_key, [], true})
+    }
+  end
+
   defp pop_initial_load(state, ref, node_id) do
     load = Map.fetch!(state.initial_loads, node_id)
 
@@ -245,6 +308,18 @@ defmodule Upkeep.Coordinator.Graph.Shard do
       state
       | initial_loads: Map.delete(state.initial_loads, node_id),
         initial_load_refs: Map.delete(state.initial_load_refs, ref)
+    }
+
+    {load, state}
+  end
+
+  defp pop_initial_derived_load(state, ref, node_id) do
+    load = Map.fetch!(state.initial_derived_loads, node_id)
+
+    state = %{
+      state
+      | initial_derived_loads: Map.delete(state.initial_derived_loads, node_id),
+        initial_derived_load_refs: Map.delete(state.initial_derived_load_refs, ref)
     }
 
     {load, state}
@@ -358,6 +433,17 @@ defmodule Upkeep.Coordinator.Graph.Shard do
       [:upkeep, :graph, :initial_load, result],
       %{count: 1},
       Map.merge(%{shard: shard, node_id: node_id}, loader_metadata(loader))
+    )
+  end
+
+  defp emit_initial_derived(result, shard, node_id, dep_ids, metadata) do
+    :telemetry.execute(
+      [:upkeep, :graph, :derived_initial, result],
+      %{count: 1},
+      metadata
+      |> Map.put(:shard, shard)
+      |> Map.put(:node_id, node_id)
+      |> Map.put(:dep_node_ids, dep_ids)
     )
   end
 
