@@ -41,13 +41,13 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
       :ok = NodeDAG.drain()
 
       assert_receive {:dag_value, ^node_id, :loaded_value}, 1_000
+
       assert_receive {:telemetry, [:upkeep, :node_dag, :dispatch, :start], %{system_time: _},
                       %{node_id: ^node_id, node_kind: :source, pid_count: 1, shard: shard}}
 
       assert is_integer(shard)
 
-      assert_receive {:telemetry, [:upkeep, :node_dag, :dispatch, :stop],
-                      %{duration: duration},
+      assert_receive {:telemetry, [:upkeep, :node_dag, :dispatch, :stop], %{duration: duration},
                       %{node_id: ^node_id, node_kind: :source, pid_count: 1}}
 
       assert is_integer(duration)
@@ -104,9 +104,123 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
 
       assert :ets.lookup(NodeDAG.index_table(), key) == []
     end
+
+    test "indexed routing loads only matching source nodes" do
+      matching_loads = :counters.new(1, [:atomics])
+      unrelated_loads = :counters.new(1, [:atomics])
+
+      matching_key = narrow_key(%Ev{id: 10, tenant_id: 1})
+
+      matching_id = {:matching_source, System.unique_integer()}
+      unrelated_ids = for idx <- 1..25, do: {:unrelated_source, idx, System.unique_integer()}
+
+      :ok =
+        NodeDAG.register_source(matching_id, [matching_key], fn ->
+          :counters.add(matching_loads, 1, 1)
+          {:matched, [matching_key]}
+        end)
+
+      Enum.each(unrelated_ids, fn node_id ->
+        key = narrow_key(%Ev{id: System.unique_integer([:positive]), tenant_id: 999})
+
+        :ok =
+          NodeDAG.register_source(node_id, [key], fn ->
+            :counters.add(unrelated_loads, 1, 1)
+            {:unrelated, [key]}
+          end)
+      end)
+
+      NodeDAG.notify(%Ev{id: 10, tenant_id: 1})
+      :ok = NodeDAG.drain()
+
+      assert_receive {:dag_value, ^matching_id, :matched}, 1_000
+      refute_receive {:dag_value, {:unrelated_source, _, _}, _}
+
+      assert :counters.get(matching_loads, 1) == 1
+      assert :counters.get(unrelated_loads, 1) == 0
+
+      NodeDAG.unregister(matching_id)
+      Enum.each(unrelated_ids, &NodeDAG.unregister/1)
+    end
   end
 
   describe "derived nodes" do
+    test "source loads and derived recomputes are shared across many subscribers" do
+      source_loads = :counters.new(1, [:atomics])
+      derived_computes = :counters.new(1, [:atomics])
+
+      source_id = {:shared_source, System.unique_integer()}
+      derived_id = {:shared_derived, System.unique_integer()}
+      keys = [narrow_key(%Ev{id: 20, tenant_id: 1})]
+      subscribers = start_subscribers(100)
+
+      load_fn = fn ->
+        :counters.add(source_loads, 1, 1)
+        {[:a, :b], keys}
+      end
+
+      compute_fn = fn deps ->
+        :counters.add(derived_computes, 1, 1)
+        deps |> Map.fetch!(source_id) |> length()
+      end
+
+      for pid <- [self() | subscribers] do
+        :ok = NodeDAG.register_source(source_id, keys, load_fn, pid)
+      end
+
+      for pid <- [self() | subscribers] do
+        :ok = NodeDAG.register_derived(derived_id, [source_id], compute_fn, pid)
+      end
+
+      NodeDAG.notify(%Ev{id: 20, tenant_id: 1})
+      :ok = NodeDAG.drain()
+
+      assert_receive {:dag_value, ^source_id, [:a, :b]}, 1_000
+      assert_receive {:dag_value, ^derived_id, 2}, 1_000
+
+      assert :counters.get(source_loads, 1) == 1
+      assert :counters.get(derived_computes, 1) == 1
+
+      NodeDAG.unregister(derived_id)
+      NodeDAG.unregister(source_id)
+      stop_subscribers(subscribers)
+    end
+
+    test "duplicate events coalesce before source load and derived recompute" do
+      source_loads = :counters.new(1, [:atomics])
+      derived_computes = :counters.new(1, [:atomics])
+
+      source_id = {:coalesced_source, System.unique_integer()}
+      derived_id = {:coalesced_derived, System.unique_integer()}
+      event = %Ev{id: 21, tenant_id: 1}
+      keys = [narrow_key(event)]
+
+      load_fn = fn ->
+        :counters.add(source_loads, 1, 1)
+        {:value, keys}
+      end
+
+      compute_fn = fn deps ->
+        :counters.add(derived_computes, 1, 1)
+        Map.fetch!(deps, source_id)
+      end
+
+      :ok = NodeDAG.register_source(source_id, keys, load_fn)
+      :ok = NodeDAG.register_derived(derived_id, [source_id], compute_fn)
+
+      Enum.each(1..50, fn _ -> NodeDAG.notify(event) end)
+      :ok = NodeDAG.drain()
+
+      assert_receive {:dag_value, ^source_id, :value}, 1_000
+      assert_receive {:dag_value, ^derived_id, :value}, 1_000
+
+      assert :counters.get(source_loads, 1) == 1
+      assert :counters.get(derived_computes, 1) == 1
+
+      NodeDAG.unregister(derived_id)
+      NodeDAG.unregister(source_id)
+    end
+
     test "recompute once when source changes; multi-shard, derived auto-colocates with source" do
       source_loads = :counters.new(1, [:atomics])
       derived_computes = :counters.new(1, [:atomics])
@@ -182,6 +296,25 @@ defmodule Upkeep.Coordinator.NodeDAGTest do
       end)
 
     [a, b]
+  end
+
+  defp start_subscribers(count) do
+    for _ <- 1..count do
+      spawn_link(fn -> subscriber_loop() end)
+    end
+  end
+
+  defp stop_subscribers(pids) do
+    Enum.each(pids, &send(&1, :stop))
+  end
+
+  defp subscriber_loop do
+    receive do
+      :stop -> :ok
+      {:dag_value, _node_id, _value} -> subscriber_loop()
+    after
+      5_000 -> :ok
+    end
   end
 
   defp attach_telemetry(events) do

@@ -17,8 +17,7 @@ defmodule UpkeepWeb.Router do
   scope "/", UpkeepWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
-    live "/kanban", KanbanLive
+    live "/", KanbanLive
   end
 
   # Other scopes may use custom stacks.

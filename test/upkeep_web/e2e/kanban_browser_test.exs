@@ -11,7 +11,7 @@ defmodule UpkeepWeb.KanbanBrowserTest do
 
   test "browser-owned ignored island survives LiveView patches", %{conn: conn} do
     conn
-    |> visit("/kanban")
+    |> visit("/")
     |> PhoenixTest.Playwright.evaluate(
       """
       new Promise((resolve) => {

@@ -178,8 +178,8 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
         {Task.await(task, 30_000), load_fn, registered_keys}
       end)
       |> Enum.map_reduce(state.sources, fn {{node_id, value, current_keys}, load_fn,
-                                             registered_keys},
-                                            sources ->
+                                            registered_keys},
+                                           sources ->
         sources =
           if current_keys != registered_keys do
             reconcile_index(node_id, registered_keys, current_keys)

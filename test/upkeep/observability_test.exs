@@ -62,6 +62,30 @@ defmodule Upkeep.ObservabilityTest do
            end)
   end
 
+  test "stores NodeDAG dispatch telemetry events", %{table: table} do
+    %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+    |> Live.watch(:issues, ProjectIssues, project_id: 1)
+
+    :ets.insert(table, {{:issues, 1}, [:after]})
+
+    assert :ok =
+             %Issue{project_id: 1}
+             |> Upkeep.Change.updated()
+             |> Upkeep.notify()
+
+    assert_receive {:dag_value, {ProjectIssues, %{project_id: 1}}, [:after]}
+
+    events = recent_events_after_observability_flush()
+
+    assert Enum.any?(events, fn event ->
+             event.event == [:upkeep, :node_dag, :dispatch, :stop] and
+               event.metadata.node_id == {ProjectIssues, %{project_id: 1}} and
+               event.metadata.node_kind == :source and
+               event.metadata.pid_count == 1 and
+               is_integer(event.measurements.duration)
+           end)
+  end
+
   test "can clear stored events" do
     %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
     |> Live.watch(:issues, ProjectIssues, project_id: 1)
@@ -69,5 +93,10 @@ defmodule Upkeep.ObservabilityTest do
     assert Upkeep.recent_events() != []
     assert :ok = Upkeep.clear_events()
     assert Upkeep.recent_events() == []
+  end
+
+  defp recent_events_after_observability_flush do
+    _ = :sys.get_state(Upkeep.Observability)
+    Upkeep.recent_events()
   end
 end

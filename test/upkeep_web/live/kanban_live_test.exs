@@ -10,7 +10,7 @@ defmodule UpkeepWeb.KanbanLiveTest do
   end
 
   test "renders the seeded board", %{conn: conn} do
-    {:ok, _view, html} = live(conn, ~p"/kanban")
+    {:ok, _view, html} = live(conn, ~p"/")
 
     assert html =~ "Project board"
     assert html =~ "Shape source API"
@@ -24,7 +24,7 @@ defmodule UpkeepWeb.KanbanLiveTest do
   test "disconnected render loads data without registering source interest", %{conn: conn} do
     html =
       conn
-      |> get(~p"/kanban")
+      |> get(~p"/")
       |> html_response(200)
 
     assert html =~ "Project board"
@@ -42,7 +42,7 @@ defmodule UpkeepWeb.KanbanLiveTest do
   end
 
   test "creating an issue refreshes board columns and activity", %{conn: conn} do
-    {:ok, view, _html} = live(conn, ~p"/kanban")
+    {:ok, view, _html} = live(conn, ~p"/")
 
     view
     |> form("form[phx-submit='create_issue']", issue: %{title: "Wire kanban board"})
@@ -55,7 +55,7 @@ defmodule UpkeepWeb.KanbanLiveTest do
   end
 
   test "external domain mutations refresh a connected LiveView", %{conn: conn} do
-    {:ok, view, html} = live(conn, ~p"/kanban")
+    {:ok, view, html} = live(conn, ~p"/")
 
     refute html =~ "Created outside the LiveView"
 
@@ -79,7 +79,7 @@ defmodule UpkeepWeb.KanbanLiveTest do
   end
 
   test "moving and assigning an issue refreshes overlapping sources", %{conn: conn} do
-    {:ok, view, _html} = live(conn, ~p"/kanban")
+    {:ok, view, _html} = live(conn, ~p"/")
 
     view
     |> element("button[phx-click='move_issue'][phx-value-id='10'][phx-value-column='2']")
@@ -99,7 +99,7 @@ defmodule UpkeepWeb.KanbanLiveTest do
   end
 
   test "issues can move from done back to another column", %{conn: conn} do
-    {:ok, view, _html} = live(conn, ~p"/kanban")
+    {:ok, view, _html} = live(conn, ~p"/")
 
     view
     |> element("button[phx-click='move_issue'][phx-value-id='10'][phx-value-column='3']")
@@ -127,7 +127,7 @@ defmodule UpkeepWeb.KanbanLiveTest do
   test "renaming an open detail refreshes board, detail title, my issues, and activity", %{
     conn: conn
   } do
-    {:ok, view, _html} = live(conn, ~p"/kanban")
+    {:ok, view, _html} = live(conn, ~p"/")
 
     view
     |> element("button[phx-click='open_issue'][phx-value-id='10']")
@@ -154,7 +154,7 @@ defmodule UpkeepWeb.KanbanLiveTest do
   end
 
   test "comments and archive refresh their watched surfaces", %{conn: conn} do
-    {:ok, view, _html} = live(conn, ~p"/kanban")
+    {:ok, view, _html} = live(conn, ~p"/")
 
     view
     |> element("button[phx-click='open_issue'][phx-value-id='10']")
@@ -203,7 +203,7 @@ defmodule UpkeepWeb.KanbanLiveTest do
   test "closed issue detail removes scoped comment refreshes from connected LiveView", %{
     conn: conn
   } do
-    {:ok, view, _html} = live(conn, ~p"/kanban")
+    {:ok, view, _html} = live(conn, ~p"/")
 
     view
     |> element("button[phx-click='open_issue'][phx-value-id='10']")

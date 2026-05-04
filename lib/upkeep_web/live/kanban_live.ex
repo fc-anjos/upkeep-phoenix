@@ -95,15 +95,21 @@ defmodule UpkeepWeb.KanbanLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <main class="min-h-screen bg-zinc-100 text-zinc-950">
+    <main class="min-h-screen bg-zinc-100 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-100">
       <div class="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
-        <header class="flex flex-col gap-3 border-b border-zinc-300 pb-4 md:flex-row md:items-end md:justify-between">
-          <div>
-            <p class="text-sm font-semibold text-zinc-500">Upkeep reference app</p>
-            <h1 class="text-2xl font-bold tracking-normal">Project board</h1>
-            <p class="mt-1 text-sm text-zinc-600">
-              {@board_badge} · {@board_stats.assigned_count} assigned
-            </p>
+        <header class="flex flex-col gap-3 border-b border-zinc-300 pb-4 dark:border-zinc-700 md:flex-row md:items-end md:justify-between">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between md:flex-1">
+            <div>
+              <p class="text-sm font-semibold text-zinc-500 dark:text-zinc-400">
+                Upkeep reference app
+              </p>
+              <h1 class="text-2xl font-bold tracking-normal">Project board</h1>
+              <p class="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+                {@board_badge} · {@board_stats.assigned_count} assigned
+              </p>
+            </div>
+
+            <.theme_toggle />
           </div>
 
           <.form for={%{}} as={:issue} phx-submit="create_issue" class="flex w-full gap-2 md:max-w-md">
@@ -111,9 +117,9 @@ defmodule UpkeepWeb.KanbanLive do
               name="issue[title]"
               value={@new_issue_title}
               placeholder="New issue"
-              class="min-w-0 flex-1 rounded border border-zinc-300 bg-white px-3 py-2 text-sm"
+              class="min-w-0 flex-1 rounded border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
             />
-            <button class="inline-flex items-center gap-2 rounded bg-zinc-900 px-3 py-2 text-sm font-semibold text-white">
+            <button class="inline-flex items-center gap-2 rounded bg-zinc-900 px-3 py-2 text-sm font-semibold text-white dark:bg-zinc-100 dark:text-zinc-950">
               <.icon name="hero-plus" class="size-4" /> Add
             </button>
           </.form>
@@ -133,11 +139,11 @@ defmodule UpkeepWeb.KanbanLive do
           <div class="grid gap-3 md:grid-cols-3">
             <article
               :for={column <- @columns}
-              class="min-h-96 rounded border border-zinc-300 bg-zinc-50"
+              class="min-h-96 rounded border border-zinc-300 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900"
             >
-              <header class="flex items-center justify-between border-b border-zinc-300 px-3 py-2">
+              <header class="flex items-center justify-between border-b border-zinc-300 px-3 py-2 dark:border-zinc-700">
                 <h2 class="text-sm font-bold">{column.name}</h2>
-                <span class="rounded bg-zinc-200 px-2 py-1 text-xs font-semibold">
+                <span class="rounded bg-zinc-200 px-2 py-1 text-xs font-semibold dark:bg-zinc-800">
                   {length(column.issues)}
                 </span>
               </header>
@@ -146,7 +152,7 @@ defmodule UpkeepWeb.KanbanLive do
                 <div
                   :for={issue <- column.issues}
                   id={"issue-#{issue.id}"}
-                  class="rounded border border-zinc-300 bg-white p-3 shadow-sm"
+                  class="rounded border border-zinc-300 bg-white p-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-950"
                 >
                   <div class="flex items-start justify-between gap-2">
                     <h3 class="text-sm font-semibold">{issue.title}</h3>
@@ -170,9 +176,9 @@ defmodule UpkeepWeb.KanbanLive do
                       name="issue[title]"
                       value={issue.title}
                       aria-label="Issue title"
-                      class="min-w-0 flex-1 rounded border border-zinc-300 px-2 py-1 text-xs"
+                      class="min-w-0 flex-1 rounded border border-zinc-300 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
                     />
-                    <button class="inline-flex size-7 items-center justify-center rounded border border-zinc-300">
+                    <button class="inline-flex size-7 items-center justify-center rounded border border-zinc-300 dark:border-zinc-700">
                       <.icon name="hero-check" class="size-3" />
                     </button>
                   </.form>
@@ -183,7 +189,7 @@ defmodule UpkeepWeb.KanbanLive do
                       phx-click="move_issue"
                       phx-value-id={issue.id}
                       phx-value-column={target_column.id}
-                      class="inline-flex items-center gap-1 rounded border border-zinc-300 px-2 py-1 text-xs font-semibold"
+                      class="inline-flex items-center gap-1 rounded border border-zinc-300 px-2 py-1 text-xs font-semibold dark:border-zinc-700"
                     >
                       <.icon name={move_icon(column.position, target_column.position)} class="size-3" />
                       {target_column.name}
@@ -191,21 +197,21 @@ defmodule UpkeepWeb.KanbanLive do
                     <button
                       phx-click="assign_issue"
                       phx-value-id={issue.id}
-                      class="inline-flex items-center gap-1 rounded border border-zinc-300 px-2 py-1 text-xs font-semibold"
+                      class="inline-flex items-center gap-1 rounded border border-zinc-300 px-2 py-1 text-xs font-semibold dark:border-zinc-700"
                     >
                       <.icon name="hero-user-plus" class="size-3" /> Assign
                     </button>
                     <button
                       phx-click="open_issue"
                       phx-value-id={issue.id}
-                      class="inline-flex items-center gap-1 rounded border border-zinc-300 px-2 py-1 text-xs font-semibold"
+                      class="inline-flex items-center gap-1 rounded border border-zinc-300 px-2 py-1 text-xs font-semibold dark:border-zinc-700"
                     >
                       <.icon name="hero-eye" class="size-3" /> Details
                     </button>
                     <button
                       phx-click="archive_issue"
                       phx-value-id={issue.id}
-                      class="inline-flex items-center gap-1 rounded border border-zinc-300 px-2 py-1 text-xs font-semibold"
+                      class="inline-flex items-center gap-1 rounded border border-zinc-300 px-2 py-1 text-xs font-semibold dark:border-zinc-700"
                     >
                       <.icon name="hero-archive-box" class="size-3" /> Archive
                     </button>
@@ -216,31 +222,34 @@ defmodule UpkeepWeb.KanbanLive do
           </div>
 
           <aside class="flex flex-col gap-3">
-            <section class="rounded border border-zinc-300 bg-white">
-              <header class="border-b border-zinc-300 px-3 py-2">
+            <section class="rounded border border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900">
+              <header class="border-b border-zinc-300 px-3 py-2 dark:border-zinc-700">
                 <h2 class="text-sm font-bold">My issues ({@my_issue_count})</h2>
               </header>
-              <ul class="divide-y divide-zinc-200 text-sm">
+              <ul class="divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
                 <li :for={issue <- @my_issues} class="px-3 py-2">{issue.title}</li>
               </ul>
             </section>
 
-            <section id="archived-issues-panel" class="rounded border border-zinc-300 bg-white">
-              <header class="flex items-center justify-between border-b border-zinc-300 px-3 py-2">
+            <section
+              id="archived-issues-panel"
+              class="rounded border border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900"
+            >
+              <header class="flex items-center justify-between border-b border-zinc-300 px-3 py-2 dark:border-zinc-700">
                 <h2 class="text-sm font-bold">Archived ({@archived_issue_count})</h2>
-                <span class="rounded bg-zinc-100 px-2 py-1 text-xs font-semibold text-zinc-600">
+                <span class="rounded bg-zinc-100 px-2 py-1 text-xs font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
                   Hidden
                 </span>
               </header>
-              <div class="divide-y divide-zinc-200 text-sm">
+              <div class="divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
                 <div
                   :for={issue <- @archived_issues}
                   id={"archived-issue-#{issue.id}"}
                   class="px-3 py-2"
                 >
                   <div class="flex items-start justify-between gap-2">
-                    <p class="font-semibold text-zinc-800">{issue.title}</p>
-                    <span class="rounded bg-zinc-100 px-2 py-1 text-xs font-semibold text-zinc-500">
+                    <p class="font-semibold text-zinc-800 dark:text-zinc-100">{issue.title}</p>
+                    <span class="rounded bg-zinc-100 px-2 py-1 text-xs font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-300">
                       Archived
                     </span>
                   </div>
@@ -250,7 +259,7 @@ defmodule UpkeepWeb.KanbanLive do
                       phx-click="restore_issue"
                       phx-value-id={issue.id}
                       phx-value-column={column.id}
-                      class="inline-flex items-center gap-1 rounded border border-zinc-300 px-2 py-1 text-xs font-semibold"
+                      class="inline-flex items-center gap-1 rounded border border-zinc-300 px-2 py-1 text-xs font-semibold dark:border-zinc-700"
                     >
                       <.icon name="hero-arrow-uturn-left" class="size-3" /> {column.name}
                     </button>
@@ -262,11 +271,14 @@ defmodule UpkeepWeb.KanbanLive do
               </div>
             </section>
 
-            <section class="rounded border border-zinc-300 bg-white">
-              <header class="flex items-start justify-between gap-3 border-b border-zinc-300 px-3 py-2">
+            <section class="rounded border border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900">
+              <header class="flex items-start justify-between gap-3 border-b border-zinc-300 px-3 py-2 dark:border-zinc-700">
                 <div>
                   <h2 class="text-sm font-bold">Issue comments</h2>
-                  <p :if={@selected_issue_title} class="mt-0.5 text-xs text-zinc-500">
+                  <p
+                    :if={@selected_issue_title}
+                    class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400"
+                  >
                     {@selected_issue_title} · {comment_badge(@comment_count)}
                   </p>
                 </div>
@@ -274,14 +286,14 @@ defmodule UpkeepWeb.KanbanLive do
                   :if={@selected_issue_id}
                   type="button"
                   phx-click="close_issue"
-                  class="inline-flex size-7 items-center justify-center rounded border border-zinc-300 text-zinc-600"
+                  class="inline-flex size-7 items-center justify-center rounded border border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
                   aria-label="Close issue"
                 >
                   <.icon name="hero-x-mark" class="size-4" />
                 </button>
               </header>
               <div :if={@selected_issue_id}>
-                <ul class="divide-y divide-zinc-200 text-sm">
+                <ul class="divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
                   <li :for={comment <- @comments} class="px-3 py-2">{comment.body}</li>
                   <li :if={@comments == []} class="px-3 py-2 text-zinc-500">No comments</li>
                 </ul>
@@ -289,15 +301,15 @@ defmodule UpkeepWeb.KanbanLive do
                   for={%{}}
                   as={:comment}
                   phx-submit="add_comment"
-                  class="flex gap-2 border-t border-zinc-300 p-2"
+                  class="flex gap-2 border-t border-zinc-300 p-2 dark:border-zinc-700"
                 >
                   <input
                     name="comment[body]"
                     value={@comment_body}
                     placeholder="Comment"
-                    class="min-w-0 flex-1 rounded border border-zinc-300 px-2 py-1 text-sm"
+                    class="min-w-0 flex-1 rounded border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
                   />
-                  <button class="inline-flex items-center gap-1 rounded bg-zinc-900 px-2 py-1 text-sm font-semibold text-white">
+                  <button class="inline-flex items-center gap-1 rounded bg-zinc-900 px-2 py-1 text-sm font-semibold text-white dark:bg-zinc-100 dark:text-zinc-950">
                     <.icon name="hero-chat-bubble-left" class="size-4" /> Add
                   </button>
                 </.form>
@@ -307,11 +319,11 @@ defmodule UpkeepWeb.KanbanLive do
               </p>
             </section>
 
-            <section class="rounded border border-zinc-300 bg-white">
-              <header class="border-b border-zinc-300 px-3 py-2">
+            <section class="rounded border border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900">
+              <header class="border-b border-zinc-300 px-3 py-2 dark:border-zinc-700">
                 <h2 class="text-sm font-bold">Activity</h2>
               </header>
-              <ol class="divide-y divide-zinc-200 text-sm">
+              <ol class="divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
                 <li :for={entry <- @activity} class="px-3 py-2">{entry.message}</li>
               </ol>
             </section>
@@ -319,6 +331,43 @@ defmodule UpkeepWeb.KanbanLive do
         </section>
       </div>
     </main>
+    """
+  end
+
+  defp theme_toggle(assigns) do
+    ~H"""
+    <div
+      class="grid w-fit grid-cols-3 overflow-hidden rounded border border-zinc-300 bg-white text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+      aria-label="Theme"
+    >
+      <button
+        type="button"
+        class="inline-flex size-9 items-center justify-center hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        phx-click={JS.dispatch("phx:set-theme")}
+        data-phx-theme="system"
+        aria-label="Use system theme"
+      >
+        <.icon name="hero-computer-desktop-micro" class="size-4" />
+      </button>
+      <button
+        type="button"
+        class="inline-flex size-9 items-center justify-center border-x border-zinc-300 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+        phx-click={JS.dispatch("phx:set-theme")}
+        data-phx-theme="light"
+        aria-label="Use light theme"
+      >
+        <.icon name="hero-sun-micro" class="size-4" />
+      </button>
+      <button
+        type="button"
+        class="inline-flex size-9 items-center justify-center hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        phx-click={JS.dispatch("phx:set-theme")}
+        data-phx-theme="dark"
+        aria-label="Use dark theme"
+      >
+        <.icon name="hero-moon-micro" class="size-4" />
+      </button>
+    </div>
     """
   end
 
