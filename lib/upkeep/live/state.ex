@@ -90,6 +90,20 @@ defmodule Upkeep.Live.State do
     end
   end
 
+  def put_derive_sharing(socket, node_id, metadata) when is_map(metadata) do
+    private = socket.private || %{}
+    derive_sharing = Map.put(Map.get(private, :upkeep_derive_sharing, %{}), node_id, metadata)
+
+    %{socket | private: Map.put(private, :upkeep_derive_sharing, derive_sharing)}
+  end
+
+  def derive_sharing(socket) do
+    case socket.private do
+      %{upkeep_derive_sharing: derive_sharing} -> derive_sharing
+      _ -> %{}
+    end
+  end
+
   def queue_refresh(socket, source_id) do
     private = socket.private || %{}
     pending = MapSet.put(Map.get(private, :upkeep_pending_refreshes, MapSet.new()), source_id)

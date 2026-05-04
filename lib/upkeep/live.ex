@@ -180,6 +180,7 @@ defmodule Upkeep.Live do
     socket
     |> State.put_dag(dag)
     |> State.put_assign_node(assign_name, node_id)
+    |> State.put_derive_sharing(node_id, sharing_metadata)
     |> maybe_put_shared_derived_node(node_id, graph_node_id)
     |> assign(assign_name, value)
   end

@@ -496,6 +496,52 @@ defmodule Upkeep.LiveRefreshTest do
                     }}
   end
 
+  test "graph snapshot exposes derive sharing diagnostics", %{table: table} do
+    user_id = System.unique_integer([:positive])
+    put_scoped_user(table, user_id, [{user_id, :user_issue}])
+    :ets.insert(table, {{:loads, :shared_issue_count, user_id}, 0})
+
+    source_id = {ScopedIssues, %{user_id: user_id}}
+
+    shared_graph_id =
+      {:derived, UpkeepWeb.KanbanLive, :issue_count, [source_id],
+       {__MODULE__, :shared_issue_count, 1}}
+
+    visible_extra = user_id
+
+    socket =
+      connected_live_socket()
+      |> Live.watch(:issues, ScopedIssues, user_id: user_id)
+      |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
+      |> Live.derive(:visible_count, [:issue_count], fn %{issue_count: count} ->
+        count + visible_extra
+      end)
+
+    snapshot = Live.graph_snapshot(socket)
+
+    assert %{
+             assign: :issue_count,
+             node_id: {:derived, :issue_count},
+             sharing: %{
+               result: :shared,
+               reason: :shareable,
+               graph_node_id: ^shared_graph_id,
+               graph_dep_node_ids: [^source_id],
+               fun: {__MODULE__, :shared_issue_count, 1}
+             }
+           } = Enum.find(snapshot.assigns, &(&1.assign == :issue_count))
+
+    assert %{
+             assign: :visible_count,
+             node_id: {:derived, :visible_count},
+             sharing: %{
+               result: :local,
+               reason: :captured_fun,
+               dep_node_ids: [{:derived, :issue_count}]
+             }
+           } = Enum.find(snapshot.assigns, &(&1.assign == :visible_count))
+  end
+
   test "concurrent connected derives share a chain of initial computes", %{table: table} do
     test_pid = self()
     user_id = System.unique_integer([:positive])

@@ -13,11 +13,19 @@ defmodule Upkeep.Live.Snapshot do
   end
 
   defp assign_snapshot(socket) do
+    derive_sharing = State.derive_sharing(socket)
+
     socket
     |> State.assign_nodes()
-    |> Enum.map(fn {assign_name, node_id} -> %{assign: assign_name, node_id: node_id} end)
+    |> Enum.map(fn {assign_name, node_id} ->
+      %{assign: assign_name, node_id: node_id}
+      |> maybe_put_sharing(Map.get(derive_sharing, node_id))
+    end)
     |> sort_maps_by(:assign)
   end
+
+  defp maybe_put_sharing(assign, nil), do: assign
+  defp maybe_put_sharing(assign, sharing), do: Map.put(assign, :sharing, sharing)
 
   defp watch_snapshot(socket) do
     socket
