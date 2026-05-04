@@ -8,8 +8,6 @@ defmodule Upkeep.Ecto.QueryDeps do
   """
 
   @actions [:inserted, :updated, :deleted]
-  @unsupported_nodes [:or, :fragment]
-
   defstruct bindings: %{},
             schemas: MapSet.new(),
             fields: %{},
@@ -18,7 +16,7 @@ defmodule Upkeep.Ecto.QueryDeps do
             warnings: []
 
   def from_query(%Ecto.Query{} = query) do
-    bindings = bindings(query)
+    bindings = Upkeep.Ecto.QueryDeps.Bindings.from_query(query)
 
     %__MODULE__{bindings: bindings, schemas: bindings |> Map.values() |> MapSet.new()}
     |> collect_query_fields(query)
@@ -69,74 +67,17 @@ defmodule Upkeep.Ecto.QueryDeps do
 
   def matches_change?(_deps, _event), do: false
 
-  defp bindings(query) do
-    from_binding =
-      case source_schema(query.from && query.from.source) do
-        nil -> []
-        schema -> [{0, schema}]
-      end
-
-    query.joins
-    |> Enum.with_index(1)
-    |> Enum.reduce(Map.new(from_binding), fn {join, index}, bindings ->
-      schema = source_schema(join.source) || assoc_schema(bindings, join.assoc)
-
-      if schema do
-        Map.put(bindings, index, schema)
-      else
-        bindings
-      end
-    end)
-  end
-
-  defp assoc_schema(bindings, {owner_binding, assoc}) do
-    with owner_schema when is_atom(owner_schema) <- Map.get(bindings, owner_binding),
-         true <- function_exported?(owner_schema, :__schema__, 2),
-         %{related: related} <- owner_schema.__schema__(:association, assoc) do
-      related
-    else
-      _ -> nil
-    end
-  rescue
-    _ -> nil
-  end
-
-  defp assoc_schema(_bindings, _assoc), do: nil
-
-  defp source_schema({source, nil}) when is_binary(source), do: source
-  defp source_schema({_source, schema}) when is_atom(schema) and not is_nil(schema), do: schema
-  defp source_schema(_source), do: nil
-
   defp collect_query_fields(deps, query) do
     query
-    |> query_exprs()
+    |> Upkeep.Ecto.QueryDeps.Expressions.all()
     |> Enum.reduce(deps, fn expr, deps -> collect_fields(deps, expr) end)
-  end
-
-  defp query_exprs(query) do
-    query
-    |> query_expr_structs()
-    |> Enum.map(& &1.expr)
-  end
-
-  defp query_expr_structs(query) do
-    [
-      Enum.map(query.joins, & &1.on),
-      query.wheres,
-      query.order_bys,
-      query.group_bys,
-      query.havings,
-      List.wrap(query.select)
-    ]
-    |> List.flatten()
-    |> Enum.reject(&is_nil/1)
   end
 
   defp collect_fields(deps, expr) do
     {_expr, deps} =
       Macro.prewalk(expr, deps, fn
         node, deps ->
-          case field_ref(node) do
+          case Upkeep.Ecto.QueryDeps.Expressions.field_ref(node) do
             {binding, field} -> {node, put_field(deps, binding, field)}
             nil -> {node, deps}
           end
@@ -185,7 +126,7 @@ defmodule Upkeep.Ecto.QueryDeps do
   end
 
   defp maybe_add_equality_filter(filters, field_side, value_side, params) do
-    with {binding, field} <- field_ref(field_side),
+    with {binding, field} <- Upkeep.Ecto.QueryDeps.Expressions.field_ref(field_side),
          {:ok, value} <- equality_value(value_side, params) do
       [{binding, field, value} | filters]
     else
@@ -194,7 +135,7 @@ defmodule Upkeep.Ecto.QueryDeps do
   end
 
   defp maybe_add_membership_filter(filters, field_side, value_side, params) do
-    with {binding, field} <- field_ref(field_side),
+    with {binding, field} <- Upkeep.Ecto.QueryDeps.Expressions.field_ref(field_side),
          {:ok, values} <- membership_values(value_side, params) do
       [{binding, field, values} | filters]
     else
@@ -234,13 +175,6 @@ defmodule Upkeep.Ecto.QueryDeps do
 
   defp membership_values(_value, _params), do: :error
 
-  defp field_ref({{:., _dot_meta, [{:&, _binding_meta, [binding]}, field]}, _meta, []})
-       when is_integer(binding) and is_atom(field) do
-    {binding, field}
-  end
-
-  defp field_ref(_node), do: nil
-
   defp put_field(deps, binding, field) do
     case Map.fetch(deps.bindings, binding) do
       {:ok, schema} ->
@@ -273,9 +207,9 @@ defmodule Upkeep.Ecto.QueryDeps do
 
   defp mark_broad_for_unsupported(deps, query) do
     query
-    |> query_exprs()
+    |> Upkeep.Ecto.QueryDeps.Expressions.all()
     |> Enum.reduce(deps, fn expr, deps ->
-      if unsupported_expr?(expr) do
+      if Upkeep.Ecto.QueryDeps.Expressions.unsupported?(expr) do
         %{deps | broad?: true, warnings: ["unsupported query expression" | deps.warnings]}
       else
         deps
@@ -285,7 +219,7 @@ defmodule Upkeep.Ecto.QueryDeps do
 
   defp collect_subquery_deps(deps, query) do
     query
-    |> query_expr_structs()
+    |> Upkeep.Ecto.QueryDeps.Expressions.structs()
     |> Enum.flat_map(&Map.get(&1, :subqueries, []))
     |> Enum.reduce(deps, fn %Ecto.SubQuery{query: query}, deps ->
       merge_deps(deps, from_query(query))
@@ -315,19 +249,6 @@ defmodule Upkeep.Ecto.QueryDeps do
         Enum.uniq(left_values ++ right_values)
       end)
     end)
-  end
-
-  defp unsupported_expr?(expr) do
-    {_expr, unsupported?} =
-      Macro.prewalk(expr, false, fn
-        {node, _meta, _args} = expr, _unsupported? when node in @unsupported_nodes ->
-          {expr, true}
-
-        expr, unsupported? ->
-          {expr, unsupported?}
-      end)
-
-    unsupported?
   end
 
   defp interest_values(%{broad?: true}, _value_sets), do: [:broad]

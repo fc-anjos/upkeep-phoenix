@@ -5,7 +5,18 @@ defmodule Upkeep.Live do
 
   import Phoenix.Component, only: [assign: 3]
 
-  alias Upkeep.Live.{Assigns, Components, Ids, State, Subscriptions, Telemetry}
+  alias Upkeep.Live.{
+    Assigns,
+    Components,
+    DAGOperations,
+    Ids,
+    SharedDerived,
+    Snapshot,
+    SourceLoads,
+    State,
+    Subscriptions,
+    Telemetry
+  }
 
   defmacro __using__(_opts) do
     quote do
@@ -53,7 +64,7 @@ defmodule Upkeep.Live do
         shared_initial_load? = Subscriptions.shared_initial_load?(socket)
 
         {value, tracked_deps, interest_keys} =
-          load_or_register_source(
+          SourceLoads.load_or_register(
             socket,
             shared_initial_load?,
             source_id,
@@ -90,7 +101,7 @@ defmodule Upkeep.Live do
             interest_keys: interest_keys
           })
         end)
-        |> put_dag_source(source_id, value, Ids.source_deps(component))
+        |> DAGOperations.put_source(source_id, value, Ids.source_deps(component))
         |> State.put_assign_node(assign_name, Ids.source_node_id(source_id))
         |> Assigns.assign_source_value(assign_name, value, source_id)
     end
@@ -98,7 +109,7 @@ defmodule Upkeep.Live do
 
   def component(socket, component_id, deps, fun)
       when not is_nil(component_id) and is_list(deps) and is_function(fun, 1) do
-    {dep_node_ids, dep_pairs} = dependency_nodes(socket, deps)
+    {dep_node_ids, dep_pairs} = DAGOperations.dependency_nodes(socket, deps)
     node_id = Ids.component_node_id(component_id)
 
     compute = fn node_values ->
@@ -145,7 +156,7 @@ defmodule Upkeep.Live do
 
   def derive(socket, assign_name, deps, fun)
       when is_atom(assign_name) and is_list(deps) and is_function(fun, 1) do
-    {dep_node_ids, dep_pairs} = dependency_nodes(socket, deps)
+    {dep_node_ids, dep_pairs} = DAGOperations.dependency_nodes(socket, deps)
     node_id = Ids.derived_node_id(assign_name)
 
     compute = fn node_values ->
@@ -155,7 +166,7 @@ defmodule Upkeep.Live do
     end
 
     {initial_value, graph_node_id, sharing_metadata} =
-      shared_initial_derived_value(socket, assign_name, dep_node_ids, dep_pairs, fun, compute)
+      SharedDerived.initial_value(socket, assign_name, dep_node_ids, dep_pairs, fun, compute)
 
     Telemetry.emit([:derive, :sharing], %{count: 1}, sharing_metadata)
 
@@ -205,19 +216,14 @@ defmodule Upkeep.Live do
   end
 
   def graph_snapshot(socket) do
-    %{
-      dag: Upkeep.DAG.snapshot(State.dag(socket)),
-      assigns: assign_snapshot(socket),
-      watches: watch_snapshot(socket),
-      pending_refreshes: pending_refresh_snapshot(socket)
-    }
+    Snapshot.build(socket)
   end
 
   def queue_matching(socket, event) when is_struct(event) do
     socket
     |> State.watches()
     |> Enum.reduce(socket, fn {_source_id, watch}, socket ->
-      if reacts_to?(watch, event) do
+      if SourceLoads.reacts_to?(watch, event) do
         Telemetry.emit(
           [:source, :queue],
           %{count: 1},
@@ -268,7 +274,7 @@ defmodule Upkeep.Live do
         socket = assign_watch(socket, watch, value)
 
         {socket, changed?} =
-          put_dag_value(socket, source_id, value, Ids.source_deps(watch.component))
+          DAGOperations.put_value(socket, source_id, value, Ids.source_deps(watch.component))
 
         if changed? do
           recompute_derived(socket, [Ids.source_node_id(source_id)])
@@ -282,13 +288,13 @@ defmodule Upkeep.Live do
   end
 
   defp maybe_refresh(socket, watch, changed) do
-    {value, tracked_deps} = load_source(watch, :refresh)
-    watch = update_watch_deps(watch, tracked_deps)
+    {value, tracked_deps} = SourceLoads.load(watch, :refresh)
+    watch = SourceLoads.update_watch_deps(watch, tracked_deps)
     socket = State.put_existing_watch(socket, watch.source_id, watch)
     socket = assign_watch(socket, watch, value)
 
     {socket, changed?} =
-      put_dag_value(socket, watch.source_id, value, Ids.source_deps(watch.component))
+      DAGOperations.put_value(socket, watch.source_id, value, Ids.source_deps(watch.component))
 
     changed =
       if changed? do
@@ -302,59 +308,8 @@ defmodule Upkeep.Live do
     _ -> {socket, changed}
   end
 
-  defp recompute_derived(socket, []), do: socket
-
   defp recompute_derived(socket, changed_source_nodes) do
-    {dag, changed_derived_nodes, _recomputed_nodes} =
-      Telemetry.span([:dag, :recompute], %{changed_source_nodes: changed_source_nodes}, fn ->
-        socket
-        |> State.dag()
-        |> Upkeep.DAG.recompute(changed_source_nodes)
-        |> then(fn {_dag, changed_derived_nodes, recomputed_nodes} = result ->
-          {result,
-           %{
-             changed_derived_nodes: changed_derived_nodes,
-             recomputed_nodes: recomputed_nodes,
-             changed_count: length(changed_derived_nodes),
-             recomputed_count: length(recomputed_nodes)
-           }}
-        end)
-      end)
-
-    socket
-    |> State.put_dag(dag)
-    |> remove_changed_component_watches(changed_derived_nodes)
-    |> assign_derived_nodes(changed_derived_nodes)
-  end
-
-  defp remove_changed_component_watches(socket, node_ids) do
-    node_ids
-    |> Components.changed_component_ids()
-    |> Enum.reduce(socket, fn component_id, socket ->
-      socket
-      |> State.watches()
-      |> Enum.filter(fn {_source_id, watch} -> watch.component == component_id end)
-      |> Enum.reduce(socket, fn {source_id, _watch}, socket -> remove_watch(socket, source_id) end)
-    end)
-  end
-
-  defp assign_derived_nodes(socket, node_ids) do
-    Enum.reduce(node_ids, socket, fn node_id, socket ->
-      value = Upkeep.DAG.fetch!(State.dag(socket), node_id)
-      assign_node_value(socket, node_id, value)
-    end)
-  end
-
-  defp assign_node_value(socket, {:component, _component_id} = node_id, value) do
-    Assigns.assign_component_value(socket, node_id, value)
-  end
-
-  defp assign_node_value(socket, node_id, value) do
-    socket
-    |> State.assign_names_for_node(node_id)
-    |> Enum.reduce(socket, fn assign_name, socket ->
-      Assigns.assign_derived_value(socket, assign_name, value, node_id)
-    end)
+    DAGOperations.recompute_derived(socket, changed_source_nodes, &remove_watch/2)
   end
 
   defp assign_watch(socket, watch, value) do
@@ -363,219 +318,10 @@ defmodule Upkeep.Live do
     end)
   end
 
-  defp load_source(watch, reason) do
-    load_source(watch.source, watch.params, watch.source_id, watch.component, reason)
-  end
-
-  defp load_source(source, params, source_id, component, reason) do
-    Telemetry.span(
-      [:source, :reload],
-      Telemetry.source_metadata(source, params, source_id, component, reason),
-      fn ->
-        {value, tracked_deps} = Upkeep.Source.load(source, params)
-        {{value, tracked_deps}, %{changed?: nil, tracked_deps: length(tracked_deps)}}
-      end
-    )
-  end
-
-  defp load_or_register_source(_socket, true, source_id, source, params, _component) do
-    static_keys = source.__upkeep_interest_keys__(params)
-
-    {:ok, value, tracked_deps} =
-      Subscriptions.register_and_load(source_id, static_keys, source, params)
-
-    interest_keys =
-      (static_keys ++ Upkeep.Source.deps_interest_keys(tracked_deps))
-      |> Enum.uniq()
-
-    {value, tracked_deps, interest_keys}
-  end
-
-  defp load_or_register_source(_socket, false, source_id, source, params, component) do
-    {value, tracked_deps} = load_source(source, params, source_id, component, :watch)
-
-    interest_keys =
-      (source.__upkeep_interest_keys__(params) ++
-         Upkeep.Source.deps_interest_keys(tracked_deps))
-      |> Enum.uniq()
-
-    {value, tracked_deps, interest_keys}
-  end
-
-  defp shared_initial_derived_value(socket, assign_name, dep_node_ids, dep_pairs, fun, compute) do
-    base_metadata = derive_sharing_metadata(socket, assign_name, dep_node_ids)
-
-    with {:ok, fun_identity} <- external_fun_identity(fun),
-         true <- Subscriptions.shared_initial_load?(socket),
-         {:ok, graph_dep_ids, local_to_graph} <- shared_graph_dep_ids(socket, dep_node_ids) do
-      dep_values = shared_graph_dep_values(socket, local_to_graph)
-
-      graph_compute = fn graph_node_values ->
-        dep_pairs
-        |> Map.new(fn {dep, local_node_id} ->
-          graph_node_id = Map.fetch!(local_to_graph, local_node_id)
-          {dep, Map.fetch!(graph_node_values, graph_node_id)}
-        end)
-        |> fun.()
-      end
-
-      graph_node_id = {
-        :derived,
-        socket.view,
-        assign_name,
-        graph_dep_ids,
-        fun_identity
-      }
-
-      metadata = %{
-        assign_name: assign_name,
-        view: socket.view,
-        fun: fun_identity
-      }
-
-      case Subscriptions.register_derived_and_compute(
-             graph_node_id,
-             graph_dep_ids,
-             dep_values,
-             graph_compute,
-             metadata
-           ) do
-        {:ok, value} ->
-          sharing_metadata =
-            base_metadata
-            |> Map.merge(%{
-              result: :shared,
-              reason: :shareable,
-              graph_node_id: graph_node_id,
-              graph_dep_node_ids: graph_dep_ids,
-              fun: fun_identity
-            })
-
-          {value, graph_node_id, sharing_metadata}
-      end
-    else
-      :not_external_fun ->
-        {compute_initial_value(socket, dep_node_ids, compute), nil,
-         Map.merge(base_metadata, %{result: :local, reason: :local_fun})}
-
-      {:captured_fun, fun_identity} ->
-        {compute_initial_value(socket, dep_node_ids, compute), nil,
-         Map.merge(base_metadata, %{result: :local, reason: :captured_fun, fun: fun_identity})}
-
-      false ->
-        {compute_initial_value(socket, dep_node_ids, compute), nil,
-         Map.merge(base_metadata, %{result: :local, reason: :disconnected_socket})}
-
-      {:unshareable_dep, reason} ->
-        {compute_initial_value(socket, dep_node_ids, compute), nil,
-         Map.merge(base_metadata, %{result: :local, reason: reason})}
-    end
-  rescue
-    ArgumentError ->
-      {compute_initial_value(socket, dep_node_ids, compute), nil,
-       Map.merge(derive_sharing_metadata(socket, assign_name, dep_node_ids), %{
-         result: :local,
-         reason: :error
-       })}
-  end
-
-  defp shared_graph_dep_ids(socket, dep_node_ids) do
-    dep_node_ids
-    |> Enum.reduce_while({:ok, [], %{}}, fn
-      {:source, {:scoped, _component, _source_id}}, _acc ->
-        {:halt, {:unshareable_dep, :component_scoped_dep}}
-
-      {:source, source_id} = local_node_id, {:ok, ids, local_to_graph} ->
-        {:cont, {:ok, [source_id | ids], Map.put(local_to_graph, local_node_id, source_id)}}
-
-      {:derived, _assign_name} = local_node_id, {:ok, ids, local_to_graph} ->
-        case Map.fetch(State.shared_derived_nodes(socket), local_node_id) do
-          {:ok, graph_node_id} ->
-            {:cont,
-             {:ok, [graph_node_id | ids], Map.put(local_to_graph, local_node_id, graph_node_id)}}
-
-          :error ->
-            {:halt, {:unshareable_dep, :local_only_dep}}
-        end
-
-      _node_id, _acc ->
-        {:halt, {:unshareable_dep, :unsupported_dep}}
-    end)
-    |> case do
-      {:ok, ids, local_to_graph} -> {:ok, Enum.reverse(ids), local_to_graph}
-      {:unshareable_dep, reason} -> {:unshareable_dep, reason}
-    end
-  end
-
-  defp shared_graph_dep_values(socket, local_to_graph) do
-    dag = State.dag(socket)
-
-    Map.new(local_to_graph, fn {local_node_id, graph_node_id} ->
-      {graph_node_id, Upkeep.DAG.fetch!(dag, local_node_id)}
-    end)
-  end
-
-  defp external_fun_identity(fun) do
-    info = :erlang.fun_info(fun)
-
-    with {:env, []} <- List.keyfind(info, :env, 0),
-         {:type, :external} <- List.keyfind(info, :type, 0),
-         {:module, module} <- List.keyfind(info, :module, 0),
-         {:name, name} <- List.keyfind(info, :name, 0),
-         {:arity, arity} <- List.keyfind(info, :arity, 0) do
-      {:ok, {module, name, arity}}
-    else
-      {:env, env} when is_list(env) and env != [] ->
-        {:captured_fun, fun_identity_from_info(info)}
-
-      _ ->
-        :not_external_fun
-    end
-  end
-
-  defp fun_identity_from_info(info) do
-    module = info |> List.keyfind(:module, 0) |> elem(1)
-    name = info |> List.keyfind(:name, 0) |> elem(1)
-    arity = info |> List.keyfind(:arity, 0) |> elem(1)
-    {module, name, arity}
-  end
-
-  defp derive_sharing_metadata(socket, assign_name, dep_node_ids) do
-    %{
-      assign_name: assign_name,
-      view: Map.get(socket, :view),
-      dep_node_ids: dep_node_ids
-    }
-  end
-
-  defp compute_initial_value(socket, dep_node_ids, compute) do
-    socket
-    |> State.dag()
-    |> then(fn dag ->
-      dep_node_ids
-      |> Map.new(fn dep_node_id -> {dep_node_id, Upkeep.DAG.fetch!(dag, dep_node_id)} end)
-      |> compute.()
-    end)
-  end
-
   defp maybe_put_shared_derived_node(socket, _node_id, nil), do: socket
 
   defp maybe_put_shared_derived_node(socket, node_id, graph_node_id) do
     State.put_shared_derived_node(socket, node_id, graph_node_id)
-  end
-
-  defp reacts_to?(watch, event) do
-    Upkeep.Source.deps_react_to?(Map.get(watch, :tracked_deps, []), event) or
-      watch.source.reacts_to?(event, watch.params)
-  end
-
-  defp update_watch_deps(watch, tracked_deps) do
-    interest_keys =
-      (watch.source.__upkeep_interest_keys__(watch.params) ++
-         Upkeep.Source.deps_interest_keys(tracked_deps))
-      |> Enum.uniq()
-
-    %{watch | interest_keys: interest_keys, tracked_deps: tracked_deps}
   end
 
   defp remove_watch(socket, source_id) do
@@ -598,7 +344,7 @@ defmodule Upkeep.Live do
 
         watch.assign_names
         |> Enum.reduce(socket, &State.delete_assign_node(&2, &1))
-        |> remove_dag_source(source_id)
+        |> DAGOperations.remove_source(source_id)
 
       :error ->
         socket
@@ -629,87 +375,6 @@ defmodule Upkeep.Live do
     end
   end
 
-  defp put_dag_source(socket, source_id, value, deps) do
-    {dag, _changed?} =
-      socket
-      |> State.dag()
-      |> Upkeep.DAG.put_source(Ids.source_node_id(source_id), value, deps)
-
-    State.put_dag(socket, dag)
-  end
-
-  defp put_dag_value(socket, source_id, value, deps) do
-    {dag, changed?} =
-      socket
-      |> State.dag()
-      |> Upkeep.DAG.put_source(Ids.source_node_id(source_id), value, deps)
-
-    {State.put_dag(socket, dag), changed?}
-  end
-
-  defp remove_dag_source(socket, source_id) do
-    source_node_id = Ids.source_node_id(source_id)
-
-    removed_node_ids = [
-      source_node_id | Upkeep.DAG.downstream_ids(State.dag(socket), source_node_id)
-    ]
-
-    socket =
-      removed_node_ids
-      |> Enum.flat_map(&State.assign_names_for_node(socket, &1))
-      |> Enum.reduce(socket, &State.delete_assign_node(&2, &1))
-
-    dag =
-      socket
-      |> State.dag()
-      |> Upkeep.DAG.remove_subgraph(source_node_id)
-
-    State.put_dag(socket, dag)
-  end
-
-  defp dependency_nodes(socket, deps) do
-    deps
-    |> Enum.map(fn dep ->
-      node_id =
-        Map.get(State.assign_nodes(socket), dep) ||
-          raise ArgumentError, "unknown Upkeep dependency assign #{inspect(dep)}"
-
-      {node_id, {dep, node_id}}
-    end)
-    |> Enum.unzip()
-  end
-
-  defp assign_snapshot(socket) do
-    socket
-    |> State.assign_nodes()
-    |> Enum.map(fn {assign_name, node_id} -> %{assign: assign_name, node_id: node_id} end)
-    |> sort_maps_by(:assign)
-  end
-
-  defp watch_snapshot(socket) do
-    socket
-    |> State.watches()
-    |> Enum.map(fn {source_id, watch} ->
-      %{
-        source_id: source_id,
-        node_id: Ids.source_node_id(source_id),
-        source: watch.source,
-        params: watch.params,
-        component: watch.component,
-        assign_names: watch.assign_names |> MapSet.to_list() |> Telemetry.sort_terms(),
-        interest_keys: Telemetry.sort_terms(watch.interest_keys)
-      }
-    end)
-    |> sort_maps_by(:source_id)
-  end
-
-  defp pending_refresh_snapshot(socket) do
-    socket
-    |> State.pending_refreshes()
-    |> MapSet.to_list()
-    |> Telemetry.sort_terms()
-  end
-
   defp put_watches(socket, watches) do
     private = socket.private || %{}
     %{socket | private: Map.put(private, :upkeep_watches, watches)}
@@ -718,8 +383,6 @@ defmodule Upkeep.Live do
   defp primary_assign_name(watch) do
     watch.assign_name || Enum.at(watch.assign_names, 0)
   end
-
-  defp sort_maps_by(maps, key), do: Enum.sort_by(maps, &inspect(Map.fetch!(&1, key)))
 
   defp normalize_params(params) when is_list(params), do: Map.new(params)
   defp normalize_params(params) when is_map(params), do: params
