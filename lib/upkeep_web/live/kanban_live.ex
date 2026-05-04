@@ -111,6 +111,16 @@ defmodule UpkeepWeb.KanbanLive do
         </header>
 
         <section class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+          <div
+            id="client-owned-kanban-state"
+            phx-update="ignore"
+            phx-hook="UpkeepClientState"
+            aria-hidden="true"
+            style="position:absolute;width:0;height:0;overflow:hidden;"
+          >
+            <span data-client-owned-value="">server-rendered</span>
+          </div>
+
           <div class="grid gap-3 md:grid-cols-3">
             <article
               :for={column <- @columns}

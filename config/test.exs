@@ -15,7 +15,27 @@ config :upkeep, Upkeep.Repo,
 config :upkeep, UpkeepWeb.Endpoint,
   http: [ip: {127, 0, 0, 1}, port: 4002],
   secret_key_base: "JYZXHlXGNmKj0icIjYP9lIiElYmE0yguKU9H650eTYx5Tzp6Sb69NiSlE9iDLYIO",
-  server: false
+  server: true
+
+config :phoenix_test,
+  otp_app: :upkeep,
+  playwright: [
+    browser_pool: :chromium_pool,
+    browser_pools: [
+      [
+        id: :chromium_pool,
+        browser: :chromium,
+        executable_path:
+          System.get_env(
+            "PLAYWRIGHT_CHROME_PATH",
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+          )
+      ]
+    ],
+    js_logger: false,
+    timeout: 5_000,
+    browser_launch_timeout: 15_000
+  ]
 
 # In test we don't send emails
 config :upkeep, Upkeep.Mailer, adapter: Swoosh.Adapters.Test
