@@ -7,7 +7,12 @@ defmodule Bench.InitialSharingSupport do
   @join_window_ms 250
   @await_timeout_ms 10_000
 
-  def default_watches, do: @default_watches
+  def default_watches do
+    case System.get_env("BENCH_WATCHES") do
+      nil -> @default_watches
+      value -> String.to_integer(value)
+    end
+  end
 
   def socket do
     %Phoenix.LiveView.Socket{
@@ -82,10 +87,13 @@ defmodule Bench.InitialSharingSupport do
   def ok, do: IO.puts("\nOK")
 
   defp format_row(values) do
-    widths = [12, 10, 10, 10]
-
     values
-    |> Enum.zip(widths)
-    |> Enum.map_join(" ", fn {value, width} -> String.pad_trailing(value, width) end)
+    |> Enum.with_index()
+    |> Enum.map_join(" ", fn {value, index} ->
+      String.pad_trailing(value, column_width(index))
+    end)
   end
+
+  defp column_width(0), do: 12
+  defp column_width(_index), do: 10
 end
