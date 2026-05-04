@@ -12,7 +12,14 @@ defmodule Upkeep.Coordinator.Graph.Shard.Loaders do
     {value, current_keys, []}
   end
 
-  def metadata({:source, source, params}), do: %{source: source, params: params}
+  def metadata({:source, source, params}) do
+    %{
+      source: source,
+      params: params,
+      sharing_partition: Upkeep.Source.sharing_partition(source, params)
+    }
+  end
+
   def metadata({:fun, _load_fn}), do: %{source: nil, params: nil}
   def metadata(nil), do: %{source: nil, params: nil}
 end

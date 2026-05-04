@@ -233,18 +233,42 @@ defmodule Upkeep.Coordinator.Graph do
   def shard_count, do: :persistent_term.get({__MODULE__, :shards})
 
   @doc false
-  def shared_partition(node_ids) do
-    case node_ids |> Enum.map(&node_partition/1) |> Enum.uniq() do
+  def shared_partition_info(node_ids) do
+    dep_partitions = Enum.map(node_ids, &{&1, node_partition(&1)})
+
+    case dep_partitions |> Enum.map(&elem(&1, 1)) |> Enum.uniq() do
       [partition] ->
-        {:ok, partition}
+        {:ok, partition, dep_partitions}
 
       [] ->
-        {:error, :empty_deps}
+        {:error, :empty_deps, dep_partitions}
 
       _partitions ->
-        {:error, :cross_partition_dep}
+        {:error, :cross_partition_dep, dep_partitions}
     end
   end
+
+  @doc false
+  def shared_partition(node_ids) do
+    case shared_partition_info(node_ids) do
+      {:ok, partition, _dep_partitions} -> {:ok, partition}
+      {:error, reason, _dep_partitions} -> {:error, reason}
+    end
+  end
+
+  @doc false
+  def node_partition({source, params}) when is_atom(source) and is_map(params) do
+    Source.sharing_partition(source, params)
+  end
+
+  def node_partition({:derived, _view, _assign_name, dep_node_ids, _fun}) do
+    case shared_partition(dep_node_ids) do
+      {:ok, partition} -> partition
+      {:error, reason} -> {:derived, reason, dep_node_ids}
+    end
+  end
+
+  def node_partition(node_id), do: {:node, node_id}
 
   @doc "Group key under which a node's subscribers join."
   def source_key(node_id) do
@@ -317,19 +341,6 @@ defmodule Upkeep.Coordinator.Graph do
       _ -> shard_of(node_id)
     end
   end
-
-  defp node_partition({source, params}) when is_atom(source) and is_map(params) do
-    {:source, Source.sharing_partition(source, params)}
-  end
-
-  defp node_partition({:derived, _view, _assign_name, dep_node_ids, _fun}) do
-    case shared_partition(dep_node_ids) do
-      {:ok, partition} -> partition
-      {:error, reason} -> {:derived, reason, dep_node_ids}
-    end
-  end
-
-  defp node_partition(node_id), do: {:node, node_id}
 
   defp join_subscriber(node_id) do
     case Group.join(@group, source_key(node_id), %{kind: :lv}) do

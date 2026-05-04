@@ -308,14 +308,16 @@ defmodule Upkeep.LiveRefreshTest do
                     %{
                       node_id: ^source_id,
                       source: BlockingScopedIssues,
-                      params: %{test_pid: _, user_id: ^user_id}
+                      params: %{test_pid: _, user_id: ^user_id},
+                      sharing_partition: %{user_id: ^user_id}
                     }}
 
     assert_receive {:telemetry, [:upkeep, :graph, :initial_load, :hit], %{count: 1},
                     %{
                       node_id: ^source_id,
                       source: BlockingScopedIssues,
-                      params: %{test_pid: _, user_id: ^user_id}
+                      params: %{test_pid: _, user_id: ^user_id},
+                      sharing_partition: %{user_id: ^user_id}
                     }}
   end
 
@@ -371,6 +373,8 @@ defmodule Upkeep.LiveRefreshTest do
                       assign_name: :issue_count,
                       view: UpkeepWeb.KanbanLive,
                       dep_node_ids: [^source_id],
+                      sharing_partition: %{user_id: ^user_id},
+                      dep_partitions: [{^source_id, %{user_id: ^user_id}}],
                       fun: {__MODULE__, :shared_issue_count, 1}
                     }}
 
@@ -380,6 +384,8 @@ defmodule Upkeep.LiveRefreshTest do
                       assign_name: :issue_count,
                       view: UpkeepWeb.KanbanLive,
                       dep_node_ids: [^source_id],
+                      sharing_partition: %{user_id: ^user_id},
+                      dep_partitions: [{^source_id, %{user_id: ^user_id}}],
                       fun: {__MODULE__, :shared_issue_count, 1}
                     }}
   end
@@ -433,6 +439,8 @@ defmodule Upkeep.LiveRefreshTest do
                       graph_node_id: ^shared_graph_id,
                       dep_node_ids: [{:source, ^shared_source_id}],
                       graph_dep_node_ids: [^shared_source_id],
+                      sharing_partition: %{user_id: ^user_id},
+                      dep_partitions: [{^shared_source_id, %{user_id: ^user_id}}],
                       fun: {__MODULE__, :shared_issue_count, 1}
                     }}
 
@@ -527,6 +535,8 @@ defmodule Upkeep.LiveRefreshTest do
                reason: :shareable,
                graph_node_id: ^shared_graph_id,
                graph_dep_node_ids: [^source_id],
+               sharing_partition: %{user_id: ^user_id},
+               dep_partitions: [{^source_id, %{user_id: ^user_id}}],
                fun: {__MODULE__, :shared_issue_count, 1}
              }
            } = Enum.find(snapshot.assigns, &(&1.assign == :issue_count))
@@ -711,7 +721,13 @@ defmodule Upkeep.LiveRefreshTest do
                       result: :shared,
                       reason: :shareable,
                       graph_node_id: ^graph_node_id,
-                      graph_dep_node_ids: ^source_ids
+                      graph_dep_node_ids: ^source_ids,
+                      sharing_partition: %{project_id: ^project_id},
+                      dep_partitions: [
+                        {{ProjectIssues, %{project_id: ^project_id}}, %{project_id: ^project_id}},
+                        {{ProjectActivity, %{project_id: ^project_id}},
+                         %{project_id: ^project_id}}
+                      ]
                     }}
   end
 
@@ -770,14 +786,24 @@ defmodule Upkeep.LiveRefreshTest do
                     %{
                       assign_name: :dashboard_model,
                       result: :local,
-                      reason: :cross_partition_dep
+                      reason: :cross_partition_dep,
+                      dep_partitions: [
+                        {{ScopedIssues, %{user_id: ^user_a}}, %{user_id: ^user_a}},
+                        {{ProjectActivity, %{project_id: ^project_id}},
+                         %{project_id: ^project_id}}
+                      ]
                     }}
 
     assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
                     %{
                       assign_name: :dashboard_model,
                       result: :local,
-                      reason: :cross_partition_dep
+                      reason: :cross_partition_dep,
+                      dep_partitions: [
+                        {{ScopedIssues, %{user_id: ^user_b}}, %{user_id: ^user_b}},
+                        {{ProjectActivity, %{project_id: ^project_id}},
+                         %{project_id: ^project_id}}
+                      ]
                     }}
   end
 
@@ -822,6 +848,8 @@ defmodule Upkeep.LiveRefreshTest do
   end
 
   test "graph-pushed source updates reuse shared derived graph values", %{table: table} do
+    attach_telemetry([[:upkeep, :graph, :dispatch, :stop]])
+
     user_id = System.unique_integer([:positive])
     put_scoped_user(table, user_id, [{user_id, :before}])
     :ets.insert(table, {{:loads, :shared_issue_count, user_id}, 0})
@@ -852,6 +880,14 @@ defmodule Upkeep.LiveRefreshTest do
     assert_receive {:dag_values, pairs}
     assert {source_id, [{user_id, :before}, {user_id, :after}]} in pairs
     assert {graph_node_id, 2} in pairs
+
+    assert_receive {:telemetry, [:upkeep, :graph, :dispatch, :stop], _measurements,
+                    %{
+                      node_partitions: [
+                        {^source_id, %{user_id: ^user_id}},
+                        {^graph_node_id, %{user_id: ^user_id}}
+                      ]
+                    }}
 
     socket = Live.apply_dag_values(socket, pairs)
 
@@ -1298,7 +1334,12 @@ defmodule Upkeep.LiveRefreshTest do
     assert %{assign: :comment_count, node_id: {:derived, :comment_count}} =
              Enum.find(snapshot.assigns, &(&1.assign == :comment_count))
 
-    assert %{source_id: ^comments_source_id, component: :issue_detail, assign_names: [:comments]} =
+    assert %{
+             source_id: ^comments_source_id,
+             component: :issue_detail,
+             assign_names: [:comments],
+             sharing_partition: %{issue_id: 1}
+           } =
              Enum.find(snapshot.watches, &(&1.source_id == comments_source_id))
 
     assert snapshot.pending_refreshes == [comments_source_id]
@@ -1333,10 +1374,20 @@ defmodule Upkeep.LiveRefreshTest do
       |> Live.derive(:issue_count, [:issues], fn %{issues: issues} -> length(issues) end)
 
     assert_receive {:telemetry, [:upkeep, :graph, :initial_load, :miss], %{count: 1},
-                    %{node_id: ^source_id, source: ProjectIssues, params: %{project_id: 1}}}
+                    %{
+                      node_id: ^source_id,
+                      source: ProjectIssues,
+                      params: %{project_id: 1},
+                      sharing_partition: %{project_id: 1}
+                    }}
 
     assert_receive {:telemetry, [:upkeep, :source, :watch], %{count: 1},
-                    %{source_id: ^source_id, assign_name: :issues, kind: :new}}
+                    %{
+                      source_id: ^source_id,
+                      assign_name: :issues,
+                      kind: :new,
+                      sharing_partition: %{project_id: 1}
+                    }}
 
     assert_receive {:telemetry, [:upkeep, :live, :assign], %{count: 1},
                     %{assign: :issues, node_id: {:source, ^source_id}, kind: :source}}
@@ -1352,10 +1403,18 @@ defmodule Upkeep.LiveRefreshTest do
     socket = Live.flush_refreshes(socket)
 
     assert_receive {:telemetry, [:upkeep, :source, :reload, :start], _measurements,
-                    %{source_id: ^source_id, reason: :refresh}}
+                    %{
+                      source_id: ^source_id,
+                      reason: :refresh,
+                      sharing_partition: %{project_id: 1}
+                    }}
 
     assert_receive {:telemetry, [:upkeep, :source, :reload, :stop], measurements,
-                    %{source_id: ^source_id, reason: :refresh}}
+                    %{
+                      source_id: ^source_id,
+                      reason: :refresh,
+                      sharing_partition: %{project_id: 1}
+                    }}
 
     assert is_integer(measurements.duration)
 

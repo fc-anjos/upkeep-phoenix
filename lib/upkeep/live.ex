@@ -94,6 +94,7 @@ defmodule Upkeep.Live do
             node_id: Ids.source_node_id(source_id),
             source: source,
             params: params,
+            sharing_partition: Upkeep.Source.sharing_partition(source, params),
             component: component,
             assign_name: assign_name,
             kind: :new,

@@ -6,7 +6,12 @@ defmodule Upkeep.Coordinator.Graph.Shard.Dispatch do
   def batch(_state, []), do: :ok
 
   def batch(state, pairs) do
-    metadata = %{shard: state.idx, pair_count: length(pairs)}
+    metadata = %{
+      shard: state.idx,
+      pair_count: length(pairs),
+      node_partitions:
+        Enum.map(pairs, fn {node_id, _value} -> {node_id, Graph.node_partition(node_id)} end)
+    }
 
     :telemetry.span([:upkeep, :graph, :dispatch], metadata, fn ->
       pairs_by_pid =

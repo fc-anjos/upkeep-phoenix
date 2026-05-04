@@ -36,6 +36,7 @@ defmodule Upkeep.Live.Snapshot do
         node_id: Ids.source_node_id(source_id),
         source: watch.source,
         params: watch.params,
+        sharing_partition: Upkeep.Source.sharing_partition(watch.source, watch.params),
         component: watch.component,
         assign_names: watch.assign_names |> MapSet.to_list() |> Telemetry.sort_terms(),
         interest_keys: Telemetry.sort_terms(watch.interest_keys)

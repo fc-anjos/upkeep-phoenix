@@ -10,7 +10,7 @@ defmodule Upkeep.Live.SharedDerived do
     with {:ok, fun_identity} <- external_fun_identity(fun),
          true <- Subscriptions.shared_initial_load?(socket),
          {:ok, graph_dep_ids, local_to_graph} <- graph_dep_ids(socket, dep_node_ids),
-         {:ok, _partition} <- Graph.shared_partition(graph_dep_ids) do
+         {:ok, sharing_partition, dep_partitions} <- Graph.shared_partition_info(graph_dep_ids) do
       dep_values = graph_dep_values(socket, local_to_graph)
 
       graph_compute = fn graph_node_values ->
@@ -33,7 +33,9 @@ defmodule Upkeep.Live.SharedDerived do
       metadata = %{
         assign_name: assign_name,
         view: socket.view,
-        fun: fun_identity
+        fun: fun_identity,
+        sharing_partition: sharing_partition,
+        dep_partitions: dep_partitions
       }
 
       case Subscriptions.register_derived_and_compute(
@@ -51,6 +53,8 @@ defmodule Upkeep.Live.SharedDerived do
               reason: :shareable,
               graph_node_id: graph_node_id,
               graph_dep_node_ids: graph_dep_ids,
+              sharing_partition: sharing_partition,
+              dep_partitions: dep_partitions,
               fun: fun_identity,
               compute_fn: graph_compute
             })
@@ -74,13 +78,21 @@ defmodule Upkeep.Live.SharedDerived do
         {compute_initial_value(socket, dep_node_ids, compute), nil,
          Map.merge(base_metadata, %{result: :local, reason: reason})}
 
-      {:error, :cross_partition_dep} ->
+      {:error, :cross_partition_dep, dep_partitions} ->
         {compute_initial_value(socket, dep_node_ids, compute), nil,
-         Map.merge(base_metadata, %{result: :local, reason: :cross_partition_dep})}
+         Map.merge(base_metadata, %{
+           result: :local,
+           reason: :cross_partition_dep,
+           dep_partitions: dep_partitions
+         })}
 
-      {:error, :empty_deps} ->
+      {:error, :empty_deps, dep_partitions} ->
         {compute_initial_value(socket, dep_node_ids, compute), nil,
-         Map.merge(base_metadata, %{result: :local, reason: :empty_deps})}
+         Map.merge(base_metadata, %{
+           result: :local,
+           reason: :empty_deps,
+           dep_partitions: dep_partitions
+         })}
     end
   rescue
     ArgumentError ->
