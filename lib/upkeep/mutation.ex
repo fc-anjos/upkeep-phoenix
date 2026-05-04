@@ -10,8 +10,8 @@ defmodule Upkeep.Mutation do
 
   def mutate(repo_or_fun_or_multi, fun_or_multi \\ nil)
 
-  def mutate(fun, nil) when is_function(fun, 0), do: mutate(Upkeep.Repo, fun)
-  def mutate(%Ecto.Multi{} = multi, nil), do: mutate(Upkeep.Repo, multi)
+  def mutate(fun, nil) when is_function(fun, 0), do: mutate(default_repo!(), fun)
+  def mutate(%Ecto.Multi{} = multi, nil), do: mutate(default_repo!(), multi)
 
   def mutate(repo, fun) when is_atom(repo) and is_function(fun, 0) do
     if journal_active?() do
@@ -34,7 +34,7 @@ defmodule Upkeep.Mutation do
       put_journal(journal() ++ [event])
       :ok
     else
-      Upkeep.Coordinator.NodeDAG.notify(event)
+      Upkeep.Coordinator.Graph.notify(event)
     end
   end
 
@@ -77,7 +77,7 @@ defmodule Upkeep.Mutation do
     try do
       case repo.transaction(fn -> {fun.(), journal()} end) do
         {:ok, {result, events}} ->
-          Enum.each(events, &Upkeep.Coordinator.NodeDAG.notify/1)
+          Enum.each(events, &Upkeep.Coordinator.Graph.notify/1)
           {:ok, result}
 
         {:error, reason} ->
@@ -96,7 +96,7 @@ defmodule Upkeep.Mutation do
       case repo.transaction(multi) do
         {:ok, changes} ->
           journal()
-          |> Enum.each(&Upkeep.Coordinator.NodeDAG.notify/1)
+          |> Enum.each(&Upkeep.Coordinator.Graph.notify/1)
 
           {:ok, changes}
 
@@ -129,7 +129,7 @@ defmodule Upkeep.Mutation do
       result = fun.()
 
       if transaction_committed?(result) do
-        Enum.each(journal(), &Upkeep.Coordinator.NodeDAG.notify/1)
+        Enum.each(journal(), &Upkeep.Coordinator.Graph.notify/1)
       end
 
       result
@@ -169,4 +169,14 @@ defmodule Upkeep.Mutation do
 
   defp restore_journal(:upkeep_no_journal), do: Process.delete(@journal_key)
   defp restore_journal(previous), do: Process.put(@journal_key, previous)
+
+  defp default_repo! do
+    Application.get_env(:upkeep, :repo) ||
+      raise """
+      No default repo configured for Upkeep. Either pass the repo as the
+      first argument to `Upkeep.mutate/2`, or configure one in your app:
+
+          config :upkeep, repo: MyApp.Repo
+      """
+  end
 end

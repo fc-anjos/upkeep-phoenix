@@ -37,6 +37,7 @@ defmodule Upkeep.DataCase do
   """
   def setup_sandbox(tags) do
     pid = Ecto.Adapters.SQL.Sandbox.start_owner!(Upkeep.Repo, shared: not tags[:async])
+    Upkeep.Test.allow_sandbox()
     on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
   end
 

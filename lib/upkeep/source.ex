@@ -180,7 +180,7 @@ defmodule Upkeep.Source do
   end
 
   def load(source, params) when is_atom(source) do
-    repo = source.__upkeep_repo__()
+    repo = source.__upkeep_repo__() || Application.get_env(:upkeep, :repo)
 
     {value, deps} =
       with_read_context(repo, fn ->

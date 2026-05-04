@@ -9,15 +9,12 @@ defmodule Upkeep.Application do
   def start(_type, _args) do
     children = [
       UpkeepWeb.Telemetry,
-      Upkeep.Observability,
       Upkeep.Repo,
       {Ecto.Migrator,
        repos: Application.fetch_env!(:upkeep, :ecto_repos), skip: skip_migrations?()},
       {DNSCluster, query: Application.get_env(:upkeep, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Upkeep.PubSub},
-      Upkeep.Kanban,
-      {Group, name: Upkeep.Group, log: false},
-      node_dag_child(),
+      {Upkeep, []},
       # Start to serve requests, typically the last entry
       UpkeepWeb.Endpoint
     ]
@@ -40,6 +37,4 @@ defmodule Upkeep.Application do
     # By default, sqlite migrations are run when using a release
     System.get_env("RELEASE_NAME") == nil
   end
-
-  defp node_dag_child, do: {Upkeep.Coordinator.NodeDAG, []}
 end

@@ -9,6 +9,7 @@ import Config
 
 config :upkeep,
   ecto_repos: [Upkeep.Repo],
+  repo: Upkeep.Repo,
   generators: [timestamp_type: :utc_datetime]
 
 # Configure the endpoint
