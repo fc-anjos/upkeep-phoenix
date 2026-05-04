@@ -4,6 +4,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
   alias Upkeep.Coordinator.Graph
   alias Upkeep.Coordinator.Graph.Index
   alias Upkeep.Coordinator.Graph.Shard.{Dispatch, Loaders}
+  alias Upkeep.Coordinator.Node
   alias Upkeep.DAG
 
   @flush_interval_ms 1
@@ -63,28 +64,28 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
         Graph.task_sup(),
         node_ids,
         fn node_id ->
-          {loader, registered_keys, encoded_key, _tracked_deps, _loaded?} =
-            Map.fetch!(state.sources, node_id)
+          node = Map.fetch!(state.sources, node_id)
 
-          {value, current_keys, tracked_deps} = Loaders.run_with_deps(loader)
-          {node_id, value, current_keys, tracked_deps, loader, registered_keys, encoded_key}
+          {value, current_keys, tracked_deps} = Loaders.run_with_deps(node.loader)
+          {node_id, value, current_keys, tracked_deps, node}
         end,
         ordered: false,
         timeout: 30_000,
         on_timeout: :kill_task
       )
       |> Enum.reduce({[], state.sources}, fn
-        {:ok, {node_id, value, current_keys, tracked_deps, loader, registered_keys, encoded_key}},
-        {results, sources} ->
+        {:ok, {node_id, value, current_keys, tracked_deps, %Node{} = node}}, {results, sources} ->
+          if current_keys != node.registered_keys do
+            Index.reconcile_source(node_id, state.idx, node.registered_keys, current_keys)
+          end
+
           sources =
-            if current_keys != registered_keys do
-              Index.reconcile_source(node_id, state.idx, registered_keys, current_keys)
-              Map.put(sources, node_id, {loader, current_keys, encoded_key, tracked_deps, true})
-            else
-              Map.update!(sources, node_id, fn {loader, keys, encoded_key, _deps, _loaded?} ->
-                {loader, keys, encoded_key, tracked_deps, true}
-              end)
-            end
+            Map.put(sources, node_id, %Node{
+              node
+              | registered_keys: current_keys,
+                tracked_deps: tracked_deps,
+                loaded?: true
+            })
 
           {[{node_id, value} | results], sources}
 

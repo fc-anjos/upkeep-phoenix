@@ -1,7 +1,8 @@
 defmodule Upkeep.Live.Snapshot do
   @moduledoc false
 
-  alias Upkeep.Live.{Ids, State, Telemetry}
+  alias Upkeep.Live.{Ids, Telemetry}
+  alias Upkeep.Runtime.State
 
   def build(socket) do
     %{

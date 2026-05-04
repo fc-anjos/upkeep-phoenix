@@ -1,13 +1,8 @@
-defmodule Upkeep.Live.Subscriptions do
+defmodule Upkeep.Runtime.Subscriptions do
   @moduledoc false
 
   alias Upkeep.Coordinator.Graph
 
-  @doc """
-  Register a watched source with the Graph. The shared coordinator owns
-  the interest index and loads the source once per affected node, fanning
-  the resulting value out to all interested LVs.
-  """
   def register(source_id, interest_keys, source, params) do
     :ok = Graph.register_source(source_id, interest_keys, source, params)
   end
