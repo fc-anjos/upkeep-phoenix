@@ -299,60 +299,6 @@ defmodule Upkeep.SourceEctoTest do
     end
   end
 
-  setup do
-    Repo.query!("DROP TABLE IF EXISTS upkeep_source_ecto_test_issue_tags")
-    Repo.query!("DROP TABLE IF EXISTS upkeep_source_ecto_test_tags")
-    Repo.query!("DROP TABLE IF EXISTS upkeep_source_ecto_test_comments")
-    Repo.query!("DROP TABLE IF EXISTS upkeep_source_ecto_test_columns")
-    Repo.query!("DROP TABLE IF EXISTS upkeep_source_ecto_test_issues")
-
-    Repo.query!("""
-    CREATE TABLE upkeep_source_ecto_test_issues (
-      id INTEGER PRIMARY KEY,
-      project_id INTEGER NOT NULL,
-      column_id INTEGER,
-      assignee_id INTEGER,
-      status TEXT NOT NULL,
-      title TEXT NOT NULL,
-      position INTEGER NOT NULL
-    )
-    """)
-
-    Repo.query!("""
-    CREATE TABLE upkeep_source_ecto_test_columns (
-      id INTEGER PRIMARY KEY,
-      project_id INTEGER NOT NULL,
-      name TEXT NOT NULL,
-      position INTEGER NOT NULL
-    )
-    """)
-
-    Repo.query!("""
-    CREATE TABLE upkeep_source_ecto_test_comments (
-      id INTEGER PRIMARY KEY,
-      project_id INTEGER NOT NULL,
-      issue_id INTEGER NOT NULL,
-      body TEXT NOT NULL
-    )
-    """)
-
-    Repo.query!("""
-    CREATE TABLE upkeep_source_ecto_test_tags (
-      id INTEGER PRIMARY KEY,
-      name TEXT NOT NULL
-    )
-    """)
-
-    Repo.query!("""
-    CREATE TABLE upkeep_source_ecto_test_issue_tags (
-      issue_id INTEGER NOT NULL,
-      tag_id INTEGER NOT NULL
-    )
-    """)
-
-    :ok
-  end
-
   test "plain query/1 sources load through their configured repo" do
     Repo.insert!(issue(id: 1, project_id: 1, assignee_id: 9, title: "Mine", position: 2))
     Repo.insert!(issue(id: 2, project_id: 1, assignee_id: 10, title: "Other", position: 1))

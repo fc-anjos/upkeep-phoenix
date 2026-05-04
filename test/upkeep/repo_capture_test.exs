@@ -59,35 +59,6 @@ defmodule Upkeep.RepoCaptureTest do
     end
   end
 
-  setup do
-    Repo.query!("DROP TABLE IF EXISTS upkeep_repo_capture_test_imports")
-    Repo.query!("DROP TABLE IF EXISTS upkeep_repo_capture_test_issues")
-
-    Repo.query!("""
-    CREATE TABLE upkeep_repo_capture_test_issues (
-      id INTEGER PRIMARY KEY,
-      project_id INTEGER NOT NULL,
-      assignee_id INTEGER,
-      status TEXT NOT NULL,
-      title TEXT NOT NULL,
-      position INTEGER NOT NULL
-    )
-    """)
-
-    Repo.query!("""
-    CREATE TABLE upkeep_repo_capture_test_imports (
-      id INTEGER PRIMARY KEY,
-      project_id INTEGER NOT NULL,
-      assignee_id INTEGER,
-      status TEXT NOT NULL,
-      title TEXT NOT NULL,
-      position INTEGER NOT NULL
-    )
-    """)
-
-    :ok
-  end
-
   test "repo insert capture refreshes Ecto query sources after mutate commits" do
     socket = watch_project(user_id: 9)
 
