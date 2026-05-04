@@ -6,7 +6,6 @@ defmodule Upkeep.Runtime do
   alias Upkeep.Live.{
     Assigns,
     Components,
-    DAGOperations,
     Ids,
     SharedDerived,
     SourceLoads,
@@ -14,6 +13,7 @@ defmodule Upkeep.Runtime do
     Telemetry
   }
 
+  alias Upkeep.Runtime.DAGOperations
   alias Upkeep.Runtime.Materializer
   alias Upkeep.Runtime.NodeSpec
   alias Upkeep.Runtime.Producer

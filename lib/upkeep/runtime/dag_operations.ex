@@ -1,4 +1,4 @@
-defmodule Upkeep.Live.DAGOperations do
+defmodule Upkeep.Runtime.DAGOperations do
   @moduledoc false
 
   alias Upkeep.Live.{Assigns, Components, Ids, Telemetry}

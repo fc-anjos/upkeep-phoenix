@@ -1,7 +1,8 @@
 defmodule Upkeep.Live.Specs do
   @moduledoc false
 
-  alias Upkeep.Live.{DAGOperations, Ids}
+  alias Upkeep.Live.Ids
+  alias Upkeep.Runtime.DAGOperations
   alias Upkeep.Runtime.NodeSpec
   alias Upkeep.Runtime.Materializer
   alias Upkeep.Runtime.Producer
