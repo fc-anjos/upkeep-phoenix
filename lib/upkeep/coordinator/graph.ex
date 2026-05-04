@@ -232,6 +232,20 @@ defmodule Upkeep.Coordinator.Graph do
 
   def shard_count, do: :persistent_term.get({__MODULE__, :shards})
 
+  @doc false
+  def shared_partition(node_ids) do
+    case node_ids |> Enum.map(&node_partition/1) |> Enum.uniq() do
+      [partition] ->
+        {:ok, partition}
+
+      [] ->
+        {:error, :empty_deps}
+
+      _partitions ->
+        {:error, :cross_partition_dep}
+    end
+  end
+
   @doc "Group key under which a node's subscribers join."
   def source_key(node_id) do
     "graph/source/" <>
@@ -292,7 +306,7 @@ defmodule Upkeep.Coordinator.Graph do
 
   defp shard_of(node_id) do
     shards = :persistent_term.get({__MODULE__, :shards})
-    :erlang.phash2(node_id, shards)
+    :erlang.phash2(node_partition(node_id), shards)
   end
 
   # Sources hash to their shard; derived nodes have an explicit override
@@ -303,6 +317,19 @@ defmodule Upkeep.Coordinator.Graph do
       _ -> shard_of(node_id)
     end
   end
+
+  defp node_partition({source, params}) when is_atom(source) and is_map(params) do
+    {:source, Source.sharing_partition(source, params)}
+  end
+
+  defp node_partition({:derived, _view, _assign_name, dep_node_ids, _fun}) do
+    case shared_partition(dep_node_ids) do
+      {:ok, partition} -> partition
+      {:error, reason} -> {:derived, reason, dep_node_ids}
+    end
+  end
+
+  defp node_partition(node_id), do: {:node, node_id}
 
   defp join_subscriber(node_id) do
     case Group.join(@group, source_key(node_id), %{kind: :lv}) do

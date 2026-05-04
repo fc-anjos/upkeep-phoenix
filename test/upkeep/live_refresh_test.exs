@@ -668,6 +668,119 @@ defmodule Upkeep.LiveRefreshTest do
     assert load_count(:shared_dashboard_model, user_id) == 1
   end
 
+  test "same-param source modules are colocated for shared multi-source derives", %{table: table} do
+    attach_telemetry([[:upkeep, :derive, :sharing]])
+
+    project_id = System.unique_integer([:positive])
+    :ets.insert(table, {{:issues, project_id}, [:project_issue]})
+    :ets.insert(table, {{:activity, project_id}, [:project_activity]})
+    :ets.insert(table, {{:loads, :issues, project_id}, 0})
+    :ets.insert(table, {{:loads, :activity, project_id}, 0})
+    :ets.insert(table, {{:loads, :shared_project_dashboard_model, project_id}, 0})
+
+    source_ids = [
+      {ProjectIssues, %{project_id: project_id}},
+      {ProjectActivity, %{project_id: project_id}}
+    ]
+
+    graph_node_id =
+      {:derived, UpkeepWeb.KanbanLive, :project_dashboard_model, source_ids,
+       {__MODULE__, :shared_project_dashboard_model, 1}}
+
+    socket =
+      connected_live_socket()
+      |> Live.watch(:issues, ProjectIssues, project_id: project_id)
+      |> Live.watch(:activity, ProjectActivity, project_id: project_id)
+      |> Live.derive(
+        :project_dashboard_model,
+        [:issues, :activity],
+        &__MODULE__.shared_project_dashboard_model/1
+      )
+
+    assert socket.assigns.project_dashboard_model == %{
+             project_id: project_id,
+             issues: [:project_issue],
+             activity: [:project_activity]
+           }
+
+    assert load_count(:shared_project_dashboard_model, project_id) == 1
+
+    assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
+                    %{
+                      assign_name: :project_dashboard_model,
+                      result: :shared,
+                      reason: :shareable,
+                      graph_node_id: ^graph_node_id,
+                      graph_dep_node_ids: ^source_ids
+                    }}
+  end
+
+  test "cross-partition multi-source derives fall back locally without leaking values", %{
+    table: table
+  } do
+    attach_telemetry([[:upkeep, :derive, :sharing]])
+
+    project_id = System.unique_integer([:positive])
+    user_a = System.unique_integer([:positive])
+    user_b = System.unique_integer([:positive])
+
+    :ets.insert(table, {{:activity, project_id}, [:project_activity]})
+    :ets.insert(table, {{:loads, :activity, project_id}, 0})
+    put_scoped_user(table, user_a, [{user_a, :user_a_issue}])
+    put_scoped_user(table, user_b, [{user_b, :user_b_issue}])
+    :ets.insert(table, {{:loads, :shared_user_project_dashboard_model, user_a}, 0})
+    :ets.insert(table, {{:loads, :shared_user_project_dashboard_model, user_b}, 0})
+
+    socket_a =
+      connected_live_socket()
+      |> Live.watch(:issues, ScopedIssues, user_id: user_a)
+      |> Live.watch(:activity, ProjectActivity, project_id: project_id)
+      |> Live.derive(
+        :dashboard_model,
+        [:issues, :activity],
+        &__MODULE__.shared_user_project_dashboard_model/1
+      )
+
+    socket_b =
+      connected_live_socket()
+      |> Live.watch(:issues, ScopedIssues, user_id: user_b)
+      |> Live.watch(:activity, ProjectActivity, project_id: project_id)
+      |> Live.derive(
+        :dashboard_model,
+        [:issues, :activity],
+        &__MODULE__.shared_user_project_dashboard_model/1
+      )
+
+    assert socket_a.assigns.dashboard_model == %{
+             user_id: user_a,
+             issues: [:user_a_issue],
+             activity: [:project_activity]
+           }
+
+    assert socket_b.assigns.dashboard_model == %{
+             user_id: user_b,
+             issues: [:user_b_issue],
+             activity: [:project_activity]
+           }
+
+    assert load_count(:shared_user_project_dashboard_model, user_a) == 1
+    assert load_count(:shared_user_project_dashboard_model, user_b) == 1
+
+    assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
+                    %{
+                      assign_name: :dashboard_model,
+                      result: :local,
+                      reason: :cross_partition_dep
+                    }}
+
+    assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
+                    %{
+                      assign_name: :dashboard_model,
+                      result: :local,
+                      reason: :cross_partition_dep
+                    }}
+  end
+
   test "connected multi-source derived sharing does not leak values across source params", %{
     table: table
   } do
@@ -1385,6 +1498,43 @@ defmodule Upkeep.LiveRefreshTest do
       user_id: user_id,
       issues: Enum.map(issues, fn {_user_id, issue} -> issue end),
       activity: Enum.map(activity, fn {_user_id, item} -> item end)
+    }
+  end
+
+  def shared_project_dashboard_model(%{issues: issues, activity: activity}) do
+    project_id =
+      issues
+      |> hd()
+      |> case do
+        {id, _issue} -> id
+        _issue -> :unknown
+      end
+
+    project_id =
+      case :ets.match(__MODULE__, {{:issues, :"$1"}, issues}) do
+        [[id] | _] -> id
+        [] -> project_id
+      end
+
+    bump_load({:loads, :shared_project_dashboard_model, project_id})
+
+    %{
+      project_id: project_id,
+      issues: issues,
+      activity: activity
+    }
+  end
+
+  def shared_user_project_dashboard_model(%{
+        issues: [{user_id, _issue} | _] = issues,
+        activity: activity
+      }) do
+    bump_load({:loads, :shared_user_project_dashboard_model, user_id})
+
+    %{
+      user_id: user_id,
+      issues: Enum.map(issues, fn {_user_id, issue} -> issue end),
+      activity: activity
     }
   end
 

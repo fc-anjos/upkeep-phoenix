@@ -28,6 +28,7 @@ defmodule Upkeep.BenchmarkGateTest do
     assert output =~ "connected_multi_source_derives=#{@bench_watches}"
     assert output =~ ~r/same\s+1\s+\d+\.\d+/
     assert output =~ ~r/distinct\s+#{@bench_watches}\s+\d+\.\d+/
+    assert output =~ ~r/cross\s+#{@bench_watches}\s+\d+\.\d+/
     assert output =~ "\nOK\n"
   end
 

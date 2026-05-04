@@ -2,13 +2,15 @@ defmodule Upkeep.Live.SharedDerived do
   @moduledoc false
 
   alias Upkeep.Live.{State, Subscriptions}
+  alias Upkeep.Coordinator.Graph
 
   def initial_value(socket, assign_name, dep_node_ids, dep_pairs, fun, compute) do
     base_metadata = sharing_metadata(socket, assign_name, dep_node_ids)
 
     with {:ok, fun_identity} <- external_fun_identity(fun),
          true <- Subscriptions.shared_initial_load?(socket),
-         {:ok, graph_dep_ids, local_to_graph} <- graph_dep_ids(socket, dep_node_ids) do
+         {:ok, graph_dep_ids, local_to_graph} <- graph_dep_ids(socket, dep_node_ids),
+         {:ok, _partition} <- Graph.shared_partition(graph_dep_ids) do
       dep_values = graph_dep_values(socket, local_to_graph)
 
       graph_compute = fn graph_node_values ->
@@ -71,6 +73,14 @@ defmodule Upkeep.Live.SharedDerived do
       {:unshareable_dep, reason} ->
         {compute_initial_value(socket, dep_node_ids, compute), nil,
          Map.merge(base_metadata, %{result: :local, reason: reason})}
+
+      {:error, :cross_partition_dep} ->
+        {compute_initial_value(socket, dep_node_ids, compute), nil,
+         Map.merge(base_metadata, %{result: :local, reason: :cross_partition_dep})}
+
+      {:error, :empty_deps} ->
+        {compute_initial_value(socket, dep_node_ids, compute), nil,
+         Map.merge(base_metadata, %{result: :local, reason: :empty_deps})}
     end
   rescue
     ArgumentError ->

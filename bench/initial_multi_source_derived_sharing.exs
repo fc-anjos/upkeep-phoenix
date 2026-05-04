@@ -23,7 +23,23 @@ defmodule Bench.InitialMultiSourceDerivedSharing.Source do
 
   def load(params), do: params.value
 
-  invalidated_by(Bench.InitialMultiSourceDerivedSharing.Event, :updated, on: :scope)
+  invalidated_by(Bench.InitialMultiSourceDerivedSharing.Event, :updated, on: :project_id)
+end
+
+defmodule Bench.InitialMultiSourceDerivedSharing.ActivitySource do
+  use Upkeep.Source
+
+  def load(params), do: params.value
+
+  invalidated_by(Bench.InitialMultiSourceDerivedSharing.Event, :updated, on: :project_id)
+end
+
+defmodule Bench.InitialMultiSourceDerivedSharing.UserActivitySource do
+  use Upkeep.Source
+
+  def load(params), do: params.value
+
+  invalidated_by(Bench.InitialMultiSourceDerivedSharing.Event, :updated, on: :user_id)
 end
 
 defmodule Bench.InitialMultiSourceDerivedSharing.Compute do
@@ -52,7 +68,13 @@ defmodule Bench.InitialMultiSourceDerivedSharing.Compute do
 end
 
 defmodule Bench.InitialMultiSourceDerivedSharing do
-  alias Bench.InitialMultiSourceDerivedSharing.{Compute, Source}
+  alias Bench.InitialMultiSourceDerivedSharing.{
+    ActivitySource,
+    Compute,
+    Source,
+    UserActivitySource
+  }
+
   alias Upkeep.Live
 
   @table Bench.InitialMultiSourceDerivedSharing.Table
@@ -63,6 +85,7 @@ defmodule Bench.InitialMultiSourceDerivedSharing do
     test_pid = self()
     same_dashboard_counter = Bench.InitialSharingSupport.counter()
     distinct_dashboard_counter = Bench.InitialSharingSupport.counter()
+    cross_partition_dashboard_counter = Bench.InitialSharingSupport.counter()
     same_run_id = System.unique_integer([:positive])
     :ets.insert(@table, {{:counter, same_run_id, :dashboard}, same_dashboard_counter})
     :ets.insert(@table, {{:test_pid, same_run_id}, test_pid})
@@ -72,7 +95,7 @@ defmodule Bench.InitialMultiSourceDerivedSharing do
         {dashboard_pid, tasks} =
           Bench.InitialSharingSupport.start_first_and_joiners(
             watches,
-            fn -> watch_dashboard(same_run_id, {:same, same_run_id}) end,
+            fn -> watch_project_dashboard(same_run_id, same_run_id) end,
             fn ->
               Bench.InitialSharingSupport.wait_for_started(
                 :bench_dashboard_started,
@@ -92,10 +115,26 @@ defmodule Bench.InitialMultiSourceDerivedSharing do
           run_id = System.unique_integer([:positive])
           :ets.insert(@table, {{:counter, run_id, :dashboard}, distinct_dashboard_counter})
 
-          watch_dashboard(run_id, {:distinct, idx})
+          watch_project_dashboard(run_id, idx)
         end)
 
         Bench.InitialSharingSupport.counter_value(distinct_dashboard_counter)
+      end)
+
+    {cross_partition_us, cross_partition_dashboard_computes} =
+      Bench.InitialSharingSupport.timed(fn ->
+        Enum.each(1..watches, fn idx ->
+          run_id = System.unique_integer([:positive])
+
+          :ets.insert(
+            @table,
+            {{:counter, run_id, :dashboard}, cross_partition_dashboard_counter}
+          )
+
+          watch_user_project_dashboard(run_id, same_run_id, idx)
+        end)
+
+        Bench.InitialSharingSupport.counter_value(cross_partition_dashboard_counter)
       end)
 
     %{
@@ -103,26 +142,36 @@ defmodule Bench.InitialMultiSourceDerivedSharing do
       same_us: same_us,
       same_dashboard_computes: same_dashboard_computes,
       distinct_us: distinct_us,
-      distinct_dashboard_computes: distinct_dashboard_computes
+      distinct_dashboard_computes: distinct_dashboard_computes,
+      cross_partition_us: cross_partition_us,
+      cross_partition_dashboard_computes: cross_partition_dashboard_computes
     }
   end
 
-  defp watch_dashboard(run_id, scope) do
+  defp watch_project_dashboard(run_id, project_id) do
     Bench.InitialSharingSupport.socket()
-    |> watch_dashboard_sources(run_id, scope)
+    |> Live.watch(:stats, Source,
+      project_id: project_id,
+      value: %{run_id: run_id, stats: %{score: 42}}
+    )
+    |> Live.watch(:activity, ActivitySource,
+      project_id: project_id,
+      value: %{run_id: run_id, items: [:deploy, :comment]}
+    )
     |> Live.derive(:dashboard_model, [:stats, :activity], &Compute.dashboard/1)
   end
 
-  defp watch_dashboard_sources(socket, run_id, scope) do
-    socket
+  defp watch_user_project_dashboard(run_id, project_id, user_id) do
+    Bench.InitialSharingSupport.socket()
     |> Live.watch(:stats, Source,
-      scope: {:stats, scope},
+      project_id: project_id,
       value: %{run_id: run_id, stats: %{score: 42}}
     )
-    |> Live.watch(:activity, Source,
-      scope: {:activity, scope},
+    |> Live.watch(:activity, UserActivitySource,
+      user_id: user_id,
       value: %{run_id: run_id, items: [:deploy, :comment]}
     )
+    |> Live.derive(:dashboard_model, [:stats, :activity], &Compute.dashboard/1)
   end
 end
 
@@ -134,7 +183,8 @@ Bench.InitialSharingSupport.print_table(
   ["dashboard"],
   [
     {"same", [result.same_dashboard_computes], result.same_us},
-    {"distinct", [result.distinct_dashboard_computes], result.distinct_us}
+    {"distinct", [result.distinct_dashboard_computes], result.distinct_us},
+    {"cross", [result.cross_partition_dashboard_computes], result.cross_partition_us}
   ]
 )
 
@@ -148,6 +198,12 @@ Bench.InitialSharingSupport.assert_equal!(
   result.distinct_dashboard_computes,
   watches,
   "distinct multi-source derived identities computed #{result.distinct_dashboard_computes} times"
+)
+
+Bench.InitialSharingSupport.assert_equal!(
+  result.cross_partition_dashboard_computes,
+  watches,
+  "cross-partition multi-source derived identities computed #{result.cross_partition_dashboard_computes} times"
 )
 
 Bench.InitialSharingSupport.ok()

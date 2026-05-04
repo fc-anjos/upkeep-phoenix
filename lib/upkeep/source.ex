@@ -76,6 +76,10 @@ defmodule Upkeep.Source do
     repo = Module.get_attribute(env.module, :upkeep_repo)
     defines_load? = Module.defines?(env.module, {:load, 1})
     defines_query? = Module.defines?(env.module, {:query, 1})
+    defines_sharing_partition? = Module.defines?(env.module, {:__upkeep_sharing_partition__, 1})
+
+    partition_fields =
+      invalidators |> Enum.flat_map(fn {_notification, _on, as} -> as end) |> Enum.uniq()
 
     invalidator_checks =
       Enum.map(invalidators, fn {notification, on, as} ->
@@ -166,8 +170,29 @@ defmodule Upkeep.Source do
         []
       end
 
+    sharing_partition_definition =
+      cond do
+        defines_sharing_partition? ->
+          []
+
+        partition_fields == [] ->
+          quote do
+            def __upkeep_sharing_partition__(params) do
+              params
+            end
+          end
+
+        true ->
+          quote do
+            def __upkeep_sharing_partition__(params) do
+              Map.take(params, unquote(Macro.escape(partition_fields)))
+            end
+          end
+      end
+
     quote do
       unquote(load_definition)
+      unquote(sharing_partition_definition)
 
       def __upkeep_repo__, do: unquote(repo)
 
@@ -310,6 +335,14 @@ defmodule Upkeep.Source do
   end
 
   def source_id(source, params) when is_atom(source) and is_map(params), do: {source, params}
+
+  def sharing_partition(source, params) when is_atom(source) and is_map(params) do
+    if function_exported?(source, :__upkeep_sharing_partition__, 1) do
+      source.__upkeep_sharing_partition__(params)
+    else
+      {:params, params}
+    end
+  end
 
   defp normalize_notification(name, _caller) when is_atom(name), do: %{name: name, schema: :_}
   defp normalize_notification(event, caller), do: %{legacy: Macro.expand(event, caller)}
