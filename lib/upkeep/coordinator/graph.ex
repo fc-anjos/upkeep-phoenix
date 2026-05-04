@@ -227,6 +227,18 @@ defmodule Upkeep.Coordinator.Graph do
     :ok
   end
 
+  @doc false
+  def reset do
+    shards = :persistent_term.get({__MODULE__, :shards})
+
+    for idx <- 0..(shards - 1), do: GenServer.call(shard_name(idx), :reset, 60_000)
+
+    :ets.delete_all_objects(@index_table)
+    :ets.delete_all_objects(@nodes_table)
+
+    :ok
+  end
+
   def shard_name(idx), do: :"#{__MODULE__}.Shard.#{idx}"
   def task_sup, do: :"#{__MODULE__}.TaskSup"
 

@@ -19,11 +19,23 @@ defmodule Upkeep.ObservabilityTest do
   end
 
   setup do
+    Upkeep.Test.reset_graph()
+
+    if :ets.info(__MODULE__) != :undefined do
+      :ets.delete(__MODULE__)
+    end
+
     table = :ets.new(__MODULE__, [:set, :public, :named_table])
     :ets.insert(table, {{:issues, 1}, [:before]})
     Upkeep.clear_events()
 
-    on_exit(fn -> Upkeep.clear_events() end)
+    on_exit(fn ->
+      Upkeep.clear_events()
+
+      if :ets.info(__MODULE__) != :undefined do
+        :ets.delete(__MODULE__)
+      end
+    end)
 
     %{table: table}
   end

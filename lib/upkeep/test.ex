@@ -33,6 +33,17 @@ defmodule Upkeep.Test do
   alias Upkeep.Coordinator.Graph
 
   @doc """
+  Reset coordinator graph runtime state between tests.
+
+  SQL sandbox rollback resets database state, but the Upkeep graph is shared
+  process state. Call this before seeding or watching sources in tests that may
+  reuse source identities across test cases.
+  """
+  def reset_graph do
+    Graph.reset()
+  end
+
+  @doc """
   Allow the calling test pid's sandboxed connection to be used by the
   coordinator's shard processes and their task supervisor.
 

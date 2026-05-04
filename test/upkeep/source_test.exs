@@ -52,9 +52,21 @@ defmodule Upkeep.SourceTest do
   end
 
   setup do
+    Upkeep.Test.reset_graph()
+
+    if :ets.info(__MODULE__) != :undefined do
+      :ets.delete(__MODULE__)
+    end
+
     table = :ets.new(__MODULE__, [:set, :public, :named_table])
     :ets.insert(table, {{:board_columns, 123}, [:todo]})
     :ets.insert(table, {{:my_issues, 123, 9}, [:mine]})
+
+    on_exit(fn ->
+      if :ets.info(__MODULE__) != :undefined do
+        :ets.delete(__MODULE__)
+      end
+    end)
 
     %{table: table}
   end

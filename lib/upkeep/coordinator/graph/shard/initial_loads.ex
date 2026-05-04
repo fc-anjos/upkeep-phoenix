@@ -83,36 +83,48 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
         tracked_deps,
         %Node{} = node
       ) do
-    Process.demonitor(ref, [:flush])
+    case Map.fetch(state.initial_load_refs, ref) do
+      {:ok, ^node_id} ->
+        Process.demonitor(ref, [:flush])
 
-    {load, state} = pop_source(state, ref, node_id)
+        {load, state} = pop_source(state, ref, node_id)
 
-    if current_keys != node.registered_keys do
-      Index.reconcile_source(node_id, state.idx, node.registered_keys, current_keys)
+        if current_keys != node.registered_keys do
+          Index.reconcile_source(node_id, state.idx, node.registered_keys, current_keys)
+        end
+
+        {dag, _changed?} = DAG.put_source(state.dag, node_id, value, [])
+
+        sources =
+          Map.put(
+            state.sources,
+            node_id,
+            %Node{node | registered_keys: current_keys, tracked_deps: tracked_deps, loaded?: true}
+          )
+
+        Enum.each(load.waiters, &GenServer.reply(&1, {:ok, value, tracked_deps}))
+
+        %{state | dag: dag, sources: sources}
+
+      _stale_reply ->
+        state
     end
-
-    {dag, _changed?} = DAG.put_source(state.dag, node_id, value, [])
-
-    sources =
-      Map.put(
-        state.sources,
-        node_id,
-        %Node{node | registered_keys: current_keys, tracked_deps: tracked_deps, loaded?: true}
-      )
-
-    Enum.each(load.waiters, &GenServer.reply(&1, {:ok, value, tracked_deps}))
-
-    %{state | dag: dag, sources: sources}
   end
 
   def handle_derived_result(state, ref, node_id, value) do
-    Process.demonitor(ref, [:flush])
+    case Map.fetch(state.initial_derived_load_refs, ref) do
+      {:ok, ^node_id} ->
+        Process.demonitor(ref, [:flush])
 
-    {load, state} = pop_derived(state, ref, node_id)
+        {load, state} = pop_derived(state, ref, node_id)
 
-    Enum.each(load.waiters, &GenServer.reply(&1, {:ok, value}))
+        Enum.each(load.waiters, &GenServer.reply(&1, {:ok, value}))
 
-    state
+        state
+
+      _stale_reply ->
+        state
+    end
   end
 
   def handle_down(state, ref, reason) do

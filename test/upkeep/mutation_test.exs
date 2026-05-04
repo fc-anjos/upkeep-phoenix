@@ -19,11 +19,21 @@ defmodule Upkeep.MutationTest do
   end
 
   setup do
+    if :ets.info(__MODULE__) != :undefined do
+      :ets.delete(__MODULE__)
+    end
+
     table = :ets.new(__MODULE__, [:set, :public, :named_table])
     :ets.insert(table, {{:issues, 777}, [:before]})
     :ets.insert(table, {{:issues, 778}, [:before]})
     :ets.insert(table, {{:issues, 779}, [:before]})
     :ets.insert(table, {{:issues, 780}, [:before]})
+
+    on_exit(fn ->
+      if :ets.info(__MODULE__) != :undefined do
+        :ets.delete(__MODULE__)
+      end
+    end)
 
     %{table: table}
   end

@@ -72,6 +72,26 @@ defmodule Upkeep.Coordinator.Graph.Shard do
   def handle_call(:drain, _from, state), do: {:reply, :ok, Flush.flush(state)}
 
   @impl true
+  def handle_call(:reset, _from, state) do
+    state =
+      state
+      |> demonitor_initial_loads()
+      |> Map.merge(%{
+        dag: DAG.new(),
+        sources: %{},
+        initial_loads: %{},
+        initial_load_refs: %{},
+        initial_derived_loads: %{},
+        initial_derived_load_refs: %{},
+        buffer_node_ids: MapSet.new(),
+        buffer_size: 0,
+        flush_scheduled?: false
+      })
+
+    {:reply, :ok, state}
+  end
+
+  @impl true
   def handle_call({:notify, _event, node_ids}, _from, state),
     do: {:reply, :ok, Flush.enqueue(state, node_ids)}
 
@@ -112,5 +132,14 @@ defmodule Upkeep.Coordinator.Graph.Shard do
   @impl true
   def handle_info({:group, events, _info}, state) do
     {:noreply, Lifecycle.handle_group_events(events, state)}
+  end
+
+  defp demonitor_initial_loads(state) do
+    state.initial_load_refs
+    |> Map.keys()
+    |> Enum.concat(Map.keys(state.initial_derived_load_refs))
+    |> Enum.each(&Process.demonitor(&1, [:flush]))
+
+    state
   end
 end

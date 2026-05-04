@@ -9,6 +9,7 @@ defmodule Upkeep.Coordinator.GraphTest do
 
   setup tags do
     _ = Map.get(tags, :shards, 4)
+    Upkeep.Test.reset_graph()
     :ok
   end
 
@@ -100,6 +101,26 @@ defmodule Upkeep.Coordinator.GraphTest do
       Graph.notify(%Ev{id: 99, tenant_id: 1})
       :ok = Graph.drain()
       refute_receive {:dag_values, [{^node_id, _}]}, 200
+    end
+
+    test "reset removes shared source state and allows a fresh registration" do
+      key = narrow_key(%Ev{id: 100, tenant_id: 1})
+      node_id = {:reset_test, System.unique_integer()}
+
+      :ok = Graph.register_loader(node_id, [key], fn -> {:old, [key]} end)
+      :ok = Graph.reset()
+
+      Graph.notify(%Ev{id: 100, tenant_id: 1})
+      :ok = Graph.drain()
+      refute_receive {:dag_values, [{^node_id, _}]}, 200
+
+      :ok = Graph.register_loader(node_id, [key], fn -> {:new, [key]} end)
+
+      Graph.notify(%Ev{id: 100, tenant_id: 1})
+      :ok = Graph.drain()
+      assert_receive {:dag_values, [{^node_id, :new}]}, 1_000
+
+      Graph.unregister(node_id)
     end
 
     test "indexed routing loads only matching source nodes" do

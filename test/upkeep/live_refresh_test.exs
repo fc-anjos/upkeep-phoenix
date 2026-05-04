@@ -102,6 +102,8 @@ defmodule Upkeep.LiveRefreshTest do
   end
 
   setup do
+    Upkeep.Test.reset_graph()
+
     if :ets.info(__MODULE__) != :undefined do
       :ets.delete(__MODULE__)
     end

@@ -36,6 +36,7 @@ defmodule Upkeep.DataCase do
   Sets up the sandbox based on the test tags.
   """
   def setup_sandbox(tags) do
+    Upkeep.Test.reset_graph()
     pid = Ecto.Adapters.SQL.Sandbox.start_owner!(Upkeep.Repo, shared: not tags[:async])
     Upkeep.Test.allow_sandbox()
     on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)

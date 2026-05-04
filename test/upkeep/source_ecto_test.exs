@@ -1,6 +1,8 @@
 defmodule Upkeep.SourceEctoTest do
   use Upkeep.DataCase, async: false
 
+  alias Upkeep.Live
+
   defmodule Column do
     use Ecto.Schema
 
@@ -301,6 +303,33 @@ defmodule Upkeep.SourceEctoTest do
            ]
   end
 
+  test "plain query/1 sources refresh after captured repo inserts without explicit reactors" do
+    Repo.insert!(issue(id: 1, project_id: 1, assignee_id: 9, title: "Before", position: 1),
+      upkeep: false
+    )
+
+    socket =
+      new_socket()
+      |> Live.watch(:issues, ProjectIssues, project_id: 1, user_id: 9)
+
+    assert Enum.map(socket.assigns.issues, & &1.title) == ["Before"]
+
+    {:ok, %Issue{}} =
+      Upkeep.mutate(fn ->
+        Repo.insert!(issue(id: 2, project_id: 1, assignee_id: 9, title: "After", position: 2))
+      end)
+
+    :ok = Upkeep.Coordinator.Graph.drain()
+
+    source_id = {ProjectIssues, %{project_id: 1, user_id: 9}}
+
+    assert_receive {:dag_values, [{^source_id, issues}]}, 1_000
+    assert Enum.map(issues, & &1.title) == ["Before", "After"]
+
+    socket = Live.apply_dag_value(socket, source_id, issues)
+    assert Enum.map(socket.assigns.issues, & &1.title) == ["Before", "After"]
+  end
+
   test "plain query/1 sources react to inserts, updates, and deletes entering or leaving the query" do
     params = %{project_id: 1, user_id: 9}
 
@@ -526,6 +555,8 @@ defmodule Upkeep.SourceEctoTest do
   defp comment(attrs) do
     struct!(Comment, Keyword.merge([id: 1, project_id: 1, issue_id: 1, body: "Comment"], attrs))
   end
+
+  defp new_socket, do: %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
 
   defp sort_terms(terms), do: Enum.sort_by(terms, &inspect/1)
 end
