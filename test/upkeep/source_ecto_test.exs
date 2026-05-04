@@ -309,6 +309,48 @@ defmodule Upkeep.SourceEctoTest do
     assert Enum.map(issues, & &1.title) == ["First", "Mine"]
   end
 
+  defmodule RepeatingReadSource do
+    use Upkeep.Source, repo: Upkeep.Repo
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.Issue
+
+    def load(%{project_id: project_id}) do
+      q = from(i in Issue, where: i.project_id == ^project_id, order_by: [asc: i.position])
+      first = Upkeep.read(q)
+      second = Upkeep.read(q)
+      {first, second}
+    end
+  end
+
+  test "Upkeep.read memoizes identical queries within a single source.load" do
+    Repo.insert!(%Column{id: 1, project_id: 1, name: "Backlog", position: 1})
+    Repo.insert!(issue(id: 1, project_id: 1, column_id: 1, title: "Open", position: 1))
+
+    counter = :counters.new(1, [])
+    handler_id = {__MODULE__, :memo_test}
+
+    :telemetry.attach(
+      handler_id,
+      [:upkeep, :repo, :query],
+      fn _event, _measurements, _meta, _config ->
+        :counters.add(counter, 1, 1)
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    {{first, second}, _deps} =
+      Upkeep.Source.load(RepeatingReadSource, %{project_id: 1})
+
+    assert first == second
+    # The two Upkeep.read calls share one underlying repo.all
+    assert :counters.get(counter, 1) <= 1,
+           "expected at most one repo query, got #{:counters.get(counter, 1)}"
+  end
+
   test "custom load/1 tracks each Upkeep.read query as the reactive surface" do
     Repo.insert!(%Column{id: 1, project_id: 1, name: "Backlog", position: 1})
     Repo.insert!(issue(id: 1, project_id: 1, column_id: 1, title: "Open", position: 1))

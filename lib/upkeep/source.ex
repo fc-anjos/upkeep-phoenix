@@ -229,7 +229,7 @@ defmodule Upkeep.Source do
     case Process.get(@context_key) do
       %{repo: repo} ->
         track_query(query)
-        repo.all(query)
+        memoize_read(repo, query)
 
       _ ->
         raise ArgumentError,
@@ -240,6 +240,27 @@ defmodule Upkeep.Source do
   end
 
   def read(value), do: value
+
+  defp memoize_read(repo, query) do
+    fingerprint = read_fingerprint(repo, query)
+    cache = Map.get(Process.get(@context_key), :reads, %{})
+
+    case Map.fetch(cache, fingerprint) do
+      {:ok, value} ->
+        value
+
+      :error ->
+        value = repo.all(query)
+        ctx = Process.get(@context_key)
+        Process.put(@context_key, Map.put(ctx, :reads, Map.put(cache, fingerprint, value)))
+        value
+    end
+  end
+
+  defp read_fingerprint(repo, query) do
+    {sql, params} = Ecto.Adapters.SQL.to_sql(:all, repo, query)
+    :erlang.phash2({sql, params})
+  end
 
   def deps_interest_keys(deps) do
     deps
