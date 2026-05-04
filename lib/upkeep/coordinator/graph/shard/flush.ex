@@ -132,8 +132,6 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
   end
 
   defp subscriber_count(%Node{encoded_key: encoded_key}) do
-    Graph.group()
-    |> Group.members(encoded_key)
-    |> length()
+    Group.member_count(Graph.group(), encoded_key)
   end
 end

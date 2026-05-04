@@ -983,7 +983,6 @@ defmodule Upkeep.LiveRefreshTest do
              |> Upkeep.Change.updated()
              |> Upkeep.notify()
 
-
     graph_node_id =
       {:derived, UpkeepWeb.KanbanLive, :issue_count, [source_id],
        {__MODULE__, :shared_issue_count, 1}}
@@ -1029,7 +1028,6 @@ defmodule Upkeep.LiveRefreshTest do
              %Issue{issue_id: user_id}
              |> Upkeep.Change.updated()
              |> Upkeep.notify()
-
 
     graph_node_id =
       {:derived, UpkeepWeb.KanbanLive, :issue_count, [source_id],

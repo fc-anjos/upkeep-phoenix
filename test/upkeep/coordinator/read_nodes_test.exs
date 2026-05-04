@@ -279,7 +279,9 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
       import Ecto.Query
 
       def load(params) do
-        Upkeep.read(from(p in Upkeep.Coordinator.ReadNodesTest.Project, where: p.id == ^params.id))
+        Upkeep.read(
+          from(p in Upkeep.Coordinator.ReadNodesTest.Project, where: p.id == ^params.id)
+        )
       end
 
       def reacts_to?(_event, _params), do: false
@@ -296,7 +298,9 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
   end
 
   test "Watcher is a member of the cluster notification group" do
-    members = Group.members(Upkeep.Coordinator.Graph.group(), Upkeep.Coordinator.Graph.notification_key())
+    members =
+      Group.members(Upkeep.Coordinator.Graph.group(), Upkeep.Coordinator.Graph.notification_key())
+
     pids = Enum.map(members, fn {pid, _meta} -> pid end)
     assert Process.whereis(Upkeep.Coordinator.ReadNodes.Watcher) in pids
   end

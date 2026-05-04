@@ -42,12 +42,9 @@ defmodule Upkeep.Coordinator.ReadNodes do
   @doc false
   def table_specs do
     [
-      {@values,
-       [:set, :public, :named_table, read_concurrency: true, write_concurrency: true]},
-      {@index,
-       [:bag, :public, :named_table, read_concurrency: true, write_concurrency: true]},
-      {@refs,
-       [:bag, :public, :named_table, read_concurrency: true, write_concurrency: true]}
+      {@values, [:set, :public, :named_table, read_concurrency: true, write_concurrency: true]},
+      {@index, [:bag, :public, :named_table, read_concurrency: true, write_concurrency: true]},
+      {@refs, [:bag, :public, :named_table, read_concurrency: true, write_concurrency: true]}
     ]
   end
 

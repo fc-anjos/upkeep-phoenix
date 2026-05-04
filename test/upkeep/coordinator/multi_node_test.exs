@@ -22,6 +22,7 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
 
   setup_all do
     ensure_distributed!()
+    restart_upkeep_after_distribution!()
     {:ok, peer, peer_node} = start_peer()
 
     on_exit(fn ->
@@ -54,13 +55,7 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
       )
     end
 
-    @tag :skip
-    test "Graph.notify on peer evicts ReadNodes cached on parent (KNOWN GAP)", %{peer: peer} do
-      # KNOWN GAP — see module @moduledoc and the next describe block.
-      # Documented as the second multi-node challenge revealed by this
-      # validation: Group's named-cluster pg replication does not
-      # converge bidirectionally in our setup when the peer joins the
-      # cluster after the parent has already populated pg state.
+    test "Graph.notify on peer evicts ReadNodes cached on parent", %{peer: peer} do
       ReadNodes.clear()
       seed_local_read_node(FakeSchema, 2002)
       assert ReadNodes.count() == 1
@@ -81,27 +76,13 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
     end
   end
 
-  # Discovered gaps (deferred — see commit message):
+  # Discovered gap (deferred):
   #
-  # 1. **Bidirectional pg replication on the default cluster.** When a
-  #    peer joins the cluster after the parent has already populated
-  #    pg state, the parent reliably sees the peer's joins (validated
-  #    above) but the *peer does not see the parent's joins*. Consequence:
-  #    `Group.dispatch` from the peer doesn't reach the parent's Watcher,
-  #    so a write originating on a non-primary node fails to invalidate
-  #    the primary's read-node cache. We probed Group's named-cluster
-  #    `connect/2` mechanism — which adds an explicit `cluster_connect`
-  #    handshake — but couldn't get bidirectional convergence in this
-  #    setup. This is a Group-level investigation that exceeds the
-  #    scope of this commit.
-  #
-  # 2. **Cross-node single-flight (cluster-wide coalescing).** Each
-  #    node's Coalescer is independent. N concurrent cold mounts on
-  #    each of K nodes produce K DB hits, not 1. The fix is a
-  #    Group-based leader election keyed by `node_id`: first caller
-  #    cluster-wide wins the load; others wait via `Group.dispatch` of
-  #    the settled value. Worth revisiting once gap #1 is closed,
-  #    because it relies on the same cluster fanout primitive.
+  # **Cross-node single-flight (cluster-wide coalescing).** Each node's
+  # Coalescer is independent. N concurrent cold mounts on each of K nodes
+  # produce K DB hits, not 1. The fix is a Group-based leader election
+  # keyed by `node_id`: first caller cluster-wide wins the load; others
+  # wait via `Group.dispatch` of the settled value.
 
   defp seed_local_read_node(schema, fingerprint) do
     deps = %Upkeep.Ecto.QueryDeps{schemas: MapSet.new([schema])}
@@ -141,11 +122,24 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
       :ok
     else
       {:ok, _} =
-        Node.start(:"upkeep_test_parent_#{System.unique_integer([:positive])}@127.0.0.1", :longnames)
+        Node.start(
+          :"upkeep_test_parent_#{System.unique_integer([:positive])}@127.0.0.1",
+          :longnames
+        )
 
       Node.set_cookie(:upkeep_multi_node_test)
       :ok
     end
+  end
+
+  defp restart_upkeep_after_distribution! do
+    # `mix test` starts the application before this file can enable
+    # distribution. Restarting gives Group local pids whose owner node is
+    # the real distributed node, so its built-in peer_connect/cluster_state
+    # handshake can snapshot parent state to a late-joining peer.
+    :ok = Application.stop(:upkeep)
+    {:ok, _started} = Application.ensure_all_started(:upkeep)
+    :ok
   end
 
   defp start_peer do
@@ -176,11 +170,9 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
     {:ok, _} = :peer.call(peer, Application, :ensure_all_started, [:logger])
 
     # Start `:upkeep` on the peer BEFORE connecting the cluster mesh.
-    # This is the harder ordering for Group: when Replica.init runs,
-    # Node.list/0 is still empty, so the initial peer-discovery loop
-    # can't reach the parent. Cluster sync then has to be driven by
-    # the named-cluster handshake that fires on `:nodeup`. If this
-    # ordering works, the easier ordering trivially works too.
+    # Group's default-cluster peer discovery handles this ordering:
+    # `:nodeup` triggers peer_connect/peer_connect_ack and both sides
+    # exchange full cluster_state snapshots for shared clusters.
     {:ok, _started} = :peer.call(peer, Application, :ensure_all_started, [:upkeep])
 
     # Connect the cluster mesh — Group sees `:nodeup` on both sides
@@ -191,8 +183,7 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
 
     # Wait until both nodes can see *both* nodes in the notification
     # group. Group's pg-based replication is eventually consistent, so
-    # we have to confirm bidirectional visibility, not just from the
-    # parent's side.
+    # we confirm bidirectional visibility before testing notify fanout.
     probe = Upkeep.TestSupport.MultiNodeProbe
     expected = Enum.sort([Node.self(), peer_node])
 
@@ -202,16 +193,12 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
         "peer_view=#{inspect(:erpc.call(peer_node, probe, :notification_group_node_view, []))}"
     end
 
-    # We require only that the *parent* sees both watchers in the
-    # notification cluster — that's what `Graph.notify` on the parent
-    # needs to dispatch to the peer's Watcher. Bidirectional
-    # convergence (peer also seeing parent in its named-cluster pg
-    # state) is documented as a known gap below; it depends on the
-    # Group library's pg replication completing in both directions
-    # after a late-joining peer.
     wait_until(
-      fn -> Enum.sort(probe.notification_group_node_view()) == expected end,
-      "parent should see both watchers in the notification cluster (#{diag.()})",
+      fn ->
+        Enum.sort(probe.notification_group_node_view()) == expected and
+          Enum.sort(:erpc.call(peer_node, probe, :notification_group_node_view, [])) == expected
+      end,
+      "both nodes should see both watchers in the notification cluster (#{diag.()})",
       10_000
     )
 

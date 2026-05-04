@@ -410,7 +410,6 @@ defmodule Upkeep.SourceEctoTest do
         Repo.insert!(issue(id: 2, project_id: 1, assignee_id: 9, title: "After", position: 2))
       end)
 
-
     source_id = {ProjectIssues, %{project_id: 1, user_id: 9}}
 
     assert_receive {:dag_values, [{^source_id, issues}]}, 1_000
@@ -662,7 +661,6 @@ defmodule Upkeep.SourceEctoTest do
         Repo.insert!(comment(id: 1, project_id: 1, issue_id: 1, body: "New comment"))
       end)
 
-
     source_id = {PreloadedProjectIssues, %{project_id: 1}}
 
     assert_receive {:dag_values,
@@ -680,7 +678,6 @@ defmodule Upkeep.SourceEctoTest do
       Upkeep.mutate(fn ->
         Repo.insert!(comment(id: 1, project_id: 1, issue_id: 1, body: "visible"))
       end)
-
 
     source_id = {QueryPreloadedProjectIssues, %{project_id: 1}}
 
