@@ -87,6 +87,7 @@ defmodule Upkeep.Coordinator.ReadNodes.Coalescer do
       %{waiters: waiters} = entry ->
         ref = make_ref()
         entry = %{entry | waiters: [{pid, ref} | waiters]}
+        :telemetry.execute([:upkeep, :read_nodes, :coalesced], %{count: 1}, %{node_id: node_id})
         {:reply, {:wait, ref}, put_in(state.pending[node_id], entry)}
     end
   end
