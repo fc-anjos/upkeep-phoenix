@@ -1,54 +1,45 @@
 defmodule Upkeep.Coordinator.NodeDAG do
   @moduledoc """
-  Sharded centralized DAG coordinator.
+  Sharded centralized DAG coordinator with `Group`-based interest tracking.
 
   Subscribers register interest in nodes (`register_source/3`,
   `register_derived/3`) declaring how their value is computed. The
-  coordinator owns the routing index and the canonical node values, and
-  on `notify/1`:
+  coordinator owns the routing index and the canonical node values; each
+  shard:
 
     1. Looks up affected source nodes via an ETS index (no event_keys
        subset enumeration at notify time).
-    2. Partitions by shard and dispatches one cast (or call under
-       backpressure) per shard with the affected node_ids.
-    3. Each shard buffers, then on flush:
+    2. Buffers, then on flush:
        - dedups events,
        - runs `load_fn/0` once per dirty source node,
-       - recomputes pure derived nodes whose deps changed,
-       - sends `{:dag_value, node_id, value}` to interested pids,
-       - dispatches in parallel under `Task.Supervisor`.
+       - recomputes pure derived nodes whose deps changed via the
+         per-shard `Upkeep.DAG`,
+       - dispatches values via `Group.dispatch/3`.
 
-  ## Optimizations applied
+  ## Why Group
 
-    * Sharding by node_id (parallelism).
-    * Cast fast path with call-on-pressure backpressure (bounded mailbox,
-      fast publishers under normal load, blocked publishers under burst).
-    * Flush buffer with coalescing window (collapse repeated events
-      affecting the same node within a tick).
-    * Parallel dispatch via `Task.Supervisor` so a slow load_fn doesn't
-      block the shard.
-    * ETS-backed shared index for O(matching keys) notify routing.
-
-  ## NodeDAG-only optimizations
-
-    * Derived-node recompute: when a source changes, dependent derived
-      nodes recompute *once* across all subscribers, not once per LV.
-    * Indexed routing: notify cost is O(matching index entries), not
-      O(event field subsets).
+    * Per-pid GC: subscriber death triggers `:left` events; shards drop
+      refcounted nodes when the last subscriber leaves. No hand-rolled
+      `Process.monitor` bookkeeping.
+    * Shape B lifecycle: shards `Group.register/4` themselves under
+      `node_dag/shard/<idx>`. LVs `Group.monitor/2` that prefix and
+      re-register their watches on shard restart.
+    * Cross-node ready: `Group.dispatch/3` already does cross-node send
+      batching when we go multi-node.
 
   ## Correctness contract
 
     * Subscribers treat values as authoritative state, not deltas.
-    * Coalescing collapses semantically-distinct events only when they
-      are `==`; see `Upkeep.ChangeEqualityTest`.
     * Cross-shard ordering is not preserved (eventually consistent).
     * Bounded buffers block publishers; never silently drop events.
+    * Derived nodes must colocate with their deps (raises otherwise).
   """
 
   use Supervisor
 
   alias Upkeep.Source
 
+  @group Upkeep.Group
   @backpressure_threshold 5_000
 
   ## ETS table names
@@ -61,37 +52,38 @@ defmodule Upkeep.Coordinator.NodeDAG do
     Supervisor.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
   end
 
+  def group, do: @group
+
   @doc """
-  Register a source node. `interest_keys` are notification keys this node
-  reacts to; `load_fn` is a 0-arity function returning the current value.
-  Idempotent: re-registering with the same `node_id` adds the caller pid
-  to the interest set without redefining the node.
+  Register a source node. Caller pid joins as subscriber via `Group.join/4`.
+  Idempotent on the node definition; re-registering same `node_id` only
+  adds the caller as another subscriber.
   """
-  def register_source(node_id, interest_keys, load_fn, pid \\ nil)
+  def register_source(node_id, interest_keys, load_fn)
       when is_list(interest_keys) and is_function(load_fn, 0) do
-    pid = pid || self()
     shard = shard_of(node_id)
-    GenServer.call(shard_name(shard), {:register_source, pid, node_id, interest_keys, load_fn})
+
+    :ok =
+      GenServer.call(shard_name(shard), {:register_source, node_id, interest_keys, load_fn})
+
+    join_subscriber(node_id)
   end
 
   @doc """
-  Register a derived node. `dep_node_ids` must already be registered.
-  `compute_fn` takes a map of `dep_node_id => value` and returns the
-  derived value.
-
-  Derived nodes are placed on the same shard as their dependencies so
-  recompute can run locally. If `dep_node_ids` span multiple shards this
-  raises — a deliberate guardrail until cross-shard recompute exists.
+  Register a derived node. Derived nodes colocate with their deps' shard;
+  raises if deps span shards. Caller pid joins as subscriber.
   """
-  def register_derived(node_id, dep_node_ids, compute_fn, pid \\ nil)
+  def register_derived(node_id, dep_node_ids, compute_fn)
       when is_list(dep_node_ids) and is_function(compute_fn, 1) do
-    pid = pid || self()
     target_shard = derived_shard!(node_id, dep_node_ids)
 
-    GenServer.call(
-      shard_name(target_shard),
-      {:register_derived, pid, node_id, dep_node_ids, compute_fn}
-    )
+    :ok =
+      GenServer.call(
+        shard_name(target_shard),
+        {:register_derived, node_id, dep_node_ids, compute_fn}
+      )
+
+    join_subscriber(node_id)
   end
 
   defp derived_shard!(node_id, dep_node_ids) do
@@ -111,14 +103,24 @@ defmodule Upkeep.Coordinator.NodeDAG do
     end
   end
 
-  def unregister(node_id, pid \\ nil) do
-    pid = pid || self()
-    GenServer.call(shard_name(shard_of_node(node_id)), {:unregister, pid, node_id})
+  @doc """
+  Caller pid leaves as a subscriber. The node itself is removed when the
+  last subscriber leaves — the shard handles that reactively via Group's
+  `:left` events.
+  """
+  def unregister(node_id) do
+    case Group.leave(@group, source_key(node_id)) do
+      :ok -> :ok
+      {:error, :not_in_group} -> :ok
+    end
   end
 
   @doc "Return the set of pids currently subscribed to `node_id`."
   def subscribers(node_id) do
-    GenServer.call(shard_name(shard_of_node(node_id)), {:subscribers, node_id})
+    @group
+    |> Group.members(source_key(node_id))
+    |> Enum.map(fn {pid, _meta} -> pid end)
+    |> MapSet.new()
   end
 
   @doc "Return true if `pid` is currently subscribed to `node_id`."
@@ -134,7 +136,7 @@ defmodule Upkeep.Coordinator.NodeDAG do
       |> Enum.flat_map(&:ets.lookup(@index_table, &1))
       |> Enum.map(fn {_key, node_id} -> node_id end)
       |> Enum.uniq()
-      |> Enum.group_by(&shard_of/1)
+      |> Enum.group_by(&shard_of_node/1)
 
     Enum.each(affected_by_shard, fn {shard, node_ids} ->
       pid = Process.whereis(shard_name(shard))
@@ -158,6 +160,21 @@ defmodule Upkeep.Coordinator.NodeDAG do
 
   def shard_name(idx), do: :"#{__MODULE__}.Shard.#{idx}"
   def task_sup, do: :"#{__MODULE__}.TaskSup"
+
+  @doc "Group key under which a node's subscribers join."
+  def source_key(node_id) do
+    "node_dag/source/" <>
+      (node_id |> :erlang.term_to_binary() |> Base.url_encode64(padding: false))
+  end
+
+  def decode_source_key("node_dag/source/" <> encoded) do
+    encoded
+    |> Base.url_decode64!(padding: false)
+    |> :erlang.binary_to_term()
+  end
+
+  @doc "Group key under which a shard registers itself for lifecycle monitoring."
+  def shard_key(idx), do: "node_dag/shard/#{idx}"
 
   ## Supervisor
 
@@ -211,8 +228,15 @@ defmodule Upkeep.Coordinator.NodeDAG do
   # stored in nodes_table so they can colocate with their deps.
   defp shard_of_node(node_id) do
     case :ets.lookup(@nodes_table, node_id) do
-      [{^node_id, _kind, shard_idx}] -> shard_idx
+      [{^node_id, _kind, shard_idx, _keys}] -> shard_idx
       _ -> shard_of(node_id)
+    end
+  end
+
+  defp join_subscriber(node_id) do
+    case Group.join(@group, source_key(node_id), %{kind: :lv}) do
+      :ok -> :ok
+      :already_joined -> :ok
     end
   end
 

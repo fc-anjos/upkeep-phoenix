@@ -108,8 +108,8 @@ defmodule Bench.Sub do
 
   defp loop(d) do
     receive do
-      {:dag_value, _id, _val} ->
-        :counters.add(d, 1, 1)
+      {:dag_values, pairs} ->
+        :counters.add(d, 1, length(pairs))
         loop(d)
 
       _ ->
@@ -162,7 +162,9 @@ duration_ms = 3_000
 publisher_levels = [1, 4, 8, 16]
 
 _subs = Bench.Sub.spawn_many(n_subs, pool, queries, derived_computes, deliveries)
-Process.sleep(200)
+# Drain shards so :group :joined backlog is processed before measuring.
+Upkeep.Coordinator.NodeDAG.drain()
+Process.sleep(500)
 
 IO.puts(
   "subscribers=#{n_subs} (50 source + 50 derived) pool_size=#{length(pool)} query_us=#{Bench.Q.query_us()}"

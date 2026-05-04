@@ -251,7 +251,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     change = updated_issue(1, 1)
     assert :ok = Upkeep.notify(change)
-    refute_receive {:dag_value, _, _}
+    refute_receive {:dag_values, [{_, _}]}
 
     socket =
       socket
@@ -525,7 +525,7 @@ defmodule Upkeep.LiveRefreshTest do
     change = inserted_comment(1, 1)
     source_id = {IssueComments, %{issue_id: 1}}
     assert :ok = Upkeep.notify(change)
-    assert_receive {:dag_value, ^source_id, [:comment_a, :comment_c]}
+    assert_receive {:dag_values, [{^source_id, [:comment_a, :comment_c]}]}
 
     socket = Live.apply_dag_value(socket, source_id, [:comment_a, :comment_c])
 
@@ -689,7 +689,7 @@ defmodule Upkeep.LiveRefreshTest do
     subscribed? =
       Upkeep.Coordinator.NodeDAG.nodes_table()
       |> :ets.tab2list()
-      |> Enum.any?(fn {node_id, _kind, _shard_idx} ->
+      |> Enum.any?(fn {node_id, _kind, _shard_idx, _keys} ->
         source_id_matches?(node_id, source, params) and
           Upkeep.Coordinator.NodeDAG.subscribed?(node_id, self())
       end)

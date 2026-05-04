@@ -22,8 +22,8 @@ defmodule Upkeep.Live do
         ]
 
       @impl true
-      def handle_info({:dag_value, source_id, value}, socket) do
-        {:noreply, Upkeep.Live.apply_dag_value(socket, source_id, value)}
+      def handle_info({:dag_values, pairs}, socket) do
+        {:noreply, Upkeep.Live.apply_dag_values(socket, pairs)}
       end
 
       defoverridable handle_info: 2
@@ -237,6 +237,16 @@ defmodule Upkeep.Live do
   end
 
   def notify(event) when is_struct(event), do: Upkeep.notify(event)
+
+  @doc """
+  Apply a batch of NodeDAG-pushed values to the LV in one pass.
+  Reduces subscriber-side wakeups to one handle_info per shard flush.
+  """
+  def apply_dag_values(socket, pairs) when is_list(pairs) do
+    Enum.reduce(pairs, socket, fn {source_id, value}, s ->
+      apply_dag_value(s, source_id, value)
+    end)
+  end
 
   @doc """
   Apply a NodeDAG-pushed value to the LV. Mirrors `maybe_refresh` but skips

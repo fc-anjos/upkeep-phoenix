@@ -12,16 +12,20 @@ defmodule Upkeep.DAG do
   def new, do: %__MODULE__{}
 
   def put_source(%__MODULE__{} = dag, id, value, deps \\ []) when is_list(deps) do
-    missing = Enum.reject(deps, &Map.has_key?(dag.nodes, &1))
+    if same_topology?(dag, id, :source, deps) do
+      put_value(dag, id, value)
+    else
+      missing = Enum.reject(deps, &Map.has_key?(dag.nodes, &1))
 
-    unless missing == [] do
-      raise ArgumentError, "unknown DAG dependencies for #{inspect(id)}: #{inspect(missing)}"
+      unless missing == [] do
+        raise ArgumentError, "unknown DAG dependencies for #{inspect(id)}: #{inspect(missing)}"
+      end
+
+      dag
+      |> put_node(id, :source, deps, nil)
+      |> ensure_acyclic!()
+      |> put_value(id, value)
     end
-
-    dag
-    |> put_node(id, :source, deps, nil)
-    |> ensure_acyclic!()
-    |> put_value(id, value)
   end
 
   def put_component(%__MODULE__{} = dag, id, deps, compute)
@@ -47,26 +51,40 @@ defmodule Upkeep.DAG do
 
   def put_derived(%__MODULE__{} = dag, id, deps, compute, opts)
       when is_list(deps) and is_function(compute, 1) do
-    missing = Enum.reject(deps, &Map.has_key?(dag.nodes, &1))
+    if same_topology?(dag, id, :derived, deps) do
+      # Topology unchanged; only the compute_fn or value can shift.
+      dag = put_node(dag, id, :derived, deps, compute)
 
-    unless missing == [] do
-      raise ArgumentError, "unknown DAG dependencies for #{inspect(id)}: #{inspect(missing)}"
-    end
+      value =
+        case Keyword.fetch(opts, :initial_value) do
+          {:ok, value} -> value
+          :error -> compute_dep_values(dag, id)
+        end
 
-    dag =
+      {dag, _changed?} = put_value(dag, id, value)
       dag
-      |> put_node(id, :derived, deps, compute)
-      |> ensure_acyclic!()
+    else
+      missing = Enum.reject(deps, &Map.has_key?(dag.nodes, &1))
 
-    value =
-      case Keyword.fetch(opts, :initial_value) do
-        {:ok, value} -> value
-        :error -> compute_dep_values(dag, id)
+      unless missing == [] do
+        raise ArgumentError, "unknown DAG dependencies for #{inspect(id)}: #{inspect(missing)}"
       end
 
-    {dag, _changed?} = put_value(dag, id, value)
+      dag =
+        dag
+        |> put_node(id, :derived, deps, compute)
+        |> ensure_acyclic!()
 
-    dag
+      value =
+        case Keyword.fetch(opts, :initial_value) do
+          {:ok, value} -> value
+          :error -> compute_dep_values(dag, id)
+        end
+
+      {dag, _changed?} = put_value(dag, id, value)
+
+      dag
+    end
   end
 
   def fetch!(%__MODULE__{} = dag, id), do: Map.fetch!(dag.values, id)
@@ -140,6 +158,16 @@ defmodule Upkeep.DAG do
       edges: edges(dag, order),
       topological_order: order
     }
+  end
+
+  # True when the node already exists with the same kind and deps. Lets
+  # `put_source/4` and `put_derived/5` skip the topology rebuild + cycle
+  # check on the steady-state value-update path.
+  defp same_topology?(dag, id, kind, deps) do
+    case Map.get(dag.nodes, id) do
+      %{kind: ^kind} -> Map.get(dag.deps, id) == deps
+      _ -> false
+    end
   end
 
   defp put_node(dag, id, kind, deps, compute) do

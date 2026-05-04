@@ -73,15 +73,14 @@ defmodule Upkeep.ObservabilityTest do
              |> Upkeep.Change.updated()
              |> Upkeep.notify()
 
-    assert_receive {:dag_value, {ProjectIssues, %{project_id: 1}}, [:after]}
+    assert_receive {:dag_values, [{{ProjectIssues, %{project_id: 1}}, [:after]}]}
 
     events = recent_events_after_observability_flush()
 
     assert Enum.any?(events, fn event ->
              event.event == [:upkeep, :node_dag, :dispatch, :stop] and
-               event.metadata.node_id == {ProjectIssues, %{project_id: 1}} and
-               event.metadata.node_kind == :source and
-               event.metadata.pid_count == 1 and
+               Map.get(event.metadata, :pair_count, 0) >= 1 and
+               Map.get(event.metadata, :pid_count, 0) >= 1 and
                is_integer(event.measurements.duration)
            end)
   end

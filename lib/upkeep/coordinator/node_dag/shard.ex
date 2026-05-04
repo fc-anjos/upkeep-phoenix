@@ -7,6 +7,7 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
 
   @flush_interval_ms 1
   @flush_threshold 1_000
+  @generation_table :upkeep_node_dag_shard_generations
 
   ## Public
 
@@ -20,15 +21,28 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
 
   @impl true
   def init(idx) do
+    sweep_owned_ets(idx)
+
+    # Subscribe only to lifecycle events for source-key leaves; we use
+    # `Group.member_count/2` on :left to decide whether to remove a node.
+    # :joined events are no-ops (registration creates the node directly).
+    :ok = Group.monitor(NodeDAG.group(), "node_dag/source/")
+
+    generation = bump_generation(idx)
+
+    :ok =
+      Group.register(NodeDAG.group(), NodeDAG.shard_key(idx), %{
+        pid: self(),
+        generation: generation
+      })
+
     {:ok,
      %{
        idx: idx,
+       generation: generation,
        dag: DAG.new(),
-       # node_id => {load_fn, registered_keys}
+       # node_id => {load_fn, registered_keys, encoded_key}
        sources: %{},
-       interests: %{},
-       pid_nodes: %{},
-       monitors: %{},
        buffer_node_ids: MapSet.new(),
        buffer_size: 0,
        flush_scheduled?: false
@@ -36,50 +50,33 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
   end
 
   @impl true
-  def handle_call({:register_source, pid, node_id, interest_keys, load_fn}, _from, state) do
-    state =
-      if Map.has_key?(state.sources, node_id) do
-        state
-      else
-        :ets.insert(NodeDAG.nodes_table(), {node_id, :source, state.idx})
-        Enum.each(interest_keys, &:ets.insert(NodeDAG.index_table(), {&1, node_id}))
-        {dag, _changed?} = DAG.put_source(state.dag, node_id, nil, [])
+  def handle_call({:register_source, node_id, interest_keys, load_fn}, _from, state) do
+    encoded_key = NodeDAG.source_key(node_id)
+    :ets.insert(NodeDAG.nodes_table(), {node_id, :source, state.idx, interest_keys})
+    Enum.each(interest_keys, &:ets.insert(NodeDAG.index_table(), {&1, node_id}))
+    {dag, _changed?} = DAG.put_source(state.dag, node_id, nil, [])
 
-        %{
-          state
-          | sources: Map.put(state.sources, node_id, {load_fn, interest_keys}),
-            dag: dag
-        }
-      end
+    state = %{
+      state
+      | sources: Map.put(state.sources, node_id, {load_fn, interest_keys, encoded_key}),
+        dag: dag
+    }
 
-    {:reply, :ok, add_interest(state, pid, node_id)}
+    {:reply, :ok, state}
   end
 
   @impl true
-  def handle_call({:register_derived, pid, node_id, dep_ids, compute_fn}, _from, state) do
-    state =
-      if DAG.has_node?(state.dag, node_id) do
-        state
-      else
-        :ets.insert(NodeDAG.nodes_table(), {node_id, :derived, state.idx})
+  def handle_call({:register_derived, node_id, dep_ids, compute_fn}, _from, state) do
+    encoded_key = NodeDAG.source_key(node_id)
+    :ets.insert(NodeDAG.nodes_table(), {node_id, :derived, state.idx, []})
 
-        %{
-          state
-          | dag: DAG.put_derived(state.dag, node_id, dep_ids, compute_fn, initial_value: nil)
-        }
-      end
+    state = %{
+      state
+      | dag: DAG.put_derived(state.dag, node_id, dep_ids, compute_fn, initial_value: nil),
+        sources: Map.put_new(state.sources, node_id, {nil, [], encoded_key})
+    }
 
-    {:reply, :ok, add_interest(state, pid, node_id)}
-  end
-
-  @impl true
-  def handle_call({:unregister, pid, node_id}, _from, state) do
-    {:reply, :ok, do_unregister(state, pid, node_id)}
-  end
-
-  @impl true
-  def handle_call({:subscribers, node_id}, _from, state) do
-    {:reply, Map.get(state.interests, node_id, MapSet.new()), state}
+    {:reply, :ok, state}
   end
 
   @impl true
@@ -97,11 +94,57 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
   def handle_info(:flush, state), do: {:noreply, do_flush(state)}
 
   @impl true
-  def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
-    monitors = Map.delete(state.monitors, ref)
-    nodes = Map.get(state.pid_nodes, pid, MapSet.new())
-    state = Enum.reduce(nodes, %{state | monitors: monitors}, &do_unregister(&2, pid, &1))
+  def handle_info({:group, events, _info}, state) do
+    state = Enum.reduce(events, state, &handle_group_event/2)
     {:noreply, state}
+  end
+
+  defp handle_group_event(%{type: :left, key: key}, state) do
+    case decode_owned_source_key(key, state.idx) do
+      :other ->
+        state
+
+      node_id ->
+        # Group has already removed the leaving pid. If no members remain,
+        # the node is now untracked — remove it.
+        if Group.member_count(NodeDAG.group(), key) == 0,
+          do: remove_node(state, node_id),
+          else: state
+    end
+  end
+
+  defp handle_group_event(_other, state), do: state
+
+  defp decode_owned_source_key(key, idx) do
+    node_id = NodeDAG.decode_source_key(key)
+
+    case :ets.lookup(NodeDAG.nodes_table(), node_id) do
+      [{^node_id, _kind, ^idx, _keys}] -> node_id
+      _ -> :other
+    end
+  rescue
+    _ -> :other
+  end
+
+  defp remove_node(state, node_id) do
+    case :ets.lookup(NodeDAG.nodes_table(), node_id) do
+      [{^node_id, _kind, _idx, keys}] ->
+        Enum.each(keys, &:ets.delete_object(NodeDAG.index_table(), {&1, node_id}))
+        :ets.delete(NodeDAG.nodes_table(), node_id)
+
+      _ ->
+        :ok
+    end
+
+    %{
+      state
+      | sources: Map.delete(state.sources, node_id),
+        dag:
+          if(DAG.has_node?(state.dag, node_id),
+            do: DAG.remove_subgraph(state.dag, node_id),
+            else: state.dag
+          )
+    }
   end
 
   ## Buffer / flush
@@ -126,8 +169,6 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
   defp do_flush(%{buffer_size: 0} = state), do: %{state | flush_scheduled?: false}
 
   defp do_flush(state) do
-    # Loads dirty sources, updates the DAG, recomputes downstream derived
-    # via Upkeep.DAG.recompute/2, and dispatches in parallel.
     dirty_sources =
       state.buffer_node_ids
       |> MapSet.to_list()
@@ -143,15 +184,9 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
 
     {dag, derived_changed, _} = DAG.recompute(dag, Enum.map(sources_loaded, &elem(&1, 0)))
 
-    # Dispatch source values unconditionally (matches current contract).
-    Enum.each(sources_loaded, fn {id, value} ->
-      dispatch(state, id, value, :source)
-    end)
+    derived_loaded = Enum.map(derived_changed, fn id -> {id, DAG.fetch!(dag, id)} end)
 
-    # Dispatch derived only when their value changed.
-    Enum.each(derived_changed, fn id ->
-      dispatch(state, id, DAG.fetch!(dag, id), :derived)
-    end)
+    dispatch_batch(state, sources_loaded ++ derived_loaded)
 
     %{
       state
@@ -163,27 +198,30 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
   end
 
   defp load_sources(node_ids, state) do
-    # Run loads in parallel via Task.Supervisor; reconcile drifted keys.
-    {results, sources} =
-      node_ids
-      |> Enum.map(fn node_id ->
-        {load_fn, registered_keys} = Map.fetch!(state.sources, node_id)
+    # Two passes so tasks run in parallel: spawn all, then await all.
+    pending =
+      Enum.map(node_ids, fn node_id ->
+        {load_fn, registered_keys, encoded_key} = Map.fetch!(state.sources, node_id)
 
         task =
           Task.Supervisor.async_nolink(NodeDAG.task_sup(), fn ->
             {value, current_keys} = load_fn.()
-            {node_id, value, current_keys}
+            {value, current_keys}
           end)
 
-        {Task.await(task, 30_000), load_fn, registered_keys}
+        {node_id, load_fn, registered_keys, encoded_key, task}
       end)
-      |> Enum.map_reduce(state.sources, fn {{node_id, value, current_keys}, load_fn,
-                                            registered_keys},
-                                           sources ->
+
+    {results, sources} =
+      Enum.map_reduce(pending, state.sources, fn {node_id, load_fn, registered_keys, encoded_key,
+                                                   task},
+                                                  sources ->
+        {value, current_keys} = Task.await(task, 30_000)
+
         sources =
           if current_keys != registered_keys do
-            reconcile_index(node_id, registered_keys, current_keys)
-            Map.put(sources, node_id, {load_fn, current_keys})
+            reconcile_index(node_id, registered_keys, current_keys, state.idx)
+            Map.put(sources, node_id, {load_fn, current_keys, encoded_key})
           else
             sources
           end
@@ -194,7 +232,7 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
     {results, %{state | sources: sources}}
   end
 
-  defp reconcile_index(node_id, old_keys, new_keys) do
+  defp reconcile_index(node_id, old_keys, new_keys, idx) do
     old_set = MapSet.new(old_keys)
     new_set = MapSet.new(new_keys)
 
@@ -205,99 +243,61 @@ defmodule Upkeep.Coordinator.NodeDAG.Shard do
     Enum.each(MapSet.difference(new_set, old_set), fn key ->
       :ets.insert(NodeDAG.index_table(), {key, node_id})
     end)
+
+    :ets.insert(NodeDAG.nodes_table(), {node_id, :source, idx, new_keys})
   end
 
-  defp dispatch(state, node_id, value, node_kind) do
-    pids = Map.get(state.interests, node_id, MapSet.new())
-    pid_count = MapSet.size(pids)
+  # Batched per-pid dispatch. For one flush, builds pid → [(node_id, value)]
+  # by walking the affected nodes' Group memberships once each, then sends a
+  # single `{:dag_values, list}` per pid. Cuts subscriber-side wakeups from
+  # O(affected_nodes_per_lv) to 1 per flush.
+  defp dispatch_batch(_state, []), do: :ok
 
-    if pid_count > 0 do
-      msg = {:dag_value, node_id, value}
-      metadata = %{shard: state.idx, node_id: node_id, node_kind: node_kind, pid_count: pid_count}
+  defp dispatch_batch(state, pairs) do
+    metadata = %{shard: state.idx, pair_count: length(pairs)}
 
-      Task.Supervisor.start_child(NodeDAG.task_sup(), fn ->
-        :telemetry.span([:upkeep, :node_dag, :dispatch], metadata, fn ->
-          Enum.each(pids, &send(&1, msg))
-          {:ok, metadata}
+    :telemetry.span([:upkeep, :node_dag, :dispatch], metadata, fn ->
+      pairs_by_pid =
+        Enum.reduce(pairs, %{}, fn {node_id, value}, acc ->
+          {_load_fn, _keys, encoded_key} = Map.fetch!(state.sources, node_id)
+
+          NodeDAG.group()
+          |> Group.members(encoded_key)
+          |> Enum.reduce(acc, fn {pid, _meta}, acc ->
+            Map.update(acc, pid, [{node_id, value}], &[{node_id, value} | &1])
+          end)
         end)
+
+      pid_count = map_size(pairs_by_pid)
+
+      Enum.each(pairs_by_pid, fn {pid, batched} ->
+        send(pid, {:dag_values, Enum.reverse(batched)})
       end)
-    end
+
+      {:ok, Map.put(metadata, :pid_count, pid_count)}
+    end)
   end
 
-  ## Interest bookkeeping
+  ## Shard-restart hygiene
 
-  defp add_interest(state, pid, node_id) do
-    interests =
-      Map.update(state.interests, node_id, MapSet.new([pid]), &MapSet.put(&1, pid))
-
-    pid_nodes =
-      Map.update(state.pid_nodes, pid, MapSet.new([node_id]), &MapSet.put(&1, node_id))
-
-    monitors =
-      if Map.has_key?(state.pid_nodes, pid) do
-        state.monitors
-      else
-        ref = Process.monitor(pid)
-        Map.put(state.monitors, ref, pid)
-      end
-
-    %{state | interests: interests, pid_nodes: pid_nodes, monitors: monitors}
+  defp sweep_owned_ets(idx) do
+    NodeDAG.nodes_table()
+    |> :ets.match_object({:_, :_, idx, :_})
+    |> Enum.each(fn {node_id, _kind, ^idx, keys} ->
+      Enum.each(keys, &:ets.delete_object(NodeDAG.index_table(), {&1, node_id}))
+      :ets.delete(NodeDAG.nodes_table(), node_id)
+    end)
   end
 
-  defp do_unregister(state, pid, node_id) do
-    interests =
-      case Map.get(state.interests, node_id) do
-        nil ->
-          state.interests
-
-        set ->
-          new_set = MapSet.delete(set, pid)
-
-          if MapSet.size(new_set) == 0 do
-            remove_node(state, node_id)
-            Map.delete(state.interests, node_id)
-          else
-            Map.put(state.interests, node_id, new_set)
-          end
-      end
-
-    pid_nodes =
-      case Map.get(state.pid_nodes, pid) do
-        nil ->
-          state.pid_nodes
-
-        set ->
-          new_set = MapSet.delete(set, node_id)
-
-          if MapSet.size(new_set) == 0,
-            do: Map.delete(state.pid_nodes, pid),
-            else: Map.put(state.pid_nodes, pid, new_set)
-      end
-
-    state = %{state | interests: interests, pid_nodes: pid_nodes}
-
-    if not Map.has_key?(state.interests, node_id) do
-      %{
-        state
-        | sources: Map.delete(state.sources, node_id),
-          dag: DAG.remove_subgraph(state.dag, node_id)
-      }
-    else
-      state
-    end
-  end
-
-  defp remove_node(state, node_id) do
-    case Map.get(state.sources, node_id) do
-      {_load_fn, keys} ->
-        Enum.each(keys, fn key ->
-          :ets.delete_object(NodeDAG.index_table(), {key, node_id})
-        end)
+  defp bump_generation(idx) do
+    case :ets.info(@generation_table) do
+      :undefined ->
+        :ets.new(@generation_table, [:set, :public, :named_table, write_concurrency: true])
 
       _ ->
         :ok
     end
 
-    :ets.delete(NodeDAG.nodes_table(), node_id)
+    :ets.update_counter(@generation_table, idx, 1, {idx, 0})
   end
 end

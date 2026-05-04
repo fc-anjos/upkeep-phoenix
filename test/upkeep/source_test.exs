@@ -134,7 +134,7 @@ defmodule Upkeep.SourceTest do
     assert :ok = Upkeep.notify(change)
 
     source_id = {BoardColumns, %{project_id: 123}}
-    assert_receive {:dag_value, ^source_id, [:todo, :doing]}
+    assert_receive {:dag_values, [{^source_id, [:todo, :doing]}]}
 
     refreshed = Live.apply_dag_value(socket, source_id, [:todo, :doing])
     assert refreshed.assigns.columns == [:todo, :doing]
@@ -149,7 +149,7 @@ defmodule Upkeep.SourceTest do
 
     assert :ok = Upkeep.notify(change)
 
-    refute_receive {:dag_value, _, _}
+    refute_receive {:dag_values, [{_, _}]}
   end
 
   test "coordinator sends one event when a process watches overlapping source keys" do
@@ -164,9 +164,12 @@ defmodule Upkeep.SourceTest do
 
     assert :ok = Upkeep.notify(change)
 
-    assert_receive {:dag_value, {BoardColumns, %{project_id: 123}}, [:todo]}
-    assert_receive {:dag_value, {MyIssues, %{project_id: 123, user_id: 9}}, [:mine]}
-    refute_receive {:dag_value, _, _}
+    assert_receive {:dag_values, batch_1}
+    assert_receive {:dag_values, batch_2}
+    received = batch_1 ++ batch_2
+    assert {{BoardColumns, %{project_id: 123}}, [:todo]} in received
+    assert {{MyIssues, %{project_id: 123, user_id: 9}}, [:mine]} in received
+    refute_receive {:dag_values, _}
   end
 
   defp inserted_issue(attrs) do

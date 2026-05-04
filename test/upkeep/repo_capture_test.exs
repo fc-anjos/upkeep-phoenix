@@ -150,7 +150,7 @@ defmodule Upkeep.RepoCaptureTest do
                Repo.rollback(:cancelled)
              end)
 
-    refute_receive {:dag_value, _, _}
+    refute_receive {:dag_values, [{_, _}]}
     refute Repo.get(Issue, 1)
   end
 
@@ -175,7 +175,7 @@ defmodule Upkeep.RepoCaptureTest do
                Repo.rollback(:cancelled)
              end)
 
-    refute_receive {:dag_value, _, _}
+    refute_receive {:dag_values, [{_, _}]}
     refute Repo.get(Issue, 1)
   end
 
@@ -220,7 +220,7 @@ defmodule Upkeep.RepoCaptureTest do
              end)
 
     socket = assert_project_issues(socket, 9, ["Mine"])
-    refute_receive {:dag_value, {ProjectIssues, %{project_id: 1, user_id: 10}}, _}
+    refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 1, user_id: 10}}, _}]}
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Mine"]
   end
 
@@ -288,7 +288,7 @@ defmodule Upkeep.RepoCaptureTest do
              end)
 
     socket = assert_project_issues(socket, 9, ["Imported"])
-    refute_receive {:dag_value, {ProjectIssues, %{project_id: 1, user_id: 10}}, _}
+    refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 1, user_id: 10}}, _}]}
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Imported"]
   end
 
@@ -444,7 +444,7 @@ defmodule Upkeep.RepoCaptureTest do
                Repo.rollback(:cancelled)
              end)
 
-    refute_receive {:dag_value, _, _}
+    refute_receive {:dag_values, [{_, _}]}
     assert %Issue{assignee_id: 10} = Repo.get!(Issue, 1)
   end
 
@@ -467,7 +467,7 @@ defmodule Upkeep.RepoCaptureTest do
 
     Repo.insert_all(Issue, [issue_attrs(id: 1, assignee_id: 9)], upkeep: false)
 
-    refute_receive {:dag_value, _, _}
+    refute_receive {:dag_values, [{_, _}]}
   end
 
   test "repo capture can be disabled for setup writes" do
@@ -475,7 +475,7 @@ defmodule Upkeep.RepoCaptureTest do
 
     Repo.insert!(issue(id: 1, assignee_id: 9), upkeep: false)
 
-    refute_receive {:dag_value, _, _}
+    refute_receive {:dag_values, [{_, _}]}
   end
 
   defp watch_project(opts) do
@@ -494,9 +494,43 @@ defmodule Upkeep.RepoCaptureTest do
 
   defp assert_project_issues(user_id, titles) do
     source_id = {ProjectIssues, %{project_id: 1, user_id: user_id}}
-    assert_receive {:dag_value, ^source_id, issues}
+    issues = receive_dag_value(source_id)
     assert Enum.map(issues, & &1.title) == titles
     issues
+  end
+
+  @dag_buffer_key {__MODULE__, :dag_buffer}
+
+  defp receive_dag_value(source_id) do
+    buffered = Process.get(@dag_buffer_key, [])
+
+    case Enum.split_with(buffered, fn {id, _} -> id == source_id end) do
+      {[{^source_id, value} | rest_match], remaining} ->
+        Process.put(@dag_buffer_key, rest_match ++ remaining)
+        value
+
+      {[], _} ->
+        drain_until(source_id)
+    end
+  end
+
+  defp drain_until(source_id) do
+    receive do
+      {:dag_values, batch} ->
+        case Enum.split_with(batch, fn {id, _} -> id == source_id end) do
+          {[{^source_id, value} | rest_match], remaining} ->
+            existing = Process.get(@dag_buffer_key, [])
+            Process.put(@dag_buffer_key, existing ++ rest_match ++ remaining)
+            value
+
+          {[], _} ->
+            existing = Process.get(@dag_buffer_key, [])
+            Process.put(@dag_buffer_key, existing ++ batch)
+            drain_until(source_id)
+        end
+    after
+      1_000 -> flunk("did not receive :dag_values for #{inspect(source_id)}")
+    end
   end
 
   defp assert_project_issues(socket, user_id, titles) do
@@ -506,7 +540,7 @@ defmodule Upkeep.RepoCaptureTest do
 
   defp assert_table_project_issues(socket, user_id, titles) do
     source_id = {TableProjectIssues, %{project_id: 1, user_id: user_id}}
-    assert_receive {:dag_value, ^source_id, issues}
+    issues = receive_dag_value(source_id)
     assert Enum.map(issues, & &1.title) == titles
     Live.apply_dag_value(socket, source_id, issues)
   end

@@ -41,7 +41,7 @@ defmodule Upkeep.MutationTest do
     assert {:ok, :moved} = result
 
     source_id = source_id(777)
-    assert_receive {:dag_value, ^source_id, [:after]}
+    assert_receive {:dag_values, [{^source_id, [:after]}]}
 
     refreshed = Live.apply_dag_value(socket, source_id, [:after])
     assert refreshed.assigns.issues == [:after]
@@ -57,7 +57,7 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:error, :cancelled} = result
-    refute_receive {:dag_value, {ProjectIssues, %{project_id: 778}}, _}
+    refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 778}}, _}]}
   end
 
   test "mutate discards notifications when the mutation raises" do
@@ -70,7 +70,7 @@ defmodule Upkeep.MutationTest do
       end)
     end
 
-    refute_receive {:dag_value, {ProjectIssues, %{project_id: 779}}, _}
+    refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 779}}, _}]}
   end
 
   test "mutate preserves notification order after commit" do
@@ -84,8 +84,8 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:ok, :ok} = result
-    assert_receive {:dag_value, {ProjectIssues, %{project_id: 780}}, [:before]}
-    refute_receive {:dag_value, {ProjectIssues, %{project_id: 780}}, _}
+    assert_receive {:dag_values, [{{ProjectIssues, %{project_id: 780}}, [:before]}]}
+    refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 780}}, _}]}
   end
 
   test "nested mutate joins the outer journal and flushes once" do
@@ -99,12 +99,12 @@ defmodule Upkeep.MutationTest do
                    :inner
                  end)
 
-        refute_received {:dag_value, {ProjectIssues, %{project_id: 777}}, _}
+        refute_received {:dag_values, [{{ProjectIssues, %{project_id: 777}}, _}]}
         :outer
       end)
 
     assert {:ok, :outer} = result
-    assert_receive {:dag_value, {ProjectIssues, %{project_id: 777}}, [:before]}
+    assert_receive {:dag_values, [{{ProjectIssues, %{project_id: 777}}, [:before]}]}
   end
 
   test "Ecto.Multi flushes notifications after commit" do
@@ -118,7 +118,7 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:ok, %{move: :moved}} = Upkeep.mutate(multi)
-    assert_receive {:dag_value, {ProjectIssues, %{project_id: 777}}, [:before]}
+    assert_receive {:dag_values, [{{ProjectIssues, %{project_id: 777}}, [:before]}]}
   end
 
   test "Ecto.Multi discards notifications on rollback" do
@@ -132,7 +132,7 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:error, :move, :cancelled, %{}} = Upkeep.mutate(multi)
-    refute_receive {:dag_value, {ProjectIssues, %{project_id: 778}}, _}
+    refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 778}}, _}]}
   end
 
   test "Ecto.Multi preserves notification order after commit" do
@@ -150,8 +150,8 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:ok, %{first: :first, second: :second}} = Upkeep.mutate(multi)
-    assert_receive {:dag_value, {ProjectIssues, %{project_id: 779}}, [:before]}
-    refute_receive {:dag_value, {ProjectIssues, %{project_id: 779}}, _}
+    assert_receive {:dag_values, [{{ProjectIssues, %{project_id: 779}}, [:before]}]}
+    refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 779}}, _}]}
   end
 
   test "nested Ecto.Multi rollback rolls back the outer mutation and discards all events" do
@@ -173,7 +173,7 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:error, :rollback} = result
-    refute_receive {:dag_value, {ProjectIssues, %{project_id: 780}}, _}
+    refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 780}}, _}]}
   end
 
   defp watch_project(project_id) do
