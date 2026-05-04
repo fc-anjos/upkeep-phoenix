@@ -8,10 +8,11 @@ defmodule Upkeep.MixProject do
       elixir: "~> 1.15",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
+      description: description(),
+      package: package(),
+      docs: docs(),
       aliases: aliases(),
-      deps: deps(),
-      compilers: [:phoenix_live_view] ++ Mix.compilers(),
-      listeners: [Phoenix.CodeReloader]
+      deps: deps()
     ]
   end
 
@@ -21,7 +22,7 @@ defmodule Upkeep.MixProject do
   def application do
     [
       mod: {Upkeep.Application, []},
-      extra_applications: [:logger, :runtime_tools, :os_mon]
+      extra_applications: [:logger]
     ]
   end
 
@@ -40,62 +41,40 @@ defmodule Upkeep.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
-      {:phoenix, "~> 1.8.5"},
-      {:phoenix_ecto, "~> 4.5"},
+      {:ecto, "~> 3.13"},
       {:ecto_sql, "~> 3.13"},
-      {:ecto_sqlite3, ">= 0.0.0"},
-      {:phoenix_html, "~> 4.1"},
-      {:phoenix_live_reload, "~> 1.2", only: :dev},
       {:phoenix_live_view, "~> 1.1.0"},
       {:lazy_html, ">= 0.1.0", only: :test},
-      {:phoenix_test_playwright, "~> 0.13.0", only: :test, runtime: false},
-      {:phoenix_live_dashboard, "~> 0.8.3"},
-      {:esbuild, "~> 0.10", runtime: Mix.env() == :dev},
-      {:tailwind, "~> 0.3", runtime: Mix.env() == :dev},
-      {:heroicons,
-       github: "tailwindlabs/heroicons",
-       tag: "v2.2.0",
-       sparse: "optimized",
-       app: false,
-       compile: false,
-       depth: 1},
-      {:swoosh, "~> 1.16"},
-      {:req, "~> 0.5"},
-      {:telemetry_metrics, "~> 1.0"},
-      {:telemetry_poller, "~> 1.0"},
+      {:ecto_sqlite3, ">= 0.0.0", only: :test},
+      {:telemetry, "~> 1.0"},
       {:group, "~> 0.1"},
-      {:gettext, "~> 1.0"},
-      {:jason, "~> 1.2"},
-      {:dns_cluster, "~> 0.2.0"},
-      {:bandit, "~> 1.5"},
       {:benchee, "~> 1.3", only: [:dev, :test], runtime: false}
     ]
   end
 
-  # Aliases are shortcuts or tasks specific to the current project.
-  # For example, to install project dependencies and perform other setup tasks, run:
-  #
-  #     $ mix setup
-  #
-  # See the documentation for `Mix` for more info on aliases.
   defp aliases do
     [
-      setup: ["deps.get", "ecto.setup", "assets.setup", "assets.build"],
-      "ecto.setup": ["ecto.create", "ecto.migrate", "run priv/repo/seeds.exs"],
-      "ecto.reset": ["ecto.drop", "ecto.setup"],
       test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],
-      "assets.setup": [
-        "cmd --cd assets pnpm install",
-        "tailwind.install --if-missing",
-        "esbuild.install --if-missing"
-      ],
-      "assets.build": ["compile", "tailwind upkeep", "esbuild upkeep"],
-      "assets.deploy": [
-        "tailwind upkeep --minify",
-        "esbuild upkeep --minify",
-        "phx.digest"
-      ],
       precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]
+    ]
+  end
+
+  defp description do
+    "Domain-reactive LiveView runtime for watching sources and refreshing server-rendered UI."
+  end
+
+  defp package do
+    [
+      licenses: ["MIT"],
+      links: %{"Docs" => "https://hexdocs.pm/upkeep"},
+      files: ~w(lib mix.exs README.md LICENSE* docs)
+    ]
+  end
+
+  defp docs do
+    [
+      main: "Upkeep",
+      extras: ["README.md"]
     ]
   end
 end
