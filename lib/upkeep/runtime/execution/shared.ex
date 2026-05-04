@@ -1,9 +1,9 @@
-defmodule Upkeep.Live.SharedDerived do
+defmodule Upkeep.Runtime.Execution.Shared do
   @moduledoc false
 
   alias Upkeep.Coordinator.Graph
-  alias Upkeep.Live.Subscriptions
   alias Upkeep.Runtime.State
+  alias Upkeep.Runtime.Subscriptions
 
   def initial_value(socket, assign_name, dep_node_ids, dep_pairs, fun, compute) do
     base_metadata = sharing_metadata(socket, assign_name, dep_node_ids)
@@ -64,36 +64,29 @@ defmodule Upkeep.Live.SharedDerived do
       end
     else
       :not_external_fun ->
-        {compute_initial_value(socket, dep_node_ids, compute), nil,
-         Map.merge(base_metadata, %{result: :local, reason: :local_fun})}
+        local_initial_value(socket, dep_node_ids, compute, base_metadata, :local_fun)
 
       {:captured_fun, fun_identity} ->
-        {compute_initial_value(socket, dep_node_ids, compute), nil,
-         Map.merge(base_metadata, %{result: :local, reason: :captured_fun, fun: fun_identity})}
+        metadata =
+          Map.merge(base_metadata, %{result: :local, reason: :captured_fun, fun: fun_identity})
+
+        {compute_initial_value(socket, dep_node_ids, compute), nil, metadata}
 
       false ->
-        {compute_initial_value(socket, dep_node_ids, compute), nil,
-         Map.merge(base_metadata, %{result: :local, reason: :disconnected_socket})}
+        local_initial_value(socket, dep_node_ids, compute, base_metadata, :disconnected_socket)
 
       {:unshareable_dep, reason} ->
-        {compute_initial_value(socket, dep_node_ids, compute), nil,
-         Map.merge(base_metadata, %{result: :local, reason: reason})}
+        local_initial_value(socket, dep_node_ids, compute, base_metadata, reason)
 
       {:error, :cross_partition_dep, dep_partitions} ->
-        {compute_initial_value(socket, dep_node_ids, compute), nil,
-         Map.merge(base_metadata, %{
-           result: :local,
-           reason: :cross_partition_dep,
-           dep_partitions: dep_partitions
-         })}
+        local_initial_value(socket, dep_node_ids, compute, base_metadata, :cross_partition_dep,
+          dep_partitions: dep_partitions
+        )
 
       {:error, :empty_deps, dep_partitions} ->
-        {compute_initial_value(socket, dep_node_ids, compute), nil,
-         Map.merge(base_metadata, %{
-           result: :local,
-           reason: :empty_deps,
-           dep_partitions: dep_partitions
-         })}
+        local_initial_value(socket, dep_node_ids, compute, base_metadata, :empty_deps,
+          dep_partitions: dep_partitions
+        )
     end
   rescue
     ArgumentError ->
@@ -102,6 +95,15 @@ defmodule Upkeep.Live.SharedDerived do
          result: :local,
          reason: :error
        })}
+  end
+
+  defp local_initial_value(socket, dep_node_ids, compute, metadata, reason, extra \\ []) do
+    metadata =
+      metadata
+      |> Map.merge(%{result: :local, reason: reason})
+      |> Map.merge(Map.new(extra))
+
+    {compute_initial_value(socket, dep_node_ids, compute), nil, metadata}
   end
 
   defp graph_dep_ids(socket, dep_node_ids) do

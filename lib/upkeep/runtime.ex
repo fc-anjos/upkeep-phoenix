@@ -7,17 +7,17 @@ defmodule Upkeep.Runtime do
     Assigns,
     Components,
     Ids,
-    SharedDerived,
-    SourceLoads,
-    Subscriptions,
     Telemetry
   }
 
   alias Upkeep.Runtime.DAGOperations
+  alias Upkeep.Runtime.Execution.Shared
   alias Upkeep.Runtime.Materializer
   alias Upkeep.Runtime.NodeSpec
   alias Upkeep.Runtime.Producer
+  alias Upkeep.Runtime.SourceLoads
   alias Upkeep.Runtime.State
+  alias Upkeep.Runtime.Subscriptions
 
   def mount(socket, %NodeSpec{kind: :source, producer: %Producer.Source{} = producer} = spec) do
     %Materializer.Assign{assign_name: assign_name} = single_materializer(spec)
@@ -105,7 +105,7 @@ defmodule Upkeep.Runtime do
     compute = compute_fun(producer)
 
     {initial_value, graph_node_id, sharing_metadata} =
-      SharedDerived.initial_value(
+      Shared.initial_value(
         socket,
         assign_name,
         spec.deps,
