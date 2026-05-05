@@ -4,7 +4,7 @@ defmodule Upkeep.Live.Snapshot do
   alias Upkeep.DAG.{Graph, Store}
   alias Upkeep.Live.{Ids, Telemetry}
   alias Upkeep.Runtime.State
-  alias Upkeep.Source.Runtime, as: Source
+  alias Upkeep.Source.Identity, as: Source
 
   def build(socket) do
     store = State.store(socket)

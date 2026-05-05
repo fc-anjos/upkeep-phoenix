@@ -21,31 +21,36 @@ defmodule Upkeep.Source.Spec do
     end
   end
 
-  defmacro query(fun) do
+  @doc false
+  def query_definition(fun) do
     quote do
       def load(params), do: unquote(fun).(params)
     end
   end
 
-  defmacro invalidated_by(notification, opts) do
-    build_invalidated_by(normalize_notification(notification, __CALLER__), opts)
+  @doc false
+  def invalidated_by_definition(notification, opts, caller) do
+    build_invalidated_by(normalize_notification(notification, caller), opts)
   end
 
-  defmacro invalidated_by(schema, action, opts) do
-    notification = normalize_notification(schema, action, __CALLER__)
+  @doc false
+  def invalidated_by_definition(schema, action, opts, caller) do
+    notification = normalize_notification(schema, action, caller)
     build_invalidated_by(notification, opts)
   end
 
-  defmacro reacts_to(notification, fun) do
-    notification = normalize_notification(notification, __CALLER__)
+  @doc false
+  def reacts_to_definition(notification, fun, caller) do
+    notification = normalize_notification(notification, caller)
 
     quote bind_quoted: [notification: Macro.escape(notification), fun: Macro.escape(fun)] do
       @upkeep_reactors {notification, fun}
     end
   end
 
-  defmacro reacts_to(schema, action, fun) do
-    notification = normalize_notification(schema, action, __CALLER__)
+  @doc false
+  def reacts_to_definition(schema, action, fun, caller) do
+    notification = normalize_notification(schema, action, caller)
 
     quote bind_quoted: [notification: Macro.escape(notification), fun: Macro.escape(fun)] do
       @upkeep_reactors {notification, fun}
@@ -102,7 +107,7 @@ defmodule Upkeep.Source.Spec do
         [] ->
           if defines_query? do
             quote do
-              Upkeep.Source.Runtime.query_reacts_to?(__MODULE__, event, params)
+              Upkeep.Source.Reactivity.query_reacts_to?(__MODULE__, event, params)
             end
           else
             false
@@ -112,7 +117,7 @@ defmodule Upkeep.Source.Spec do
           query_check =
             if defines_query? do
               quote do
-                Upkeep.Source.Runtime.query_reacts_to?(__MODULE__, event, params)
+                Upkeep.Source.Reactivity.query_reacts_to?(__MODULE__, event, params)
               end
             else
               false
@@ -147,7 +152,7 @@ defmodule Upkeep.Source.Spec do
     query_interest_keys =
       if defines_query? do
         quote do
-          Upkeep.Source.Runtime.query_interest_keys(__MODULE__, params)
+          Upkeep.Source.Reactivity.query_interest_keys(__MODULE__, params)
         end
       else
         []

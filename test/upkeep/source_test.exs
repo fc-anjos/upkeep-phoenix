@@ -216,7 +216,7 @@ defmodule Upkeep.SourceTest do
 
   test "sources expose retry configuration" do
     assert NoRetryLoad.__upkeep_retry__() == false
-    assert Upkeep.Source.Runtime.retry_config(NoRetryLoad) == false
+    assert Upkeep.Source.Identity.retry_config(NoRetryLoad) == false
 
     assert CustomRetryLoad.__upkeep_retry__() == [
              max_attempts: 1,
@@ -224,7 +224,7 @@ defmodule Upkeep.SourceTest do
              max_delay_ms: 0
            ]
 
-    assert Upkeep.Source.Runtime.retry_config(BoardColumns) == :default
+    assert Upkeep.Source.Identity.retry_config(BoardColumns) == :default
   end
 
   test "watch joins source interest and notify dispatches through the coordinator", %{

@@ -1,5 +1,5 @@
 defmodule Upkeep.MutationTest do
-  use Upkeep.DataCase, async: false
+  use Upkeep.TestSupport.DataCase, async: false
 
   alias Upkeep.Live
   import ExUnit.CaptureLog
@@ -71,7 +71,7 @@ defmodule Upkeep.MutationTest do
     result =
       Upkeep.mutate(fn ->
         Upkeep.updated(issue(778, 1))
-        Upkeep.Repo.rollback(:cancelled)
+        Upkeep.TestSupport.Repo.rollback(:cancelled)
       end)
 
     assert {:error, :cancelled} = result

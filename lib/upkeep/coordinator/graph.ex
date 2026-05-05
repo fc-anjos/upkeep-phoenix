@@ -1,11 +1,11 @@
 defmodule Upkeep.Coordinator.Graph do
   @moduledoc false
 
-  alias Upkeep.Coordinator.ReadNodes
   alias Upkeep.Coordinator.Graph.Notifier
   alias Upkeep.Coordinator.Shards
   alias Upkeep.Coordinator.Subscriptions
   alias Upkeep.Coordinator.Topology
+  alias Upkeep.Source.ReadCache
 
   ## Public API
 
@@ -28,7 +28,7 @@ defmodule Upkeep.Coordinator.Graph do
   @doc """
   Register a source node. Caller pid joins as subscriber via `Group.join/4`.
 
-  The coordinator stores `{source, params}` and invokes `Upkeep.Source.Runtime.load/2`
+  The coordinator stores `{source, params}` and invokes `Upkeep.Source.Loader.load/2`
   during flush. Keeping source definitions as data makes shard state easier to
   inspect and avoids using anonymous closures as the production node contract.
   """
@@ -101,7 +101,7 @@ defmodule Upkeep.Coordinator.Graph do
   defdelegate subscribed?(node_id, pid \\ nil), to: Subscriptions
 
   def notify(event) when is_struct(event) do
-    ReadNodes.invalidate(event)
+    ReadCache.invalidate(event)
     Notifier.notify(event)
     Subscriptions.dispatch_notification(event)
   end
@@ -116,10 +116,12 @@ defmodule Upkeep.Coordinator.Graph do
   def reset do
     Shards.reset_all()
     Topology.reset()
-    ReadNodes.clear()
+    ReadCache.clear()
 
     :ok
   end
+
+  defdelegate shared_partition_info(node_ids), to: Topology
 
   defdelegate shard_name(idx), to: Shards, as: :name
   defdelegate task_sup, to: Shards

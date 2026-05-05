@@ -4,8 +4,8 @@ defmodule Upkeep.Coordinator.Graph.Shard do
 
   alias Upkeep.Coordinator.Graph.Shard.{Flush, InitialLoads, Lifecycle, Nodes, Retries}
   alias Upkeep.DAG.Store
-  alias Upkeep.DirtyBuffer
-  alias Upkeep.Retry
+  alias Upkeep.Coordinator.DirtyBuffer
+  alias Upkeep.Coordinator.Retry
   alias Upkeep.SingleFlight
 
   ## Public

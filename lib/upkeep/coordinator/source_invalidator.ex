@@ -1,9 +1,9 @@
-defmodule Upkeep.Coordinator.ReadNodes.Watcher do
+defmodule Upkeep.Coordinator.SourceInvalidator do
   @moduledoc false
 
   use GenServer
 
-  alias Upkeep.Coordinator.ReadNodes
+  alias Upkeep.Source.ReadCache
   alias Upkeep.Coordinator.Subscriptions
 
   def start_link(_opts \\ []) do
@@ -22,12 +22,12 @@ defmodule Upkeep.Coordinator.ReadNodes.Watcher do
   end
 
   def handle_info({:upkeep_graph_notify, _origin, event}, state) do
-    ReadNodes.invalidate(event)
+    ReadCache.invalidate(event)
     {:noreply, state}
   end
 
   def handle_info({:upkeep_graph_notify, event}, state) do
-    ReadNodes.invalidate(event)
+    ReadCache.invalidate(event)
     {:noreply, state}
   end
 

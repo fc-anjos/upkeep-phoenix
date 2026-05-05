@@ -14,7 +14,7 @@ defmodule Upkeep.Test do
 
   ## Usage
 
-      # In your test case template (e.g. Upkeep.DataCase):
+      # In your test case template (e.g. Upkeep.TestSupport.DataCase):
       setup tags do
         pid = Ecto.Adapters.SQL.Sandbox.start_owner!(MyApp.Repo,
                 shared: not tags[:async])

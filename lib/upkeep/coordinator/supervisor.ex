@@ -3,7 +3,7 @@ defmodule Upkeep.Coordinator.Supervisor do
 
   use Supervisor
 
-  alias Upkeep.Coordinator.ReadNodes
+  alias Upkeep.Source.ReadCache
   alias Upkeep.Coordinator.Shards
   alias Upkeep.Coordinator.Topology
 
@@ -17,13 +17,13 @@ defmodule Upkeep.Coordinator.Supervisor do
     Topology.put_shard_count(shards)
     Topology.init_tables()
 
-    Enum.each(ReadNodes.table_specs(), fn {name, opts} -> ensure_table(name, opts) end)
+    Enum.each(ReadCache.table_specs(), fn {name, opts} -> ensure_table(name, opts) end)
 
     children =
       [
         {Upkeep.SingleFlight.Registry,
-         name: Upkeep.Coordinator.ReadNodes.Coalescer, telemetry_prefix: [:upkeep, :read_nodes]},
-        Upkeep.Coordinator.ReadNodes.Watcher,
+         name: Upkeep.Source.ReadCache.Coalescer, telemetry_prefix: [:upkeep, :read_nodes]},
+        Upkeep.Coordinator.SourceInvalidator,
         Upkeep.Coordinator.Graph.Notifier,
         {Task.Supervisor, name: Shards.task_sup()}
       ] ++ shard_child_specs(shards)

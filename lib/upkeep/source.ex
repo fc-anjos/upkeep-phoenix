@@ -7,78 +7,53 @@ defmodule Upkeep.Source do
   the source's reactive surface.
   """
 
+  use Boundary,
+    exports: [
+      Coverage,
+      Identity,
+      Loader,
+      Reactivity,
+      ReadCache
+    ],
+    deps: [
+      Upkeep,
+      Upkeep.SingleFlight,
+      Ecto.Adapters.SQL,
+      Ecto.Query,
+      Ecto.Queryable,
+      Ecto.SubQuery,
+      Logger,
+      {Mix, :compile}
+    ],
+    type: :strict
+
   defmacro __using__(opts) do
-    repo =
-      opts
-      |> Keyword.get(:repo)
-      |> Macro.expand(__CALLER__)
-
-    retry = Keyword.get(opts, :retry, :default)
-
-    quote bind_quoted: [repo: repo, retry: retry] do
-      import Upkeep.Source,
-        only: [query: 1, invalidated_by: 2, invalidated_by: 3, reacts_to: 2, reacts_to: 3]
-
-      @upkeep_repo repo
-      @upkeep_retry retry
-      Module.register_attribute(__MODULE__, :upkeep_invalidators, accumulate: true)
-      Module.register_attribute(__MODULE__, :upkeep_reactors, accumulate: true)
-      @before_compile Upkeep.Source.Spec
+    quote do
+      use Upkeep.Source.Spec, unquote(opts)
     end
   end
 
   defmacro query(fun) do
-    quote do
-      def load(params), do: unquote(fun).(params)
-    end
+    Upkeep.Source.Spec.query_definition(fun)
   end
 
   defmacro invalidated_by(notification, opts) do
-    build_invalidated_by(normalize_notification(notification, __CALLER__), opts)
+    Upkeep.Source.Spec.invalidated_by_definition(notification, opts, __CALLER__)
   end
 
   defmacro invalidated_by(schema, action, opts) do
-    notification = normalize_notification(schema, action, __CALLER__)
-    build_invalidated_by(notification, opts)
+    Upkeep.Source.Spec.invalidated_by_definition(schema, action, opts, __CALLER__)
   end
 
   defmacro reacts_to(notification, fun) do
-    notification = normalize_notification(notification, __CALLER__)
-
-    quote bind_quoted: [notification: Macro.escape(notification), fun: Macro.escape(fun)] do
-      @upkeep_reactors {notification, fun}
-    end
+    Upkeep.Source.Spec.reacts_to_definition(notification, fun, __CALLER__)
   end
 
   defmacro reacts_to(schema, action, fun) do
-    notification = normalize_notification(schema, action, __CALLER__)
-
-    quote bind_quoted: [notification: Macro.escape(notification), fun: Macro.escape(fun)] do
-      @upkeep_reactors {notification, fun}
-    end
+    Upkeep.Source.Spec.reacts_to_definition(schema, action, fun, __CALLER__)
   end
 
-  defdelegate read(query_or_value), to: Upkeep.Source.Runtime
-  defdelegate coverage(source, params), to: Upkeep.Source.Runtime
-  defdelegate coverage(source, params, deps), to: Upkeep.Source.Runtime
-
-  defp build_invalidated_by(notification, opts) do
-    on = Keyword.fetch!(opts, :on) |> List.wrap()
-    as = Keyword.get(opts, :as, on) |> List.wrap()
-
-    unless length(on) == length(as) do
-      raise ArgumentError, "`:on` and `:as` must name the same number of fields"
-    end
-
-    quote bind_quoted: [notification: Macro.escape(notification), on: on, as: as] do
-      @upkeep_invalidators {notification, on, as}
-    end
-  end
-
-  defp normalize_notification(name, _caller) when is_atom(name), do: %{name: name, schema: :_}
-  defp normalize_notification(event, caller), do: %{legacy: Macro.expand(event, caller)}
-
-  defp normalize_notification(schema, action, caller) when is_atom(action) do
-    %{name: action, schema: Macro.expand(schema, caller)}
-  end
+  defdelegate read(query_or_value), to: Upkeep.Source.Loader
+  defdelegate coverage(source, params), to: Upkeep.Source.Loader
+  defdelegate coverage(source, params, deps), to: Upkeep.Source.Loader
 end

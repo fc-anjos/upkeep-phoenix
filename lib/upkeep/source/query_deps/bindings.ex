@@ -1,4 +1,4 @@
-defmodule Upkeep.Ecto.QueryDeps.Bindings do
+defmodule Upkeep.Source.QueryDeps.Bindings do
   @moduledoc false
 
   def from_query(query) do

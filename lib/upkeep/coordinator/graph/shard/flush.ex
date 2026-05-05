@@ -7,7 +7,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
   alias Upkeep.Coordinator.Subscriptions
   alias Upkeep.Coordinator.Topology
   alias Upkeep.DAG.Store
-  alias Upkeep.DirtyBuffer
+  alias Upkeep.Coordinator.DirtyBuffer
 
   @flush_interval_ms 1
 

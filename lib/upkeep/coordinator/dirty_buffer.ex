@@ -1,4 +1,4 @@
-defmodule Upkeep.DirtyBuffer do
+defmodule Upkeep.Coordinator.DirtyBuffer do
   @moduledoc false
 
   defstruct dirty: MapSet.new(), threshold: 1_000, scheduled?: false

@@ -1,5 +1,5 @@
 defmodule Upkeep.RepoCaptureTest do
-  use Upkeep.DataCase, async: false
+  use Upkeep.TestSupport.DataCase, async: false
 
   alias Ecto.Changeset
   alias Upkeep.Live
@@ -19,7 +19,7 @@ defmodule Upkeep.RepoCaptureTest do
   end
 
   defmodule ProjectIssues do
-    use Upkeep.Source, repo: Upkeep.Repo
+    use Upkeep.Source, repo: Upkeep.TestSupport.Repo
 
     import Ecto.Query
 
@@ -65,7 +65,7 @@ defmodule Upkeep.RepoCaptureTest do
   end
 
   defmodule TableProjectIssues do
-    use Upkeep.Source, repo: Upkeep.Repo
+    use Upkeep.Source, repo: Upkeep.TestSupport.Repo
 
     import Ecto.Query
 

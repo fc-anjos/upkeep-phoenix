@@ -1,4 +1,4 @@
-defmodule Upkeep.Ecto.QueryDeps.Expressions do
+defmodule Upkeep.Source.QueryDeps.Expressions do
   @moduledoc false
 
   @unsupported_nodes [:or, :fragment]

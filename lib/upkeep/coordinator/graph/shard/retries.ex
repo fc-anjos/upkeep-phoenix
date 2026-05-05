@@ -1,7 +1,7 @@
 defmodule Upkeep.Coordinator.Graph.Shard.Retries do
   @moduledoc false
 
-  alias Upkeep.Retry
+  alias Upkeep.Coordinator.Retry
 
   def after_failure(state, node_id, %{loaded?: true, retry: retry}) do
     {retries, metadata} = Retry.after_failure(state.retries, node_id, retry, &schedule_retry/3)

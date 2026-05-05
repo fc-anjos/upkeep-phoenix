@@ -1,7 +1,7 @@
 defmodule Upkeep.Runtime.Execution.Shared do
   @moduledoc false
 
-  alias Upkeep.Coordinator.Topology
+  alias Upkeep.Coordinator.Graph, as: Coordinator
   alias Upkeep.DAG.Graph, as: DAGGraph
   alias Upkeep.DAG.Store
   alias Upkeep.Runtime.ScopeCapture
@@ -22,7 +22,8 @@ defmodule Upkeep.Runtime.Execution.Shared do
     with {:external, fun_identity} <- ScopeCapture.analyze(fun),
          true <- Subscriptions.shared_initial_load?(socket),
          {:ok, graph_dep_ids, local_to_graph} <- graph_dep_ids(socket, dep_node_ids),
-         {:ok, sharing_partition, dep_partitions} <- Topology.shared_partition_info(graph_dep_ids) do
+         {:ok, sharing_partition, dep_partitions} <-
+           Coordinator.shared_partition_info(graph_dep_ids) do
       dep_values = graph_dep_values(socket, local_to_graph)
 
       graph_compute = fn graph_node_values ->

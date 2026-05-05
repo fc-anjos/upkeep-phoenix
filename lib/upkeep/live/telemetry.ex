@@ -2,7 +2,7 @@ defmodule Upkeep.Live.Telemetry do
   @moduledoc false
 
   alias Upkeep.Live.Ids
-  alias Upkeep.Source.Runtime, as: Source
+  alias Upkeep.Source.Identity, as: Source
 
   def emit(event, measurements, metadata) do
     :telemetry.execute([:upkeep | event], measurements, metadata)

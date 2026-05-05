@@ -1,7 +1,9 @@
 defmodule Upkeep.Coordinator.Graph.Shard.Loaders do
   @moduledoc false
 
-  alias Upkeep.Source.Runtime, as: Source
+  alias Upkeep.Source.Identity, as: SourceIdentity
+  alias Upkeep.Source.Loader, as: Source
+  alias Upkeep.Source.Reactivity, as: SourceReactivity
 
   def run_with_deps(loader, metadata) when is_map(metadata) do
     :telemetry.execute(
@@ -27,7 +29,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Loaders do
 
   def run_with_deps({:source, source, params}) do
     {value, deps} = Source.load(source, params)
-    dep_keys = Source.deps_interest_keys(deps)
+    dep_keys = SourceReactivity.deps_interest_keys(deps)
     {value, Enum.uniq(source.__upkeep_interest_keys__(params) ++ dep_keys), deps}
   end
 
@@ -40,14 +42,14 @@ defmodule Upkeep.Coordinator.Graph.Shard.Loaders do
     %{
       source: source,
       params: params,
-      sharing_partition: Source.sharing_partition(source, params)
+      sharing_partition: SourceIdentity.sharing_partition(source, params)
     }
   end
 
   def metadata({:fun, _load_fn}), do: %{source: nil, params: nil}
   def metadata(nil), do: %{source: nil, params: nil}
 
-  def retry_config({:source, source, _params}), do: Source.retry_config(source)
+  def retry_config({:source, source, _params}), do: SourceIdentity.retry_config(source)
   def retry_config({:fun, _load_fn}), do: :default
   def retry_config(nil), do: :default
 

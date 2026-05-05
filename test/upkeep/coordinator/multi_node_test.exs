@@ -1,6 +1,6 @@
 defmodule Upkeep.Coordinator.MultiNodeTest do
   @moduledoc """
-  Real cluster validation for the read-node coordinator.
+  Real cluster validation for cross-node source-cache invalidation.
 
   We boot a sister BEAM via `:peer.start_link/1`, start the `:upkeep`
   application on it, and let `Group` mesh the two nodes via Erlang
@@ -16,7 +16,7 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
   @moduletag :multi_node
 
   alias Upkeep.Coordinator.Graph
-  alias Upkeep.Coordinator.ReadNodes
+  alias Upkeep.Source.ReadCache, as: ReadCache
 
   defmodule FakeSchema, do: defstruct([:id])
 
@@ -36,11 +36,11 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
     %{peer: peer, peer_node: peer_node}
   end
 
-  describe "Phase 3: cluster-wide ReadNodes invalidation" do
-    test "Graph.notify on parent evicts ReadNodes cached on peer", %{peer: peer} do
+  describe "cluster-wide ReadCache invalidation" do
+    test "Graph.notify on parent evicts ReadCache entries cached on peer", %{peer: peer} do
       seed_peer_read_node(peer, FakeSchema, 1001)
 
-      assert :erpc.call(node_of(peer), ReadNodes, :count, []) == 1
+      assert :erpc.call(node_of(peer), ReadCache, :count, []) == 1
 
       Graph.notify(%Upkeep.Change{
         name: :updated,
@@ -50,15 +50,15 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
       })
 
       wait_until(
-        fn -> :erpc.call(node_of(peer), ReadNodes, :count, []) == 0 end,
-        "peer ReadNodes cache should drain after parent notify"
+        fn -> :erpc.call(node_of(peer), ReadCache, :count, []) == 0 end,
+        "peer ReadCache should drain after parent notify"
       )
     end
 
-    test "Graph.notify on peer evicts ReadNodes cached on parent", %{peer: peer} do
-      ReadNodes.clear()
+    test "Graph.notify on peer evicts ReadCache entries cached on parent", %{peer: peer} do
+      ReadCache.clear()
       seed_local_read_node(FakeSchema, 2002)
-      assert ReadNodes.count() == 1
+      assert ReadCache.count() == 1
 
       :erpc.call(node_of(peer), Graph, :notify, [
         %Upkeep.Change{
@@ -70,8 +70,8 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
       ])
 
       wait_until(
-        fn -> ReadNodes.count() == 0 end,
-        "parent ReadNodes cache should drain after peer notify"
+        fn -> ReadCache.count() == 0 end,
+        "parent ReadCache should drain after peer notify"
       )
     end
   end
@@ -111,12 +111,12 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
   # wait via `Group.dispatch` of the settled value.
 
   defp seed_local_read_node(schema, fingerprint) do
-    deps = %Upkeep.Ecto.QueryDeps{schemas: MapSet.new([schema])}
+    deps = %Upkeep.Source.QueryDeps{schemas: MapSet.new([schema])}
     node_id = {:read, :synthetic_repo, fingerprint}
-    :ets.insert(ReadNodes.values_table(), {node_id, []})
+    :ets.insert(ReadCache.values_table(), {node_id, []})
 
     for action <- [:inserted, :updated, :deleted] do
-      :ets.insert(ReadNodes.index_table(), {{action, schema}, {node_id, deps}})
+      :ets.insert(ReadCache.index_table(), {{action, schema}, {node_id, deps}})
     end
 
     :ok
@@ -124,14 +124,14 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
 
   defp seed_peer_read_node(peer, schema, fingerprint) do
     peer_node = node_of(peer)
-    deps = %Upkeep.Ecto.QueryDeps{schemas: MapSet.new([schema])}
+    deps = %Upkeep.Source.QueryDeps{schemas: MapSet.new([schema])}
     node_id = {:read, :synthetic_repo, fingerprint}
 
-    :erpc.call(peer_node, :ets, :insert, [ReadNodes.values_table(), {node_id, []}])
+    :erpc.call(peer_node, :ets, :insert, [ReadCache.values_table(), {node_id, []}])
 
     for action <- [:inserted, :updated, :deleted] do
       :erpc.call(peer_node, :ets, :insert, [
-        ReadNodes.index_table(),
+        ReadCache.index_table(),
         {{action, schema}, {node_id, deps}}
       ])
     end

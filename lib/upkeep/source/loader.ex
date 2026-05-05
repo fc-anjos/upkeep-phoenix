@@ -1,5 +1,7 @@
-defmodule Upkeep.Source.Runtime do
+defmodule Upkeep.Source.Loader do
   @moduledoc false
+
+  defdelegate verify_source!(source, params, opts \\ []), to: Upkeep.Source.RepoCaptureGuard
 
   @context_key {__MODULE__, :read_context}
   @warn_dedup_key {__MODULE__, :no_invalidation_warned}
@@ -8,10 +10,16 @@ defmodule Upkeep.Source.Runtime do
     repo = source.__upkeep_repo__() || Application.get_env(:upkeep, :repo)
 
     {value, deps} =
-      with_read_context(repo, source_id(source, params), source, params, fn ->
-        value = source.load(params)
-        {value, tracked_deps()}
-      end)
+      with_read_context(
+        repo,
+        Upkeep.Source.Identity.source_id(source, params),
+        source,
+        params,
+        fn ->
+          value = source.load(params)
+          {value, tracked_deps()}
+        end
+      )
 
     coverage = coverage(source, params, deps)
 
@@ -41,68 +49,29 @@ defmodule Upkeep.Source.Runtime do
 
   def read(value), do: value
 
-  defdelegate event_keys(event), to: Upkeep.Source.Keys
-
-  def deps_interest_keys(deps) do
-    deps
-    |> Enum.flat_map(&Upkeep.Ecto.QueryDeps.interest_keys/1)
-    |> Enum.uniq()
-  end
-
-  def deps_react_to?(deps, event) do
-    Enum.any?(deps, &Upkeep.Ecto.QueryDeps.matches_change?(&1, event))
-  end
-
   def coverage(source, params) when is_atom(source) and is_map(params) do
     repo = source.__upkeep_repo__() || Application.get_env(:upkeep, :repo)
 
     {_value, deps} =
-      with_read_context(repo, source_id(source, params), source, params, fn ->
-        value = source.load(params)
-        {value, tracked_deps()}
-      end)
+      with_read_context(
+        repo,
+        Upkeep.Source.Identity.source_id(source, params),
+        source,
+        params,
+        fn ->
+          value = source.load(params)
+          {value, tracked_deps()}
+        end
+      )
 
     coverage(source, params, deps)
   end
 
   def coverage(source, params, deps) when is_atom(source) and is_map(params) and is_list(deps) do
     deps
-    |> Enum.map(&Upkeep.Ecto.QueryDeps.coverage/1)
+    |> Enum.map(&Upkeep.Source.QueryDeps.coverage/1)
     |> Enum.reduce(base_coverage(source, params), &Upkeep.Source.Coverage.merge/2)
     |> attach_unknown_if_empty()
-  end
-
-  def query_interest_keys(source, params) when is_atom(source) do
-    source
-    |> source_query(params)
-    |> Upkeep.Ecto.QueryDeps.interest_keys()
-  end
-
-  def query_reacts_to?(source, event, params) when is_atom(source) and is_struct(event) do
-    deps =
-      source
-      |> source_query(params)
-      |> Upkeep.Ecto.QueryDeps.from_query()
-
-    Upkeep.Ecto.QueryDeps.matches_change?(deps, event)
-  end
-
-  def source_id(source, params) when is_atom(source) and is_map(params), do: {source, params}
-
-  def sharing_partition(source, params) when is_atom(source) and is_map(params) do
-    if function_exported?(source, :__upkeep_sharing_partition__, 1) do
-      source.__upkeep_sharing_partition__(params)
-    else
-      {:params, params}
-    end
-  end
-
-  def retry_config(source) when is_atom(source) do
-    if function_exported?(source, :__upkeep_retry__, 0) do
-      source.__upkeep_retry__()
-    else
-      :default
-    end
   end
 
   defp memoize_read(repo, holder, query) do
@@ -114,7 +83,7 @@ defmodule Upkeep.Source.Runtime do
         value
 
       :error ->
-        value = Upkeep.Coordinator.ReadNodes.fetch_or_load(repo, query, holder)
+        value = Upkeep.Source.ReadCache.fetch_or_load(repo, query, holder)
         ctx = Process.get(@context_key)
         Process.put(@context_key, Map.put(ctx, :reads, Map.put(cache, fingerprint, value)))
         value
@@ -124,10 +93,6 @@ defmodule Upkeep.Source.Runtime do
   defp read_fingerprint(repo, query) do
     {sql, params} = Ecto.Adapters.SQL.to_sql(:all, repo, query)
     :erlang.phash2({sql, params})
-  end
-
-  defp source_query(source, params) do
-    if function_exported?(source, :query, 1), do: source.query(params), else: nil
   end
 
   defp with_read_context(repo, holder, source, params, fun) do
@@ -154,11 +119,11 @@ defmodule Upkeep.Source.Runtime do
   defp track_query(query) do
     case Process.get(@context_key) do
       %{deps: deps} = context ->
-        deps = [Upkeep.Ecto.QueryDeps.from_query(query) | deps]
+        deps = [Upkeep.Source.QueryDeps.from_query(query) | deps]
         Process.put(@context_key, %{context | deps: deps})
 
       _ ->
-        raise "Upkeep.Source.track_query/1 called outside a source context. " <>
+        raise "Upkeep.Source.Loader.track_query/1 called outside a source context. " <>
                 "This usually means a Task spawned inside load/1 lost the context — " <>
                 "explicit propagation is required for concurrent reads."
     end

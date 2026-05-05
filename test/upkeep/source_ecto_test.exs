@@ -1,5 +1,5 @@
 defmodule Upkeep.SourceEctoTest do
-  use Upkeep.DataCase, async: false
+  use Upkeep.TestSupport.DataCase, async: false
 
   alias Upkeep.Live
 
@@ -82,7 +82,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule ProjectIssues do
-    use Upkeep.Source, repo: Upkeep.Repo
+    use Upkeep.Source, repo: Upkeep.TestSupport.Repo
 
     import Ecto.Query
 
@@ -316,7 +316,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule PreloadedProjectIssues do
-    use Upkeep.Source, repo: Upkeep.Repo
+    use Upkeep.Source, repo: Upkeep.TestSupport.Repo
 
     import Ecto.Query
 
@@ -331,7 +331,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule StringManyToManyPreloadedIssues do
-    use Upkeep.Source, repo: Upkeep.Repo
+    use Upkeep.Source, repo: Upkeep.TestSupport.Repo
 
     import Ecto.Query
 
@@ -345,7 +345,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule QueryPreloadedProjectIssues do
-    use Upkeep.Source, repo: Upkeep.Repo
+    use Upkeep.Source, repo: Upkeep.TestSupport.Repo
 
     import Ecto.Query
 
@@ -363,7 +363,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule NestedQueryPreloadedComments do
-    use Upkeep.Source, repo: Upkeep.Repo
+    use Upkeep.Source, repo: Upkeep.TestSupport.Repo
 
     import Ecto.Query
 
@@ -406,7 +406,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule BoardViewModel do
-    use Upkeep.Source, repo: Upkeep.Repo
+    use Upkeep.Source, repo: Upkeep.TestSupport.Repo
 
     import Ecto.Query
 
@@ -439,13 +439,13 @@ defmodule Upkeep.SourceEctoTest do
     Repo.insert!(issue(id: 2, project_id: 1, assignee_id: 10, title: "Other", position: 1))
     Repo.insert!(issue(id: 3, project_id: 1, assignee_id: 9, title: "First", position: 1))
 
-    {issues, _deps} = Upkeep.Source.Runtime.load(ProjectIssues, %{project_id: 1, user_id: 9})
+    {issues, _deps} = Upkeep.Source.Loader.load(ProjectIssues, %{project_id: 1, user_id: 9})
 
     assert Enum.map(issues, & &1.title) == ["First", "Mine"]
   end
 
   defmodule RepeatingReadSource do
-    use Upkeep.Source, repo: Upkeep.Repo
+    use Upkeep.Source, repo: Upkeep.TestSupport.Repo
 
     import Ecto.Query
 
@@ -478,7 +478,7 @@ defmodule Upkeep.SourceEctoTest do
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
     {{first, second}, _deps} =
-      Upkeep.Source.Runtime.load(RepeatingReadSource, %{project_id: 1})
+      Upkeep.Source.Loader.load(RepeatingReadSource, %{project_id: 1})
 
     assert first == second
     # The two Upkeep.read calls share one underlying repo.all
@@ -491,21 +491,21 @@ defmodule Upkeep.SourceEctoTest do
     Repo.insert!(issue(id: 1, project_id: 1, column_id: 1, title: "Open", position: 1))
     Repo.insert!(issue(id: 2, project_id: 1, column_id: 1, status: "archived", title: "Archived"))
 
-    {board, deps} = Upkeep.Source.Runtime.load(BoardViewModel, %{project_id: 1})
+    {board, deps} = Upkeep.Source.Loader.load(BoardViewModel, %{project_id: 1})
 
     assert [%{column: "Backlog", issues: [%Issue{title: "Open"}]}] = board
 
-    interest_keys = Upkeep.Source.Runtime.deps_interest_keys(deps)
+    interest_keys = Upkeep.Source.Reactivity.deps_interest_keys(deps)
 
     assert {:upkeep_change, :inserted, Column, [project_id: 1]} in interest_keys
     assert {:upkeep_change, :updated, Issue, [project_id: 1, status: "open"]} in interest_keys
 
-    assert Upkeep.Source.Runtime.deps_react_to?(
+    assert Upkeep.Source.Reactivity.deps_react_to?(
              deps,
              issue(project_id: 1, column_id: 1, status: "open") |> Upkeep.Change.inserted()
            )
 
-    refute Upkeep.Source.Runtime.deps_react_to?(
+    refute Upkeep.Source.Reactivity.deps_react_to?(
              deps,
              issue(project_id: 1, column_id: 1, status: "archived") |> Upkeep.Change.inserted()
            )

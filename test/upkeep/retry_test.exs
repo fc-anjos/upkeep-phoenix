@@ -1,7 +1,7 @@
-defmodule Upkeep.RetryTest do
+defmodule Upkeep.Coordinator.RetryTest do
   use ExUnit.Case, async: true
 
-  alias Upkeep.Retry
+  alias Upkeep.Coordinator.Retry
 
   test "first failure schedules with base delay metadata" do
     retry = Retry.new(base_delay_ms: 10, max_delay_ms: 40)

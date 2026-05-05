@@ -1,4 +1,4 @@
-defmodule Upkeep.Retry do
+defmodule Upkeep.Coordinator.Retry do
   @moduledoc false
 
   defstruct attempts: %{}, timers: %{}, max_attempts: 3, base_delay_ms: 10, max_delay_ms: 40

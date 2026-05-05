@@ -1,10 +1,10 @@
-defmodule Upkeep.Coordinator.ReadNodesTest do
-  use Upkeep.DataCase, async: false
+defmodule Upkeep.Source.ReadCacheTest do
+  use Upkeep.TestSupport.DataCase, async: false
 
   import Ecto.Query
 
-  alias Upkeep.Coordinator.ReadNodes
-  alias Upkeep.Repo
+  alias Upkeep.Source.ReadCache, as: ReadCache
+  alias Upkeep.TestSupport.Repo
 
   defmodule Project do
     use Ecto.Schema
@@ -27,11 +27,11 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
       Repo.query!("DROP TABLE IF EXISTS upkeep_read_nodes_test_projects")
     end)
 
-    ReadNodes.clear()
+    ReadCache.clear()
     :ok
   end
 
-  test "two callers fetching the same query share a single read-node" do
+  test "two callers fetching the same query share a single read-cache entry" do
     Repo.insert!(%Project{id: 1, name: "alpha"})
     Repo.insert!(%Project{id: 2, name: "beta"})
 
@@ -50,14 +50,14 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
 
     q = from(p in Project, order_by: p.id)
 
-    a = ReadNodes.fetch_or_load(Repo, q)
-    b = ReadNodes.fetch_or_load(Repo, q)
-    c = ReadNodes.fetch_or_load(Repo, q)
+    a = ReadCache.fetch_or_load(Repo, q)
+    b = ReadCache.fetch_or_load(Repo, q)
+    c = ReadCache.fetch_or_load(Repo, q)
 
     assert a == b and b == c
     assert Enum.map(a, & &1.name) == ["alpha", "beta"]
     assert :counters.get(counter, 1) == 1
-    assert ReadNodes.count() == 1
+    assert ReadCache.count() == 1
   end
 
   test "different repos with the same SQL share no cache" do
@@ -65,15 +65,15 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
 
     q = from(p in Project)
 
-    ReadNodes.fetch_or_load(Repo, q)
-    assert ReadNodes.count() == 1
+    ReadCache.fetch_or_load(Repo, q)
+    assert ReadCache.count() == 1
 
-    # Same query against the same repo is the same node — sanity
-    ReadNodes.fetch_or_load(Repo, q)
-    assert ReadNodes.count() == 1
+    # Same query against the same repo is the same cache entry.
+    ReadCache.fetch_or_load(Repo, q)
+    assert ReadCache.count() == 1
   end
 
-  test "invalidate/1 evicts read-nodes whose query touches the changed schema" do
+  test "invalidate/1 evicts read-cache entries whose query touches the changed schema" do
     Repo.insert!(%Project{id: 1, name: "alpha"})
 
     counter = :counters.new(1, [])
@@ -90,30 +90,30 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
 
     q = from(p in Project)
 
-    ReadNodes.fetch_or_load(Repo, q)
-    ReadNodes.fetch_or_load(Repo, q)
+    ReadCache.fetch_or_load(Repo, q)
+    ReadCache.fetch_or_load(Repo, q)
     assert :counters.get(counter, 1) == 1
-    assert ReadNodes.count() == 1
+    assert ReadCache.count() == 1
 
     # Simulate a write event the way Graph.notify would
     event = Upkeep.Change.updated(%Project{id: 1, name: "alpha"})
-    ReadNodes.invalidate(event)
-    assert ReadNodes.count() == 0
+    ReadCache.invalidate(event)
+    assert ReadCache.count() == 0
 
-    ReadNodes.fetch_or_load(Repo, q)
+    ReadCache.fetch_or_load(Repo, q)
     assert :counters.get(counter, 1) == 2
   end
 
-  test "Graph.notify/1 evicts matching read-nodes before dispatch" do
+  test "Graph.notify/1 evicts matching read-cache entries before dispatch" do
     Repo.insert!(%Project{id: 1, name: "alpha"})
 
     q = from(p in Project)
-    ReadNodes.fetch_or_load(Repo, q)
-    assert ReadNodes.count() == 1
+    ReadCache.fetch_or_load(Repo, q)
+    assert ReadCache.count() == 1
 
     Upkeep.Coordinator.Graph.notify(Upkeep.Change.inserted(%Project{id: 2, name: "beta"}))
 
-    assert ReadNodes.count() == 0
+    assert ReadCache.count() == 0
   end
 
   test "concurrent fetch_or_load for the same query collapses into one DB hit" do
@@ -147,7 +147,7 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
             {^barrier, :go} -> :ok
           end
 
-          rows = ReadNodes.fetch_or_load(Repo, q)
+          rows = ReadCache.fetch_or_load(Repo, q)
           send(parent, {:done, i, length(rows)})
         end)
       end
@@ -158,7 +158,7 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
     for i <- 1..n, do: assert_receive({:done, ^i, 20}, 10_000)
 
     assert :counters.get(counter, 1) == 1
-    assert ReadNodes.count() == 1
+    assert ReadCache.count() == 1
   end
 
   test "loader exception propagates to all waiters and clears pending state" do
@@ -167,8 +167,8 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
     n = 5
 
     # Replace the fetch_or_load body with a function that throws by
-    # talking to the coalescer directly — keeps this test independent of
-    # ReadNodes' real load path.
+    # talking to the coalescer directly. This keeps the test independent
+    # of ReadCache's real load path.
     bad_node = {:read, :test_repo, :erlang.unique_integer()}
 
     spawner = fn ->
@@ -181,7 +181,7 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
           end
 
           try do
-            Upkeep.SingleFlight.Registry.coalesce(ReadNodes.coalescer_name(), bad_node, fn ->
+            Upkeep.SingleFlight.Registry.coalesce(ReadCache.coalescer_name(), bad_node, fn ->
               if i == 1 do
                 raise "boom"
               else
@@ -209,22 +209,22 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
 
     # All callers got :error (loader raised, waiters re-raise the same).
     assert Enum.all?(results, &match?({:error, "boom"}, &1))
-    refute Upkeep.SingleFlight.Registry.pending?(ReadNodes.coalescer_name(), bad_node)
+    refute Upkeep.SingleFlight.Registry.pending?(ReadCache.coalescer_name(), bad_node)
   end
 
-  test "Watcher invalidates ReadNodes when it receives a dispatched notification" do
+  test "SourceInvalidator invalidates ReadCache when it receives a dispatched notification" do
     Repo.insert!(%Project{id: 1, name: "alpha"})
 
     q = from(p in Project)
-    ReadNodes.fetch_or_load(Repo, q)
-    assert ReadNodes.count() == 1
+    ReadCache.fetch_or_load(Repo, q)
+    assert ReadCache.count() == 1
 
     # Simulate a dispatched notification arriving on a *remote* node by
     # sending the same message Group.dispatch would deliver, directly to
-    # the Watcher pid. This bypasses the inline invalidate inside
-    # Graph.notify/1, isolating the Watcher's behavior — which is the
+    # the SourceInvalidator pid. This bypasses the inline invalidate inside
+    # Graph.notify/1, isolating the invalidator behavior, which is the
     # only mechanism remote nodes have to learn about evictions.
-    watcher = Process.whereis(Upkeep.Coordinator.ReadNodes.Watcher)
+    watcher = Process.whereis(Upkeep.Coordinator.SourceInvalidator)
     assert is_pid(watcher)
 
     event = Upkeep.Change.updated(%Project{id: 1, name: "alpha2"})
@@ -232,56 +232,54 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
 
     # Wait for the cast to be processed.
     _ = :sys.get_state(watcher)
-    assert ReadNodes.count() == 0
+    assert ReadCache.count() == 0
   end
 
-  test "release/1 evicts read-nodes when their last holder is dropped" do
+  test "release/1 evicts read-cache entries when their last holder is dropped" do
     Repo.insert!(%Project{id: 1, name: "alpha"})
 
     q = from(p in Project)
     holder_a = {:source_a, %{}}
     holder_b = {:source_b, %{}}
 
-    ReadNodes.fetch_or_load(Repo, q, holder_a)
-    ReadNodes.fetch_or_load(Repo, q, holder_b)
-    assert ReadNodes.count() == 1
+    ReadCache.fetch_or_load(Repo, q, holder_a)
+    ReadCache.fetch_or_load(Repo, q, holder_b)
+    assert ReadCache.count() == 1
 
-    # Releasing one holder leaves the read-node alive — another holder
+    # Releasing one holder leaves the read-cache entry alive — another holder
     # is still using it.
-    assert ReadNodes.release(holder_a) == 0
-    assert ReadNodes.count() == 1
+    assert ReadCache.release(holder_a) == 0
+    assert ReadCache.count() == 1
 
     # Releasing the last holder evicts the value and its index entries.
-    assert ReadNodes.release(holder_b) == 1
-    assert ReadNodes.count() == 0
-    assert :ets.tab2list(ReadNodes.index_table()) == []
+    assert ReadCache.release(holder_b) == 1
+    assert ReadCache.count() == 0
+    assert :ets.tab2list(ReadCache.index_table()) == []
   end
 
   test "release/1 is a no-op when no holder was recorded" do
     Repo.insert!(%Project{id: 1, name: "alpha"})
 
     q = from(p in Project)
-    ReadNodes.fetch_or_load(Repo, q)
-    assert ReadNodes.count() == 1
+    ReadCache.fetch_or_load(Repo, q)
+    assert ReadCache.count() == 1
 
-    assert ReadNodes.release({:never_seen, %{}}) == 0
-    assert ReadNodes.count() == 1
+    assert ReadCache.release({:never_seen, %{}}) == 0
+    assert ReadCache.count() == 1
   end
 
-  test "removing a source node releases its read-nodes" do
-    # Use a custom source that goes through Upkeep.Source.Runtime.load so the
+  test "removing a source node releases its read-cache entries" do
+    # Use a custom source that goes through Upkeep.Source.Loader.load so the
     # holder propagation is exercised end-to-end.
     Repo.insert!(%Project{id: 1, name: "alpha"})
 
     defmodule HolderSource do
-      use Upkeep.Source, repo: Upkeep.Repo
+      use Upkeep.Source, repo: Upkeep.TestSupport.Repo
 
       import Ecto.Query
 
       def load(params) do
-        Upkeep.read(
-          from(p in Upkeep.Coordinator.ReadNodesTest.Project, where: p.id == ^params.id)
-        )
+        Upkeep.read(from(p in Upkeep.Source.ReadCacheTest.Project, where: p.id == ^params.id))
       end
 
       def reacts_to?(_event, _params), do: false
@@ -290,18 +288,18 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
       def __upkeep_sharing_partition__(params), do: params
     end
 
-    {_value, _deps} = Upkeep.Source.Runtime.load(HolderSource, %{id: 1})
-    assert ReadNodes.count() == 1
+    {_value, _deps} = Upkeep.Source.Loader.load(HolderSource, %{id: 1})
+    assert ReadCache.count() == 1
 
-    Upkeep.Coordinator.ReadNodes.release(Upkeep.Source.Runtime.source_id(HolderSource, %{id: 1}))
-    assert ReadNodes.count() == 0
+    Upkeep.Source.ReadCache.release(Upkeep.Source.Identity.source_id(HolderSource, %{id: 1}))
+    assert ReadCache.count() == 0
   end
 
-  test "Watcher is a member of the cluster notification group" do
+  test "SourceInvalidator is a member of the cluster notification group" do
     members =
       Group.members(Upkeep.Coordinator.Graph.group(), Upkeep.Coordinator.Graph.notification_key())
 
     pids = Enum.map(members, fn {pid, _meta} -> pid end)
-    assert Process.whereis(Upkeep.Coordinator.ReadNodes.Watcher) in pids
+    assert Process.whereis(Upkeep.Coordinator.SourceInvalidator) in pids
   end
 end

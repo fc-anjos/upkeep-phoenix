@@ -1,7 +1,7 @@
-defmodule Upkeep.DirtyBufferTest do
+defmodule Upkeep.Coordinator.DirtyBufferTest do
   use ExUnit.Case, async: true
 
-  alias Upkeep.DirtyBuffer
+  alias Upkeep.Coordinator.DirtyBuffer
 
   test "first enqueue schedules; subsequent enqueues wait" do
     buffer = DirtyBuffer.new(threshold: 100)

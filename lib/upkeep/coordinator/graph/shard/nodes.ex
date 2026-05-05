@@ -3,7 +3,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
 
   alias Upkeep.Coordinator.Graph.Shard.{Loaders, Retries}
   alias Upkeep.Coordinator.Node
-  alias Upkeep.Coordinator.ReadNodes
+  alias Upkeep.Source.ReadCache
   alias Upkeep.Coordinator.Subscriptions
   alias Upkeep.Coordinator.Topology
   alias Upkeep.DAG.Store
@@ -43,7 +43,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
 
   def remove(state, node_id) do
     Topology.unregister(node_id)
-    ReadNodes.release(node_id)
+    ReadCache.release(node_id)
 
     state = Retries.clear(state, node_id)
 

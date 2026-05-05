@@ -56,6 +56,20 @@ defmodule Upkeep do
       Source,
       Source.Coverage,
       Test
+    ],
+    deps: [
+      Ecto.Changeset,
+      Ecto.Adapters.Postgres,
+      Ecto.Adapters.SQL,
+      Ecto.Migration.SchemaMigration,
+      Ecto.Multi,
+      Ecto.Query,
+      Ecto.Queryable,
+      Ecto.Schema.Metadata,
+      Ecto.SubQuery,
+      Group,
+      Logger,
+      {Mix, :compile}
     ]
 
   use Supervisor

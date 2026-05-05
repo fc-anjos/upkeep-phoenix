@@ -1,7 +1,7 @@
-defmodule Upkeep.TestSchema do
+defmodule Upkeep.TestSupport.Schema do
   @moduledoc false
 
-  alias Upkeep.Repo
+  alias Upkeep.TestSupport.Repo
 
   @repo_capture_tables [
     "upkeep_repo_capture_test_imports",

@@ -1,4 +1,4 @@
-defmodule Upkeep.DataCase do
+defmodule Upkeep.TestSupport.DataCase do
   @moduledoc """
   This module defines the setup for tests requiring
   access to the application's data layer.
@@ -10,7 +10,7 @@ defmodule Upkeep.DataCase do
   we enable the SQL sandbox, so changes done to the database
   are reverted at the end of every test. If you are using
   PostgreSQL, you can even run database tests asynchronously
-  by setting `use Upkeep.DataCase, async: true`, although
+  by setting `use Upkeep.TestSupport.DataCase, async: true`, although
   this option is not recommended for other databases.
   """
 
@@ -18,17 +18,17 @@ defmodule Upkeep.DataCase do
 
   using do
     quote do
-      alias Upkeep.Repo
+      alias Upkeep.TestSupport.Repo
 
       import Ecto
       import Ecto.Changeset
       import Ecto.Query
-      import Upkeep.DataCase
+      import Upkeep.TestSupport.DataCase
     end
   end
 
   setup tags do
-    Upkeep.DataCase.setup_sandbox(tags)
+    Upkeep.TestSupport.DataCase.setup_sandbox(tags)
     :ok
   end
 
@@ -37,7 +37,10 @@ defmodule Upkeep.DataCase do
   """
   def setup_sandbox(tags) do
     Upkeep.Test.reset_graph()
-    pid = Ecto.Adapters.SQL.Sandbox.start_owner!(Upkeep.Repo, shared: not tags[:async])
+
+    pid =
+      Ecto.Adapters.SQL.Sandbox.start_owner!(Upkeep.TestSupport.Repo, shared: not tags[:async])
+
     Upkeep.Test.allow_sandbox()
     on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
   end

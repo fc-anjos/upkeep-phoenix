@@ -1,8 +1,8 @@
-defmodule Upkeep.Coordinator.ReadNodes do
+defmodule Upkeep.Source.ReadCache do
   @moduledoc false
 
   alias Upkeep.SingleFlight.Registry
-  alias Upkeep.Ecto.QueryDeps
+  alias Upkeep.Source.QueryDeps
 
   @values :upkeep_read_node_values
   @index :upkeep_read_node_index
@@ -136,7 +136,7 @@ defmodule Upkeep.Coordinator.ReadNodes do
   def count, do: :ets.info(@values, :size)
 
   @doc false
-  def coalescer_name, do: Upkeep.Coordinator.ReadNodes.Coalescer
+  def coalescer_name, do: Upkeep.Source.ReadCache.Coalescer
 
   defp evict(node_id, deps) do
     :ets.delete(@values, node_id)

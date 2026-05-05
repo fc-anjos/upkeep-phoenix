@@ -4,6 +4,7 @@ defmodule Upkeep.Live do
   """
 
   alias Upkeep.Live.{RuntimeResult, Snapshot, Specs}
+  alias Upkeep.Source.Loader, as: Source
 
   @registered_event [:upkeep, :live, :registered]
 
@@ -42,7 +43,7 @@ defmodule Upkeep.Live do
     location = Keyword.get(opts, :source_location)
 
     with_current_scope(socket, fn socket ->
-      Upkeep.Source.RepoCaptureGuard.verify_source!(source, params, source_location: location)
+      Source.verify_source!(source, params, source_location: location)
       spec = Specs.source(assign_name, source, params, component, location)
       announce_registration(spec, location)
       Upkeep.Runtime.mount(socket, spec)

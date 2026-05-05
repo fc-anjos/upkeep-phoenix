@@ -1,7 +1,8 @@
 defmodule Upkeep.Coordinator.Topology do
   @moduledoc false
 
-  alias Upkeep.Source.Runtime, as: Source
+  alias Upkeep.Source.Identity, as: SourceIdentity
+  alias Upkeep.Source.Reactivity, as: SourceReactivity
 
   @nodes_table :upkeep_topology_nodes
   @index_table :upkeep_topology_index
@@ -88,7 +89,7 @@ defmodule Upkeep.Coordinator.Topology do
   def affected_source_node_ids(event) when is_struct(event) do
     affected =
       event
-      |> Source.event_keys()
+      |> SourceReactivity.event_keys()
       |> Enum.flat_map(&:ets.lookup(@index_table, &1))
       |> Enum.map(fn {_key, node_id} -> node_id end)
 
@@ -140,7 +141,7 @@ defmodule Upkeep.Coordinator.Topology do
   end
 
   def node_partition({source, params}) when is_atom(source) and is_map(params) do
-    Source.sharing_partition(source, params)
+    SourceIdentity.sharing_partition(source, params)
   end
 
   def node_partition({:derived, _view, _assign_name, dep_node_ids, _fun}) do
