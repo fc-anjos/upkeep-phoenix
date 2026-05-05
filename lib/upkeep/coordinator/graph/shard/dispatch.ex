@@ -3,6 +3,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Dispatch do
 
   alias Upkeep.Coordinator.Graph
   alias Upkeep.Coordinator.Node
+  alias Upkeep.DAG.Store
 
   def batch(_state, []), do: :ok
 
@@ -20,7 +21,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Dispatch do
       # source and derived values that should arrive atomically for a LiveView.
       pairs_by_pid =
         Enum.reduce(pairs, %{}, fn {node_id, value}, acc ->
-          %Node{encoded_key: encoded_key} = Map.fetch!(state.sources, node_id)
+          %Node{encoded_key: encoded_key} = Store.fetch_metadata!(state.store, node_id)
 
           Graph.group()
           |> Group.members(encoded_key)

@@ -42,7 +42,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
     dirty_sources =
       state.buffer_node_ids
       |> MapSet.to_list()
-      |> Enum.filter(&Map.has_key?(state.sources, &1))
+      |> Enum.filter(&Store.has_node?(state.store, &1))
 
     {sources_loaded, state} = load_sources(dirty_sources, state)
 
@@ -74,7 +74,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
         Graph.task_sup(),
         node_ids,
         fn node_id ->
-          node = Map.fetch!(state.sources, node_id)
+          node = Store.fetch_metadata!(state.store, node_id)
 
           {value, current_keys, tracked_deps} = Loaders.run_with_deps(node.loader)
           {node_id, value, current_keys, tracked_deps, node}
@@ -96,18 +96,18 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
 
           state = Retries.clear(state, node_id)
 
-          sources =
-            Map.put(state.sources, node_id, %Node{
+          store =
+            Store.put_metadata(state.store, node_id, %Node{
               node
               | registered_keys: current_keys,
                 tracked_deps: tracked_deps,
                 loaded?: true
             })
 
-          {[{node_id, value} | results], %{state | sources: sources}}
+          {[{node_id, value} | results], %{state | store: store}}
 
         {node_id, {:exit, reason}}, {results, state} ->
-          node = Map.fetch!(state.sources, node_id)
+          node = Store.fetch_metadata!(state.store, node_id)
           {state, retry_metadata} = Retries.after_failure(state, node_id, node)
 
           :telemetry.execute(

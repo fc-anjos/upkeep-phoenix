@@ -24,7 +24,6 @@ defmodule Upkeep.Coordinator.Graph.Shard do
        idx: idx,
        generation: generation,
        store: Store.new(),
-       sources: %{},
        initial_loads: %{},
        initial_load_refs: %{},
        initial_derived_loads: %{},
@@ -81,7 +80,6 @@ defmodule Upkeep.Coordinator.Graph.Shard do
       |> Retries.cancel_all()
       |> Map.merge(%{
         store: Store.new(),
-        sources: %{},
         initial_loads: %{},
         initial_load_refs: %{},
         initial_derived_loads: %{},
@@ -117,7 +115,7 @@ defmodule Upkeep.Coordinator.Graph.Shard do
     case Retries.pop_timer(state, node_id, timer_ref) do
       {:ok, state} ->
         state =
-          if Map.has_key?(state.sources, node_id) do
+          if Store.has_node?(state.store, node_id) do
             Flush.enqueue_retry(state, [node_id])
           else
             state

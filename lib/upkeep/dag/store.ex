@@ -9,7 +9,7 @@ defmodule Upkeep.DAG.Store do
 
   alias Upkeep.DAG.{Diff, Graph}
 
-  defstruct graph: nil, values: %{}, compute_fns: %{}
+  defstruct graph: nil, values: %{}, compute_fns: %{}, metadata: %{}
 
   def new, do: %__MODULE__{graph: Graph.new()}
 
@@ -18,6 +18,33 @@ defmodule Upkeep.DAG.Store do
   def has_node?(%__MODULE__{graph: graph}, id), do: Graph.has_node?(graph, id)
 
   def fetch!(%__MODULE__{values: values}, id), do: Map.fetch!(values, id)
+
+  @doc """
+  Attach an opaque metadata payload to an existing node. Domain code uses this
+  for per-node payloads that aren't computed values (loaders, registration
+  records, telemetry tags).
+  """
+  def put_metadata(%__MODULE__{} = store, id, metadata) do
+    unless Graph.has_node?(store.graph, id) do
+      raise ArgumentError, "unknown DAG node #{inspect(id)}"
+    end
+
+    %{store | metadata: Map.put(store.metadata, id, metadata)}
+  end
+
+  def update_metadata(%__MODULE__{} = store, id, default, fun) when is_function(fun, 1) do
+    unless Graph.has_node?(store.graph, id) do
+      raise ArgumentError, "unknown DAG node #{inspect(id)}"
+    end
+
+    %{store | metadata: Map.update(store.metadata, id, default, fun)}
+  end
+
+  def fetch_metadata!(%__MODULE__{metadata: metadata}, id), do: Map.fetch!(metadata, id)
+
+  def get_metadata(%__MODULE__{metadata: metadata}, id, default \\ nil) do
+    Map.get(metadata, id, default)
+  end
 
   @doc """
   Register or update a source node and its value. Returns `{store, changed?}`
@@ -88,7 +115,8 @@ defmodule Upkeep.DAG.Store do
         store
         | graph: Graph.remove_node(store.graph, id),
           values: Map.delete(store.values, id),
-          compute_fns: Map.delete(store.compute_fns, id)
+          compute_fns: Map.delete(store.compute_fns, id),
+          metadata: Map.delete(store.metadata, id)
       }
     end)
   end

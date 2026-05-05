@@ -166,6 +166,39 @@ defmodule Upkeep.DAG.StoreTest do
     end
   end
 
+  test "metadata: put + fetch + update + drop on remove_subgraph" do
+    store =
+      Store.new()
+      |> elem_put_source(:a, 1)
+      |> Store.put_metadata(:a, %{loader: :fn_a, hits: 0})
+
+    assert Store.fetch_metadata!(store, :a) == %{loader: :fn_a, hits: 0}
+    assert Store.get_metadata(store, :missing) == nil
+    assert Store.get_metadata(store, :missing, :default) == :default
+
+    store =
+      Store.update_metadata(store, :a, %{hits: 0}, fn meta ->
+        Map.update!(meta, :hits, &(&1 + 1))
+      end)
+
+    assert Store.fetch_metadata!(store, :a) == %{loader: :fn_a, hits: 1}
+
+    store = Store.remove_subgraph(store, :a)
+    assert Store.get_metadata(store, :a) == nil
+  end
+
+  test "metadata: raises for unknown nodes" do
+    store = Store.new()
+
+    assert_raise ArgumentError, ~r/unknown DAG node/, fn ->
+      Store.put_metadata(store, :ghost, %{})
+    end
+
+    assert_raise ArgumentError, ~r/unknown DAG node/, fn ->
+      Store.update_metadata(store, :ghost, %{}, & &1)
+    end
+  end
+
   defp elem_put_source(store, id, value, deps \\ []) do
     {store, _changed?} = Store.put_source(store, id, value, deps)
     store

@@ -10,7 +10,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
   def register_source_and_load(state, node_id, from) do
     case Map.fetch(state.initial_loads, node_id) do
       {:ok, load} ->
-        node = Map.fetch!(state.sources, node_id)
+        node = Store.fetch_metadata!(state.store, node_id)
 
         emit_source(:hit, state.idx, node_id, node.loader)
 
@@ -18,7 +18,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
         {:noreply, state}
 
       :error ->
-        node = Map.fetch!(state.sources, node_id)
+        node = Store.fetch_metadata!(state.store, node_id)
 
         emit_source(:miss, state.idx, node_id, node.loader)
 
@@ -95,16 +95,16 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
 
         {store, _changed?} = Store.put_source(state.store, node_id, value, [])
 
-        sources =
-          Map.put(
-            state.sources,
+        store =
+          Store.put_metadata(
+            store,
             node_id,
             %Node{node | registered_keys: current_keys, tracked_deps: tracked_deps, loaded?: true}
           )
 
         Enum.each(load.waiters, &GenServer.reply(&1, {:ok, value, tracked_deps}))
 
-        %{state | store: store, sources: sources}
+        %{state | store: store}
 
       _stale_reply ->
         state
