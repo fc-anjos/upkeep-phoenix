@@ -7,8 +7,6 @@ defmodule Upkeep.Source do
   the source's reactive surface.
   """
 
-  @context_key {__MODULE__, :read_context}
-
   defmacro __using__(opts) do
     repo =
       opts
@@ -22,7 +20,7 @@ defmodule Upkeep.Source do
       @upkeep_repo repo
       Module.register_attribute(__MODULE__, :upkeep_invalidators, accumulate: true)
       Module.register_attribute(__MODULE__, :upkeep_reactors, accumulate: true)
-      @before_compile Upkeep.Source
+      @before_compile Upkeep.Source.Spec
     end
   end
 
@@ -41,19 +39,6 @@ defmodule Upkeep.Source do
     build_invalidated_by(notification, opts)
   end
 
-  defp build_invalidated_by(notification, opts) do
-    on = Keyword.fetch!(opts, :on) |> List.wrap()
-    as = Keyword.get(opts, :as, on) |> List.wrap()
-
-    unless length(on) == length(as) do
-      raise ArgumentError, "`:on` and `:as` must name the same number of fields"
-    end
-
-    quote bind_quoted: [notification: Macro.escape(notification), on: on, as: as] do
-      @upkeep_invalidators {notification, on, as}
-    end
-  end
-
   defmacro reacts_to(notification, fun) do
     notification = normalize_notification(notification, __CALLER__)
 
@@ -70,226 +55,16 @@ defmodule Upkeep.Source do
     end
   end
 
-  defmacro __before_compile__(env) do
-    invalidators = Module.get_attribute(env.module, :upkeep_invalidators)
-    reactors = Module.get_attribute(env.module, :upkeep_reactors)
-    repo = Module.get_attribute(env.module, :upkeep_repo)
-    defines_load? = Module.defines?(env.module, {:load, 1})
-    defines_query? = Module.defines?(env.module, {:query, 1})
-    defines_sharing_partition? = Module.defines?(env.module, {:__upkeep_sharing_partition__, 1})
-
-    partition_fields =
-      invalidators |> Enum.flat_map(fn {_notification, _on, as} -> as end) |> Enum.uniq()
-
-    invalidator_checks =
-      Enum.map(invalidators, fn {notification, on, as} ->
-        quote do
-          Upkeep.Source.matches?(event, unquote(Macro.escape(notification))) and
-            Upkeep.Source.equal_fields?(event, params, unquote(on), unquote(as))
-        end
-      end)
-
-    reactor_checks =
-      Enum.map(reactors, fn {notification, fun} ->
-        quote do
-          Upkeep.Source.matches?(event, unquote(Macro.escape(notification))) and
-            unquote(fun).(event, params)
-        end
-      end)
-
-    interest_keys =
-      Enum.map(invalidators, fn {notification, on, as} ->
-        quote do
-          Upkeep.Source.interest_key(
-            unquote(Macro.escape(notification)),
-            unquote(on),
-            unquote(as),
-            params
-          )
-        end
-      end) ++
-        Enum.map(reactors, fn {notification, _fun} ->
-          quote do
-            Upkeep.Source.notification_key(unquote(Macro.escape(notification)))
-          end
-        end)
-
-    reacts_to_body =
-      case invalidator_checks ++ reactor_checks do
-        [] ->
-          if defines_query? do
-            quote do
-              Upkeep.Source.query_reacts_to?(__MODULE__, event, params)
-            end
-          else
-            false
-          end
-
-        checks ->
-          query_check =
-            if defines_query? do
-              quote do
-                Upkeep.Source.query_reacts_to?(__MODULE__, event, params)
-              end
-            else
-              false
-            end
-
-          Enum.reduce([query_check | checks], &{:or, [], [&1, &2]})
-      end
-
-    load_definition =
-      cond do
-        defines_load? ->
-          []
-
-        defines_query? ->
-          quote do
-            def load(params) do
-              params
-              |> __MODULE__.query()
-              |> Upkeep.read()
-            end
-          end
-
-        true ->
-          quote do
-            def load(_params) do
-              raise ArgumentError,
-                    "#{inspect(__MODULE__)} must define load/1 or query/1 to be used as an Upkeep source"
-            end
-          end
-      end
-
-    query_interest_keys =
-      if defines_query? do
-        quote do
-          Upkeep.Source.query_interest_keys(__MODULE__, params)
-        end
-      else
-        []
-      end
-
-    sharing_partition_definition =
-      cond do
-        defines_sharing_partition? ->
-          []
-
-        partition_fields == [] ->
-          quote do
-            def __upkeep_sharing_partition__(params) do
-              params
-            end
-          end
-
-        true ->
-          quote do
-            def __upkeep_sharing_partition__(params) do
-              Map.take(params, unquote(Macro.escape(partition_fields)))
-            end
-          end
-      end
-
-    quote do
-      unquote(load_definition)
-      unquote(sharing_partition_definition)
-
-      def __upkeep_repo__, do: unquote(repo)
-
-      def reacts_to?(event, params), do: unquote(reacts_to_body)
-
-      def __upkeep_interest_keys__(params) do
-        [unquote_splicing(interest_keys)] ++ unquote(query_interest_keys)
-      end
-
-      def __upkeep_explicit_interest_keys__(params) do
-        [unquote_splicing(interest_keys)]
-      end
-    end
-  end
-
-  def load(source, params) when is_atom(source) do
-    repo = source.__upkeep_repo__() || Application.get_env(:upkeep, :repo)
-
-    {value, deps} =
-      with_read_context(repo, source_id(source, params), fn ->
-        value = source.load(params)
-        {value, tracked_deps()}
-      end)
-
-    coverage = coverage(source, params, deps)
-
-    emit_coverage(coverage)
-    warn_if_no_invalidation_surface(coverage)
-
-    {value, deps}
-  end
-
-  def read(%Ecto.Query{} = query) do
-    case Process.get(@context_key) do
-      %{repo: repo} = ctx ->
-        track_query(query)
-        memoize_read(repo, ctx[:holder], query)
-
-      _ ->
-        raise ArgumentError,
-              "Upkeep.read/1 must be called inside a source context. " <>
-                "Use it only inside a source's load/1 or query/1 callback. " <>
-                "For ad-hoc queries, call Repo.all/1 directly."
-    end
-  end
-
-  def read(value), do: value
-
-  defp memoize_read(repo, holder, query) do
-    fingerprint = read_fingerprint(repo, query)
-    cache = Map.get(Process.get(@context_key), :reads, %{})
-
-    case Map.fetch(cache, fingerprint) do
-      {:ok, value} ->
-        value
-
-      :error ->
-        value = Upkeep.Coordinator.ReadNodes.fetch_or_load(repo, query, holder)
-        ctx = Process.get(@context_key)
-        Process.put(@context_key, Map.put(ctx, :reads, Map.put(cache, fingerprint, value)))
-        value
-    end
-  end
-
-  defp read_fingerprint(repo, query) do
-    {sql, params} = Ecto.Adapters.SQL.to_sql(:all, repo, query)
-    :erlang.phash2({sql, params})
-  end
-
-  def deps_interest_keys(deps) do
-    deps
-    |> Enum.flat_map(&Upkeep.Ecto.QueryDeps.interest_keys/1)
-    |> Enum.uniq()
-  end
-
-  def deps_react_to?(deps, event) do
-    Enum.any?(deps, &Upkeep.Ecto.QueryDeps.matches_change?(&1, event))
-  end
-
-  def coverage(source, params) when is_atom(source) and is_map(params) do
-    repo = source.__upkeep_repo__() || Application.get_env(:upkeep, :repo)
-
-    {_value, deps} =
-      with_read_context(repo, source_id(source, params), fn ->
-        value = source.load(params)
-        {value, tracked_deps()}
-      end)
-
-    coverage(source, params, deps)
-  end
-
-  def coverage(source, params, deps) when is_atom(source) and is_map(params) and is_list(deps) do
-    deps
-    |> Enum.map(&Upkeep.Ecto.QueryDeps.coverage/1)
-    |> Enum.reduce(base_coverage(source, params), &Upkeep.Source.Coverage.merge/2)
-    |> attach_unknown_if_empty()
-  end
+  defdelegate load(source, params), to: Upkeep.Source.Runtime
+  defdelegate read(query_or_value), to: Upkeep.Source.Runtime
+  defdelegate deps_interest_keys(deps), to: Upkeep.Source.Runtime
+  defdelegate deps_react_to?(deps, event), to: Upkeep.Source.Runtime
+  defdelegate coverage(source, params), to: Upkeep.Source.Runtime
+  defdelegate coverage(source, params, deps), to: Upkeep.Source.Runtime
+  defdelegate query_interest_keys(source, params), to: Upkeep.Source.Runtime
+  defdelegate query_reacts_to?(source, event, params), to: Upkeep.Source.Runtime
+  defdelegate source_id(source, params), to: Upkeep.Source.Runtime
+  defdelegate sharing_partition(source, params), to: Upkeep.Source.Runtime
 
   defdelegate matches?(event, notification), to: Upkeep.Source.Keys
   defdelegate equal_fields?(event, params, event_fields, source_fields), to: Upkeep.Source.Keys
@@ -301,129 +76,16 @@ defmodule Upkeep.Source do
   defdelegate notification_key(notification, values), to: Upkeep.Source.Keys
   defdelegate event_keys(event), to: Upkeep.Source.Keys
 
-  def query_interest_keys(source, params) when is_atom(source) do
-    source
-    |> source_query(params)
-    |> Upkeep.Ecto.QueryDeps.interest_keys()
-  end
+  defp build_invalidated_by(notification, opts) do
+    on = Keyword.fetch!(opts, :on) |> List.wrap()
+    as = Keyword.get(opts, :as, on) |> List.wrap()
 
-  def query_reacts_to?(source, event, params) when is_atom(source) and is_struct(event) do
-    deps =
-      source
-      |> source_query(params)
-      |> Upkeep.Ecto.QueryDeps.from_query()
-
-    Upkeep.Ecto.QueryDeps.matches_change?(deps, event)
-  end
-
-  defp source_query(source, params) do
-    if function_exported?(source, :query, 1), do: source.query(params), else: nil
-  end
-
-  defp with_read_context(repo, holder, fun) do
-    previous = Process.get(@context_key)
-    Process.put(@context_key, %{repo: repo, deps: [], holder: holder})
-
-    try do
-      fun.()
-    after
-      restore_read_context(previous)
-    end
-  end
-
-  defp restore_read_context(nil), do: Process.delete(@context_key)
-  defp restore_read_context(previous), do: Process.put(@context_key, previous)
-
-  defp track_query(query) do
-    case Process.get(@context_key) do
-      %{deps: deps} = context ->
-        deps = [Upkeep.Ecto.QueryDeps.from_query(query) | deps]
-        Process.put(@context_key, %{context | deps: deps})
-
-      _ ->
-        raise "Upkeep.Source.track_query/1 called outside a source context. " <>
-                "This usually means a Task spawned inside load/1 lost the context — " <>
-                "explicit propagation is required for concurrent reads."
-    end
-  end
-
-  @warn_dedup_key {__MODULE__, :no_invalidation_warned}
-
-  defp emit_coverage(%Upkeep.Source.Coverage{} = coverage) do
-    :telemetry.execute(
-      [:upkeep, :source, :coverage],
-      %{count: 1},
-      %{
-        source: coverage.source,
-        params: coverage.params,
-        coverage: coverage,
-        severity: Upkeep.Source.Coverage.severity(coverage),
-        known?: Upkeep.Source.Coverage.known?(coverage)
-      }
-    )
-  end
-
-  defp base_coverage(source, params) do
-    explicit =
-      if function_exported?(source, :__upkeep_explicit_interest_keys__, 1),
-        do: source.__upkeep_explicit_interest_keys__(params),
-        else: []
-
-    Upkeep.Source.Coverage.new(source, params, explicit: explicit)
-  end
-
-  defp attach_unknown_if_empty(%Upkeep.Source.Coverage{} = coverage) do
-    empty? =
-      coverage.precise == [] and coverage.broad == [] and coverage.explicit == [] and
-        coverage.unknown == []
-
-    if empty? do
-      %Upkeep.Source.Coverage{
-        coverage
-        | unknown: [%{reason: :no_invalidation_surface}]
-      }
-    else
-      coverage
-    end
-  end
-
-  defp warn_if_no_invalidation_surface(%Upkeep.Source.Coverage{unknown: []}), do: :ok
-
-  defp warn_if_no_invalidation_surface(%Upkeep.Source.Coverage{} = coverage) do
-    if Enum.any?(coverage.unknown, &(&1.reason == :no_invalidation_surface)) do
-      shape = {coverage.source, coverage.params}
-      seen = :persistent_term.get(@warn_dedup_key, MapSet.new())
-
-      unless MapSet.member?(seen, shape) do
-        :persistent_term.put(@warn_dedup_key, MapSet.put(seen, shape))
-
-        require Logger
-
-        Logger.warning(
-          "Upkeep source #{inspect(coverage.source)} with params #{inspect(coverage.params)} produced " <>
-            "no invalidation keys. It will not react to any event. Add an " <>
-            "invalidated_by/reacts_to declaration, or call Upkeep.read inside load/1."
-        )
-      end
+    unless length(on) == length(as) do
+      raise ArgumentError, "`:on` and `:as` must name the same number of fields"
     end
 
-    :ok
-  end
-
-  defp tracked_deps do
-    case Process.get(@context_key) do
-      %{deps: deps} -> Enum.reverse(deps)
-      _context -> []
-    end
-  end
-
-  def source_id(source, params) when is_atom(source) and is_map(params), do: {source, params}
-
-  def sharing_partition(source, params) when is_atom(source) and is_map(params) do
-    if function_exported?(source, :__upkeep_sharing_partition__, 1) do
-      source.__upkeep_sharing_partition__(params)
-    else
-      {:params, params}
+    quote bind_quoted: [notification: Macro.escape(notification), on: on, as: as] do
+      @upkeep_invalidators {notification, on, as}
     end
   end
 

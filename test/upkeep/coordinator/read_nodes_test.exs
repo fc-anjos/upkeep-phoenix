@@ -181,7 +181,7 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
           end
 
           try do
-            Upkeep.Coordinator.ReadNodes.Coalescer.coalesce(bad_node, fn ->
+            Upkeep.SingleFlight.Registry.coalesce(ReadNodes.coalescer_name(), bad_node, fn ->
               if i == 1 do
                 raise "boom"
               else
@@ -209,7 +209,7 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
 
     # All callers got :error (loader raised, waiters re-raise the same).
     assert Enum.all?(results, &match?({:error, "boom"}, &1))
-    refute Upkeep.Coordinator.ReadNodes.Coalescer.pending?(bad_node)
+    refute Upkeep.SingleFlight.Registry.pending?(ReadNodes.coalescer_name(), bad_node)
   end
 
   test "Watcher invalidates ReadNodes when it receives a dispatched notification" do

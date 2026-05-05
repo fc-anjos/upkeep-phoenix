@@ -32,7 +32,16 @@ defmodule Bench.Q do
   def query_us, do: @query_us
 end
 
-for mod <- [Bench.EvA, Bench.EvB, Bench.EvC, Bench.EvD, Bench.EvE, Bench.EvF, Bench.EvG, Bench.EvH] do
+for mod <- [
+      Bench.EvA,
+      Bench.EvB,
+      Bench.EvC,
+      Bench.EvD,
+      Bench.EvE,
+      Bench.EvF,
+      Bench.EvG,
+      Bench.EvH
+    ] do
   defmodule mod do
     defstruct [:id, :name, :schema, :tenant_id]
   end
@@ -102,7 +111,7 @@ defmodule Bench.Sub do
         end)
       end
 
-    for _ <- 1..count, do: receive do: (:ready -> :ok)
+    for _ <- 1..count, do: receive(do: (:ready -> :ok))
     source_pids ++ derived_pids
   end
 
@@ -119,7 +128,16 @@ defmodule Bench.Sub do
 end
 
 defmodule Bench.Run do
-  @event_modules [Bench.EvA, Bench.EvB, Bench.EvC, Bench.EvD, Bench.EvE, Bench.EvF, Bench.EvG, Bench.EvH]
+  @event_modules [
+    Bench.EvA,
+    Bench.EvB,
+    Bench.EvC,
+    Bench.EvD,
+    Bench.EvE,
+    Bench.EvF,
+    Bench.EvG,
+    Bench.EvH
+  ]
 
   def event_pool(unique_per_shape \\ 25) do
     for mod <- @event_modules,
@@ -206,7 +224,14 @@ results =
       |> Enum.join(" ")
     )
 
-    %{pubs: p, calls_per_s: calls_per_s, queries_per_s: queries_per_s, q_per_event: q_per_event, derived_per_s: derived_per_s}
+    %{
+      pubs: p,
+      calls_per_s: calls_per_s,
+      delivered_per_s: delivered_per_s,
+      queries_per_s: queries_per_s,
+      q_per_event: q_per_event,
+      derived_per_s: derived_per_s
+    }
   end
 
 # Regression gates: thresholds from the M2 baseline at 16 publishers.
@@ -215,7 +240,7 @@ top = Enum.find(results, &(&1.pubs == 16))
 
 thresholds = %{
   min_calls_per_s: 100_000,
-  min_queries_per_s: 5_000,
+  min_delivered_per_s: 20_000,
   max_q_per_event: 0.20
 }
 
@@ -230,8 +255,8 @@ failures =
       else: acc
   end)
   |> then(fn acc ->
-    if top.queries_per_s < thresholds.min_queries_per_s,
-      do: ["queries/s #{top.queries_per_s} < #{thresholds.min_queries_per_s}" | acc],
+    if top.delivered_per_s < thresholds.min_delivered_per_s,
+      do: ["delivered/s #{top.delivered_per_s} < #{thresholds.min_delivered_per_s}" | acc],
       else: acc
   end)
   |> then(fn acc ->
@@ -241,7 +266,10 @@ failures =
   end)
 
 if failures == [] do
-  IO.puts("  OK — calls/s=#{Float.round(top.calls_per_s)} queries/s=#{Float.round(top.queries_per_s)} q/event=#{Float.round(top.q_per_event, 3)}")
+  IO.puts(
+    "  OK — calls/s=#{Float.round(top.calls_per_s)} delivered/s=#{Float.round(top.delivered_per_s)} q/event=#{Float.round(top.q_per_event, 3)}"
+  )
+
   System.halt(0)
 else
   IO.puts("  FAIL")

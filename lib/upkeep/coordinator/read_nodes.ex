@@ -25,7 +25,7 @@ defmodule Upkeep.Coordinator.ReadNodes do
   the `Upkeep.Coordinator.Graph` supervisor and share its lifecycle.
   """
 
-  alias Upkeep.Coordinator.ReadNodes.Coalescer
+  alias Upkeep.SingleFlight.Registry
   alias Upkeep.Ecto.QueryDeps
 
   @values :upkeep_read_node_values
@@ -62,7 +62,7 @@ defmodule Upkeep.Coordinator.ReadNodes do
           value
 
         [] ->
-          Coalescer.coalesce(node_id, fn ->
+          Registry.coalesce(coalescer_name(), node_id, fn ->
             # Re-check ETS inside the single-flight critical section:
             # a concurrent caller may have settled while we waited to
             # be the loader.
@@ -158,6 +158,9 @@ defmodule Upkeep.Coordinator.ReadNodes do
 
   @doc false
   def count, do: :ets.info(@values, :size)
+
+  @doc false
+  def coalescer_name, do: Upkeep.Coordinator.ReadNodes.Coalescer
 
   defp evict(node_id, deps) do
     :ets.delete(@values, node_id)

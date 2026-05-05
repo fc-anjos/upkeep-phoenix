@@ -113,7 +113,7 @@ defmodule Bench.InitialDerivedSharing do
 
     {distinct_us, {distinct_count_computes, distinct_label_computes}} =
       Bench.InitialSharingSupport.timed(fn ->
-        Enum.each(1..watches, fn idx ->
+        Bench.InitialSharingSupport.parallel_each(1..watches, fn idx ->
           run_id = System.unique_integer([:positive])
           :ets.insert(@table, {{:counter, run_id, :count}, distinct_count_counter})
           :ets.insert(@table, {{:counter, run_id, :label}, distinct_label_counter})

@@ -4,13 +4,14 @@ defmodule Upkeep.Runtime.Execution.Shared do
   alias Upkeep.Coordinator.Topology
   alias Upkeep.DAG.Graph, as: DAGGraph
   alias Upkeep.DAG.Store
+  alias Upkeep.Runtime.ScopeCapture
   alias Upkeep.Runtime.State
   alias Upkeep.Runtime.Subscriptions
 
   def initial_value(socket, assign_name, dep_node_ids, dep_pairs, fun, compute) do
     base_metadata = sharing_metadata(socket, assign_name, dep_node_ids)
 
-    with {:ok, fun_identity} <- external_fun_identity(fun),
+    with {:external, fun_identity} <- ScopeCapture.analyze(fun),
          true <- Subscriptions.shared_initial_load?(socket),
          {:ok, graph_dep_ids, local_to_graph} <- graph_dep_ids(socket, dep_node_ids),
          {:ok, sharing_partition, dep_partitions} <- Topology.shared_partition_info(graph_dep_ids) do
@@ -65,10 +66,10 @@ defmodule Upkeep.Runtime.Execution.Shared do
           {value, graph_node_id, metadata}
       end
     else
-      :not_external_fun ->
+      :not_external ->
         local_initial_value(socket, dep_node_ids, compute, base_metadata, :local_fun)
 
-      {:captured_scope_fun, fun_identity, scope_capture} ->
+      {:captured_scope, fun_identity, scope_capture} = analysis ->
         metadata =
           base_metadata
           |> Map.merge(%{
@@ -81,24 +82,16 @@ defmodule Upkeep.Runtime.Execution.Shared do
             scope_present?: Map.has_key?(socket.assigns, :current_scope)
           })
 
-        case captured_scope_policy() do
-          :raise ->
-            raise Upkeep.ImplicitScopeError,
-                  "Upkeep derive #{inspect(assign_name)} captures #{inspect(scope_capture)}. " <>
-                    "Use an external function that receives current_scope from the dependency map " <>
-                    "instead of closing over socket/session/current_scope values."
+        ScopeCapture.apply_policy(analysis, %{assign_name: assign_name})
+        {compute_initial_value(socket, dep_node_ids, compute), nil, metadata}
 
-          :telemetry ->
-            {compute_initial_value(socket, dep_node_ids, compute), nil, metadata}
-        end
-
-      {:captured_fun, fun_identity} ->
+      {:captured, fun_identity} ->
         metadata =
           Map.merge(base_metadata, %{
             result: :local,
             reason: :captured_fun,
             fun: fun_identity,
-            implicit_scope: implicit_scope_metadata(socket, dep_node_ids)
+            implicit_scope: ScopeCapture.implicit_scope_metadata(socket, dep_node_ids)
           })
 
         {compute_initial_value(socket, dep_node_ids, compute), nil, metadata}
@@ -219,34 +212,6 @@ defmodule Upkeep.Runtime.Execution.Shared do
     end)
   end
 
-  defp external_fun_identity(fun) do
-    info = :erlang.fun_info(fun)
-
-    with {:env, []} <- List.keyfind(info, :env, 0),
-         {:type, :external} <- List.keyfind(info, :type, 0),
-         {:module, module} <- List.keyfind(info, :module, 0),
-         {:name, name} <- List.keyfind(info, :name, 0),
-         {:arity, arity} <- List.keyfind(info, :arity, 0) do
-      {:ok, {module, name, arity}}
-    else
-      {:env, env} when is_list(env) and env != [] ->
-        case scope_like_capture(env) do
-          nil -> {:captured_fun, fun_identity_from_info(info)}
-          scope_capture -> {:captured_scope_fun, fun_identity_from_info(info), scope_capture}
-        end
-
-      _ ->
-        :not_external_fun
-    end
-  end
-
-  defp fun_identity_from_info(info) do
-    module = info |> List.keyfind(:module, 0) |> elem(1)
-    name = info |> List.keyfind(:name, 0) |> elem(1)
-    arity = info |> List.keyfind(:arity, 0) |> elem(1)
-    {module, name, arity}
-  end
-
   defp sharing_metadata(socket, assign_name, dep_node_ids) do
     %{
       assign_name: assign_name,
@@ -254,65 +219,6 @@ defmodule Upkeep.Runtime.Execution.Shared do
       dep_node_ids: dep_node_ids
     }
   end
-
-  defp implicit_scope_metadata(socket, dep_node_ids) do
-    cond do
-      not Map.has_key?(socket.assigns, :current_scope) ->
-        :missing
-
-      Upkeep.Live.Ids.scope_node_id(:current_scope) in dep_node_ids ->
-        :dependency
-
-      true ->
-        :available
-    end
-  end
-
-  defp captured_scope_policy do
-    Application.get_env(:upkeep, :captured_scope_policy) || default_captured_scope_policy()
-  end
-
-  defp default_captured_scope_policy do
-    case runtime_env() do
-      :dev -> :raise
-      :prod -> :telemetry
-      _other -> :telemetry
-    end
-  end
-
-  defp runtime_env do
-    if Code.ensure_loaded?(Mix) and function_exported?(Mix, :env, 0) do
-      Mix.env()
-    else
-      :prod
-    end
-  end
-
-  defp scope_like_capture(values) do
-    Enum.find_value(values, &scope_like_value/1)
-  end
-
-  defp scope_like_value(%Phoenix.LiveView.Socket{}), do: :socket
-  defp scope_like_value(%{assigns: %{current_scope: _}}), do: :socket
-  defp scope_like_value(%{current_scope: _}), do: :current_scope
-  defp scope_like_value(%{current_user: _}), do: :current_user
-  defp scope_like_value(%{"current_scope" => _}), do: :current_scope
-  defp scope_like_value(%{"current_user" => _}), do: :current_user
-
-  defp scope_like_value(map) when is_map(map) do
-    map
-    |> Map.values()
-    |> scope_like_capture()
-  end
-
-  defp scope_like_value(tuple) when is_tuple(tuple) do
-    tuple
-    |> Tuple.to_list()
-    |> scope_like_capture()
-  end
-
-  defp scope_like_value(list) when is_list(list), do: scope_like_capture(list)
-  defp scope_like_value(_value), do: nil
 
   defp compute_initial_value(socket, dep_node_ids, compute) do
     store = State.store(socket)
