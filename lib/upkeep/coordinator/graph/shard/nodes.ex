@@ -2,7 +2,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
   @moduledoc false
 
   alias Upkeep.Coordinator.Graph
-  alias Upkeep.Coordinator.Graph.Shard.Retries
+  alias Upkeep.Coordinator.Graph.Shard.{Loaders, Retries}
   alias Upkeep.Coordinator.Node
   alias Upkeep.Coordinator.ReadNodes
   alias Upkeep.Coordinator.Topology
@@ -21,7 +21,8 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
         Store.put_metadata(store, node_id, %Node{
           loader: loader,
           encoded_key: encoded_key,
-          registered_keys: interest_keys
+          registered_keys: interest_keys,
+          retry: Loaders.retry_config(loader)
         })
 
       %{state | store: store}

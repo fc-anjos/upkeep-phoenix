@@ -7,11 +7,14 @@ defmodule Upkeep.Source.Spec do
       |> Keyword.get(:repo)
       |> Macro.expand(__CALLER__)
 
-    quote bind_quoted: [repo: repo] do
+    retry = Keyword.get(opts, :retry, :default)
+
+    quote bind_quoted: [repo: repo, retry: retry] do
       import Upkeep.Source,
         only: [query: 1, invalidated_by: 2, invalidated_by: 3, reacts_to: 2, reacts_to: 3]
 
       @upkeep_repo repo
+      @upkeep_retry retry
       Module.register_attribute(__MODULE__, :upkeep_invalidators, accumulate: true)
       Module.register_attribute(__MODULE__, :upkeep_reactors, accumulate: true)
       @before_compile Upkeep.Source.Spec
@@ -53,6 +56,7 @@ defmodule Upkeep.Source.Spec do
     invalidators = Module.get_attribute(env.module, :upkeep_invalidators)
     reactors = Module.get_attribute(env.module, :upkeep_reactors)
     repo = Module.get_attribute(env.module, :upkeep_repo)
+    retry = Module.get_attribute(env.module, :upkeep_retry)
     defines_load? = Module.defines?(env.module, {:load, 1})
     defines_query? = Module.defines?(env.module, {:query, 1})
     defines_sharing_partition? = Module.defines?(env.module, {:__upkeep_sharing_partition__, 1})
@@ -174,6 +178,7 @@ defmodule Upkeep.Source.Spec do
       unquote(sharing_partition_definition)
 
       def __upkeep_repo__, do: unquote(repo)
+      def __upkeep_retry__, do: unquote(Macro.escape(retry))
 
       def reacts_to?(event, params), do: unquote(reacts_to_body)
 

@@ -10,6 +10,38 @@ defmodule Upkeep.Coordinator.GraphTest do
     defstruct [:id, :tenant_id]
   end
 
+  defmodule NoRetrySource do
+    use Upkeep.Source, retry: false
+
+    query(fn params ->
+      count =
+        :ets.update_counter(params.table, {:loads, params.id}, {2, 1}, {{:loads, params.id}, 0})
+
+      case count do
+        1 -> :stable_value
+        _ -> raise "no retry source failed"
+      end
+    end)
+
+    invalidated_by(Upkeep.Coordinator.GraphTest.Ev, on: [:id, :tenant_id])
+  end
+
+  defmodule OneRetrySource do
+    use Upkeep.Source, retry: [max_attempts: 1, base_delay_ms: 0, max_delay_ms: 0]
+
+    query(fn params ->
+      count =
+        :ets.update_counter(params.table, {:loads, params.id}, {2, 1}, {{:loads, params.id}, 0})
+
+      case count do
+        1 -> :stable_value
+        _ -> raise "one retry source failed"
+      end
+    end)
+
+    invalidated_by(Upkeep.Coordinator.GraphTest.Ev, on: [:id, :tenant_id])
+  end
+
   setup tags do
     _ = Map.get(tags, :shards, 4)
     Upkeep.Test.reset_graph()
@@ -411,6 +443,82 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       assert_receive {:dag_values, [{^node_id, :recovered_value}]}, 1_000
       assert :counters.get(loads, 1) == 6
+
+      Graph.unregister(node_id)
+      :ets.delete(table)
+    end
+
+    test "source retry false disables refresh retry" do
+      attach_telemetry([[:upkeep, :graph, :source_load, :exception]])
+
+      table = :ets.new(:no_retry_source, [:set, :public])
+      event = %Ev{id: 13, tenant_id: 1}
+      params = %{id: event.id, tenant_id: event.tenant_id, table: table}
+      node_id = {NoRetrySource, params}
+      interest_keys = NoRetrySource.__upkeep_interest_keys__(params)
+
+      assert {:ok, :stable_value, []} =
+               Graph.register_source_and_load(node_id, interest_keys, NoRetrySource, params)
+
+      log =
+        capture_log(fn ->
+          Graph.notify(event)
+          :ok = Graph.drain()
+        end)
+
+      assert log =~ "no retry source failed"
+
+      assert_receive {:telemetry, [:upkeep, :graph, :source_load, :exception], %{count: 1},
+                      metadata}
+
+      assert %{
+               node_id: ^node_id,
+               source: NoRetrySource,
+               params: ^params,
+               retry?: false,
+               retry_policy: :none,
+               retry_attempt: 1,
+               retry_max_attempts: 0,
+               retry_delay_ms: nil
+             } = metadata
+
+      refute_receive {:dag_values, [{^node_id, _}]}, 100
+      assert :ets.lookup(table, {:loads, event.id}) == [{{:loads, event.id}, 2}]
+
+      Graph.unregister(node_id)
+      :ets.delete(table)
+    end
+
+    test "source retry options override application retry budget" do
+      attach_telemetry([[:upkeep, :graph, :source_load, :exception]])
+
+      table = :ets.new(:one_retry_source, [:set, :public])
+      event = %Ev{id: 14, tenant_id: 1}
+      params = %{id: event.id, tenant_id: event.tenant_id, table: table}
+      node_id = {OneRetrySource, params}
+      interest_keys = OneRetrySource.__upkeep_interest_keys__(params)
+
+      assert {:ok, :stable_value, []} =
+               Graph.register_source_and_load(node_id, interest_keys, OneRetrySource, params)
+
+      parent = self()
+
+      log =
+        capture_log(fn ->
+          Graph.notify(event)
+          :ok = Graph.drain()
+          send(parent, {:retry_failures, receive_source_exception_metadata_until_exhausted()})
+        end)
+
+      assert log =~ "one retry source failed"
+      assert_receive {:retry_failures, failures}, 1_000
+
+      assert Enum.map(failures, & &1.retry_attempt) == [1, 2]
+      assert Enum.map(failures, & &1.retry?) == [true, false]
+      assert Enum.all?(failures, &(&1.retry_policy == :source))
+      assert Enum.all?(failures, &(&1.retry_max_attempts == 1))
+      assert %{retry_delay_ms: nil} = List.last(failures)
+      assert :ets.lookup(table, {:loads, event.id}) == [{{:loads, event.id}, 3}]
 
       Graph.unregister(node_id)
       :ets.delete(table)

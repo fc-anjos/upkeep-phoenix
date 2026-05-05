@@ -25,6 +25,10 @@ defmodule Upkeep.Coordinator.Graph.Shard.Loaders do
   def metadata({:fun, _load_fn}), do: %{source: nil, params: nil}
   def metadata(nil), do: %{source: nil, params: nil}
 
+  def retry_config({:source, source, _params}), do: Source.retry_config(source)
+  def retry_config({:fun, _load_fn}), do: :default
+  def retry_config(nil), do: :default
+
   def exception_metadata(loader, reason) do
     loader
     |> metadata()

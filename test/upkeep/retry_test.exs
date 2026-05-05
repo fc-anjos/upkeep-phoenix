@@ -48,6 +48,42 @@ defmodule Upkeep.RetryTest do
     refute Map.has_key?(retry.timers, :source)
   end
 
+  test "source options override the default retry budget" do
+    retry = Retry.new(max_attempts: 3, base_delay_ms: 10, max_delay_ms: 20)
+    schedule = fn _key, _timer_ref, _delay_ms -> make_ref() end
+    opts = [max_attempts: 1, base_delay_ms: 0, max_delay_ms: 0]
+
+    {retry, first} = Retry.after_failure(retry, :source, opts, schedule)
+    {_retry, second} = Retry.after_failure(retry, :source, opts, schedule)
+
+    assert first.retry? == true
+    assert first.retry_policy == :source
+    assert first.retry_max_attempts == 1
+    assert first.retry_delay_ms == 0
+
+    assert second.retry? == false
+    assert second.retry_policy == :source
+    assert second.retry_attempt == 2
+    assert second.retry_max_attempts == 1
+  end
+
+  test "false retry policy disables scheduling" do
+    retry = Retry.new()
+
+    {retry, metadata} =
+      Retry.after_failure(retry, :source, false, fn _key, _timer_ref, _delay_ms ->
+        flunk("no retry should have been scheduled")
+      end)
+
+    assert metadata.retry? == false
+    assert metadata.retry_policy == :none
+    assert metadata.retry_attempt == 1
+    assert metadata.retry_max_attempts == 0
+    assert metadata.retry_delay_ms == nil
+    refute Map.has_key?(retry.timers, :source)
+    refute Map.has_key?(retry.attempts, :source)
+  end
+
   test "clear cancels timer and resets attempts" do
     parent = self()
 

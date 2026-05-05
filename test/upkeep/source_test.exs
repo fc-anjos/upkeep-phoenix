@@ -57,6 +57,18 @@ defmodule Upkeep.SourceTest do
     def load(_params), do: []
   end
 
+  defmodule NoRetryLoad do
+    use Upkeep.Source, retry: false
+
+    def load(_params), do: []
+  end
+
+  defmodule CustomRetryLoad do
+    use Upkeep.Source, retry: [max_attempts: 1, base_delay_ms: 0, max_delay_ms: 0]
+
+    def load(_params), do: []
+  end
+
   setup do
     Upkeep.Test.reset_graph()
 
@@ -145,6 +157,19 @@ defmodule Upkeep.SourceTest do
     assert_raise ExUnit.AssertionError, ~r/known Upkeep invalidation surface/, fn ->
       Upkeep.Test.assert_source_reactive!(HiddenLoad, %{})
     end
+  end
+
+  test "sources expose retry configuration" do
+    assert NoRetryLoad.__upkeep_retry__() == false
+    assert Upkeep.Source.retry_config(NoRetryLoad) == false
+
+    assert CustomRetryLoad.__upkeep_retry__() == [
+             max_attempts: 1,
+             base_delay_ms: 0,
+             max_delay_ms: 0
+           ]
+
+    assert Upkeep.Source.retry_config(BoardColumns) == :default
   end
 
   test "watch joins source interest and notify dispatches through the coordinator", %{

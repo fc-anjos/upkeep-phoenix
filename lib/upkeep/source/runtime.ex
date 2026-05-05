@@ -93,6 +93,14 @@ defmodule Upkeep.Source.Runtime do
     end
   end
 
+  def retry_config(source) when is_atom(source) do
+    if function_exported?(source, :__upkeep_retry__, 0) do
+      source.__upkeep_retry__()
+    else
+      :default
+    end
+  end
+
   defp memoize_read(repo, holder, query) do
     fingerprint = read_fingerprint(repo, query)
     cache = Map.get(Process.get(@context_key), :reads, %{})

@@ -13,11 +13,14 @@ defmodule Upkeep.Source do
       |> Keyword.get(:repo)
       |> Macro.expand(__CALLER__)
 
-    quote bind_quoted: [repo: repo] do
+    retry = Keyword.get(opts, :retry, :default)
+
+    quote bind_quoted: [repo: repo, retry: retry] do
       import Upkeep.Source,
         only: [query: 1, invalidated_by: 2, invalidated_by: 3, reacts_to: 2, reacts_to: 3]
 
       @upkeep_repo repo
+      @upkeep_retry retry
       Module.register_attribute(__MODULE__, :upkeep_invalidators, accumulate: true)
       Module.register_attribute(__MODULE__, :upkeep_reactors, accumulate: true)
       @before_compile Upkeep.Source.Spec
@@ -65,6 +68,7 @@ defmodule Upkeep.Source do
   defdelegate query_reacts_to?(source, event, params), to: Upkeep.Source.Runtime
   defdelegate source_id(source, params), to: Upkeep.Source.Runtime
   defdelegate sharing_partition(source, params), to: Upkeep.Source.Runtime
+  defdelegate retry_config(source), to: Upkeep.Source.Runtime
 
   defdelegate matches?(event, notification), to: Upkeep.Source.Keys
   defdelegate equal_fields?(event, params, event_fields, source_fields), to: Upkeep.Source.Keys

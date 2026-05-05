@@ -6,6 +6,7 @@ defmodule Upkeep.Coordinator.Node do
     :encoded_key,
     registered_keys: [],
     tracked_deps: [],
-    loaded?: false
+    loaded?: false,
+    retry: :default
   ]
 end

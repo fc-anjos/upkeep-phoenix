@@ -12,13 +12,24 @@ defmodule Upkeep.Retry do
   end
 
   def after_failure(%__MODULE__{} = retry, key, schedule_fn) when is_function(schedule_fn, 3) do
+    after_failure(retry, key, :default, schedule_fn)
+  end
+
+  def after_failure(%__MODULE__{} = retry, key, false, _schedule_fn) do
+    retry = clear(retry, key)
+    {retry, metadata(false, 1, 0, nil, :none)}
+  end
+
+  def after_failure(%__MODULE__{} = retry, key, opts, schedule_fn)
+      when is_function(schedule_fn, 3) do
+    effective = apply_opts(retry, opts)
     attempt = Map.get(retry.attempts, key, 0) + 1
-    retry? = attempt <= retry.max_attempts
+    retry? = attempt <= effective.max_attempts
     retry = put_in(retry.attempts[key], attempt)
 
     {retry, delay_ms} =
       if retry? do
-        delay_ms = retry_delay_ms(retry, attempt)
+        delay_ms = retry_delay_ms(effective, attempt)
         timer_ref = make_ref()
         process_ref = schedule_fn.(key, timer_ref, delay_ms)
 
@@ -32,11 +43,11 @@ defmodule Upkeep.Retry do
         {cancel_timer(retry, key), nil}
       end
 
-    {retry, metadata(retry?, attempt, retry.max_attempts, delay_ms)}
+    {retry, metadata(retry?, attempt, effective.max_attempts, delay_ms, policy(opts))}
   end
 
   def no_retry_metadata(%__MODULE__{} = retry) do
-    metadata(false, 0, retry.max_attempts, nil)
+    metadata(false, 0, retry.max_attempts, nil, :not_loaded)
   end
 
   def clear(%__MODULE__{} = retry, key) do
@@ -90,12 +101,19 @@ defmodule Upkeep.Retry do
 
   defp jitter(delay), do: :rand.uniform(max(1, div(delay, 2) + 1)) - 1
 
-  defp metadata(retry?, attempt, max_attempts, delay_ms) do
+  defp apply_opts(retry, :default), do: retry
+  defp apply_opts(retry, opts) when is_list(opts), do: struct!(retry, opts)
+
+  defp policy(:default), do: :default
+  defp policy(opts) when is_list(opts), do: :source
+
+  defp metadata(retry?, attempt, max_attempts, delay_ms, policy) do
     %{
       retry?: retry?,
       retry_attempt: attempt,
       retry_max_attempts: max_attempts,
-      retry_delay_ms: delay_ms
+      retry_delay_ms: delay_ms,
+      retry_policy: policy
     }
   end
 end
