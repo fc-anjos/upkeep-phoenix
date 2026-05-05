@@ -7,12 +7,30 @@ defmodule Upkeep.Live.Snapshot do
   alias Upkeep.Source.Runtime, as: Source
 
   def build(socket) do
+    store = State.store(socket)
+
     %{
-      dag: Graph.snapshot(Store.graph(State.store(socket))),
+      dag: graph_snapshot(store),
       assigns: assign_snapshot(socket),
       watches: watch_snapshot(socket),
       pending_refreshes: pending_refresh_snapshot(socket)
     }
+  end
+
+  defp graph_snapshot(store) do
+    store
+    |> Store.graph()
+    |> Graph.snapshot()
+    |> put_node_metadata(store)
+  end
+
+  defp put_node_metadata(snapshot, store) do
+    nodes =
+      Enum.map(snapshot.nodes, fn node ->
+        Map.put(node, :metadata, Store.get_metadata(store, node.id, %{}))
+      end)
+
+    %{snapshot | nodes: nodes}
   end
 
   defp assign_snapshot(socket) do

@@ -5,13 +5,15 @@ defmodule Upkeep.Runtime.DAGOperations do
   alias Upkeep.Live.{Components, Ids, Telemetry}
   alias Upkeep.Runtime.State
 
-  def put_source(socket, source_id, value, deps) do
+  def put_source(socket, source_id, value, deps, metadata \\ nil) do
+    node_id = Ids.source_node_id(source_id)
+
     {store, _changed?} =
       socket
       |> State.store()
-      |> Store.put_source(Ids.source_node_id(source_id), value, deps)
+      |> Store.put_source(node_id, value, deps)
 
-    State.put_store(socket, store)
+    State.put_store(socket, put_runtime_metadata(store, node_id, metadata))
   end
 
   def put_value(socket, source_id, value, deps) do
@@ -56,6 +58,13 @@ defmodule Upkeep.Runtime.DAGOperations do
       {node_id, {dep, node_id}}
     end)
     |> Enum.unzip()
+  end
+
+  def put_runtime_metadata(store, _node_id, nil), do: store
+  def put_runtime_metadata(store, _node_id, metadata) when metadata == %{}, do: store
+
+  def put_runtime_metadata(store, node_id, metadata) when is_map(metadata) do
+    Store.put_metadata(store, node_id, metadata)
   end
 
   def recompute_derived(socket, []), do: {socket, []}

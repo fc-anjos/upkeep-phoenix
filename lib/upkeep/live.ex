@@ -5,17 +5,23 @@ defmodule Upkeep.Live do
 
   alias Upkeep.Live.{RuntimeResult, Snapshot, Specs}
 
-  defmacro __using__(_opts) do
-    quote do
-      Phoenix.LiveView.on_mount(Upkeep.Live.ScopeHook)
+  defmacro __using__(opts \\ []) do
+    inspector = Keyword.get(opts, :inspector, true)
 
-      import Upkeep.Live,
+    quote bind_quoted: [inspector: inspector] do
+      Phoenix.LiveView.on_mount({Upkeep.Live.ScopeHook, inspector: inspector})
+
+      import Upkeep.Live.Macros,
         only: [
           watch: 4,
           watch: 5,
           component: 4,
+          derive: 4
+        ]
+
+      import Upkeep.Live,
+        only: [
           remove_component: 2,
-          derive: 4,
           unwatch: 2,
           unwatch: 3,
           refresh: 4
@@ -33,16 +39,25 @@ defmodule Upkeep.Live do
   def watch(socket, assign_name, source, params, opts \\ []) when is_atom(assign_name) do
     params = normalize_params(params)
     component = Keyword.get(opts, :under)
+    source_location = Keyword.get(opts, :source_location)
 
     with_current_scope(socket, fn socket ->
-      Upkeep.Runtime.mount(socket, Specs.source(assign_name, source, params, component))
+      Upkeep.Runtime.mount(
+        socket,
+        Specs.source(assign_name, source, params, component, source_location)
+      )
     end)
   end
 
-  def component(socket, component_id, deps, fun)
+  def component(socket, component_id, deps, fun, opts \\ [])
       when not is_nil(component_id) and is_list(deps) and is_function(fun, 1) do
+    source_location = Keyword.get(opts, :source_location)
+
     with_current_scope(socket, fn socket ->
-      Upkeep.Runtime.mount(socket, Specs.component(socket, component_id, deps, fun))
+      Upkeep.Runtime.mount(
+        socket,
+        Specs.component(socket, component_id, deps, fun, source_location)
+      )
     end)
   end
 
@@ -50,10 +65,12 @@ defmodule Upkeep.Live do
     with_current_scope(socket, &Upkeep.Runtime.remove_component(&1, component_id))
   end
 
-  def derive(socket, assign_name, deps, fun)
+  def derive(socket, assign_name, deps, fun, opts \\ [])
       when is_atom(assign_name) and is_list(deps) and is_function(fun, 1) do
+    source_location = Keyword.get(opts, :source_location)
+
     with_current_scope(socket, fn socket ->
-      Upkeep.Runtime.mount(socket, Specs.derived(socket, assign_name, deps, fun))
+      Upkeep.Runtime.mount(socket, Specs.derived(socket, assign_name, deps, fun, source_location))
     end)
   end
 
@@ -81,6 +98,14 @@ defmodule Upkeep.Live do
 
   def graph_snapshot(socket) do
     Snapshot.build(socket)
+  end
+
+  def introspection_snapshot(socket, opts \\ []) do
+    Upkeep.Introspection.snapshot(socket, opts)
+  end
+
+  def inspecting?(socket) do
+    Map.get(socket.assigns, :upkeep_inspector?, false)
   end
 
   def queue_matching(socket, event) when is_struct(event) do

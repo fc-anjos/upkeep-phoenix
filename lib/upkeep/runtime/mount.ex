@@ -64,7 +64,7 @@ defmodule Upkeep.Runtime.Mount do
             interest_keys: interest_keys,
             tracked_deps: tracked_deps
           })
-          |> DAGOperations.put_source(source_id, value, spec.deps)
+          |> DAGOperations.put_source(source_id, value, spec.deps, spec.metadata)
           |> State.put_assign_node(assign_name, spec.id)
 
         effects =
@@ -77,6 +77,7 @@ defmodule Upkeep.Runtime.Mount do
             [
               {:telemetry, [:source, :watch], %{count: 1},
                spec.metadata
+               |> Map.drop([:source_location])
                |> Map.put(:node_id, spec.id)
                |> Map.put(:kind, :new)
                |> Map.put(:registered?, registered?)
@@ -99,6 +100,7 @@ defmodule Upkeep.Runtime.Mount do
       socket
       |> State.store()
       |> Store.put_component(spec.id, spec.deps, compute)
+      |> DAGOperations.put_runtime_metadata(spec.id, spec.metadata)
 
     value = Store.fetch!(store, spec.id)
     store = Components.put_assign_nodes(store, component_id, value)
@@ -131,6 +133,7 @@ defmodule Upkeep.Runtime.Mount do
       socket
       |> State.store()
       |> Store.register_derived(spec.id, spec.deps, compute)
+      |> DAGOperations.put_runtime_metadata(spec.id, spec.metadata)
       |> seed_initial_value(spec.id, initial_value)
 
     value = Store.fetch!(store, spec.id)
