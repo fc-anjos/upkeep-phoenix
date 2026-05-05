@@ -1,28 +1,14 @@
 defmodule Upkeep.Mutation do
   @moduledoc false
 
+  use Boundary,
+    top_level?: true,
+    deps: [
+      Upkeep.Change,
+      Upkeep.Coordinator
+    ]
+
   @journal_key {__MODULE__, :journal}
-
-  def mutate(repo_or_fun_or_multi, fun_or_multi \\ nil)
-
-  def mutate(fun, nil) when is_function(fun, 0), do: mutate(default_repo!(), fun)
-  def mutate(%Ecto.Multi{} = multi, nil), do: mutate(default_repo!(), multi)
-
-  def mutate(repo, fun) when is_atom(repo) and is_function(fun, 0) do
-    if journal_active?() do
-      {:ok, fun.()}
-    else
-      run_outer_mutation(repo, fun)
-    end
-  end
-
-  def mutate(repo, %Ecto.Multi{} = multi) when is_atom(repo) do
-    if journal_active?() do
-      run_nested_multi(repo, multi)
-    else
-      run_outer_multi(repo, multi)
-    end
-  end
 
   def notify(event) when is_struct(event) do
     if journal_active?() do
@@ -65,60 +51,20 @@ defmodule Upkeep.Mutation do
     end
   end
 
-  defp run_outer_mutation(repo, fun) do
+  @doc false
+  def with_isolated_journal(fun) when is_function(fun, 0) do
     previous = Process.get(@journal_key, :upkeep_no_journal)
     put_journal([])
 
     try do
-      case repo.transaction(fn -> {fun.(), journal()} end) do
-        {:ok, {result, events}} ->
-          dispatch_journal(events)
-          {:ok, result}
-
-        {:error, reason} ->
-          {:error, reason}
-      end
+      fun.()
     after
       restore_journal(previous)
-    end
-  end
-
-  defp run_outer_multi(repo, multi) do
-    previous = Process.get(@journal_key, :upkeep_no_journal)
-    put_journal([])
-
-    try do
-      case repo.transaction(multi) do
-        {:ok, changes} ->
-          dispatch_journal(journal())
-          {:ok, changes}
-
-        {:error, _operation, _value, _changes} = error ->
-          error
-      end
-    after
-      restore_journal(previous)
-    end
-  end
-
-  defp run_nested_multi(repo, multi) do
-    previous = journal()
-
-    case repo.transaction(multi) do
-      {:ok, _changes} = ok ->
-        ok
-
-      {:error, _operation, _value, _changes} = error ->
-        put_journal(previous)
-        error
     end
   end
 
   defp run_outer_transaction_journal(fun) do
-    previous = Process.get(@journal_key, :upkeep_no_journal)
-    put_journal([])
-
-    try do
+    with_isolated_journal(fn ->
       result = fun.()
 
       if transaction_committed?(result) do
@@ -126,9 +72,7 @@ defmodule Upkeep.Mutation do
       end
 
       result
-    after
-      restore_journal(previous)
-    end
+    end)
   end
 
   defp run_nested_transaction_journal(fun) do
@@ -153,9 +97,10 @@ defmodule Upkeep.Mutation do
     end
   end
 
-  defp dispatch_journal([]), do: :ok
+  @doc false
+  def dispatch_journal([]), do: :ok
 
-  defp dispatch_journal(events) do
+  def dispatch_journal(events) do
     Enum.each(events, &Upkeep.Change.diagnose_broad_update/1)
     Enum.each(events, &Upkeep.Coordinator.Graph.notify/1)
     :ok
@@ -164,20 +109,15 @@ defmodule Upkeep.Mutation do
   defp transaction_committed?({:ok, _result}), do: true
   defp transaction_committed?(_result), do: false
 
-  defp journal_active?, do: is_list(Process.get(@journal_key))
-  defp journal, do: Process.get(@journal_key, [])
-  defp put_journal(events), do: Process.put(@journal_key, events)
+  @doc false
+  def journal_active?, do: is_list(Process.get(@journal_key))
+
+  @doc false
+  def journal, do: Process.get(@journal_key, [])
+
+  @doc false
+  def put_journal(events), do: Process.put(@journal_key, events)
 
   defp restore_journal(:upkeep_no_journal), do: Process.delete(@journal_key)
   defp restore_journal(previous), do: Process.put(@journal_key, previous)
-
-  defp default_repo! do
-    Application.get_env(:upkeep, :repo) ||
-      raise """
-      No default repo configured for Upkeep. Either pass the repo as the
-      first argument to `Upkeep.mutate/2`, or configure one in your app:
-
-          config :upkeep, repo: MyApp.Repo
-      """
-  end
 end

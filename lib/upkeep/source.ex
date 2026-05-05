@@ -8,6 +8,7 @@ defmodule Upkeep.Source do
   """
 
   use Boundary,
+    top_level?: true,
     exports: [
       Coverage,
       Identity,
@@ -16,7 +17,7 @@ defmodule Upkeep.Source do
       ReadCache
     ],
     deps: [
-      Upkeep,
+      Upkeep.Change,
       Upkeep.SingleFlight,
       Ecto.Adapters.SQL,
       Ecto.Query,

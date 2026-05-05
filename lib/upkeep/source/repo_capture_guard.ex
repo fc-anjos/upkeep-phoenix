@@ -52,7 +52,7 @@ defmodule Upkeep.Source.RepoCaptureGuard do
       not Code.ensure_loaded?(repo) ->
         {:error, :repo_not_loaded}
 
-      Upkeep.Ecto.Repo.capture_enabled?(repo) ->
+      capture_enabled?(repo) ->
         :ok
 
       true ->
@@ -61,6 +61,11 @@ defmodule Upkeep.Source.RepoCaptureGuard do
   end
 
   defp repo_capture_status(_repo), do: {:error, :invalid_repo}
+
+  defp capture_enabled?(repo) do
+    function_exported?(repo, :__upkeep_repo_capture_enabled__?, 0) and
+      repo.__upkeep_repo_capture_enabled__?()
+  end
 
   defp emit_repo_capture_check(repo, source, params, status, boundary, source_location) do
     :telemetry.execute(

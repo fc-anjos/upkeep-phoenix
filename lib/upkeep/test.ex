@@ -1,34 +1,18 @@
 defmodule Upkeep.Test do
   @moduledoc """
-  Test-mode integration with `Ecto.Adapters.SQL.Sandbox`.
-
-  The coordinator's shards and their task supervisor start with the
-  application — long before any test acquires a sandbox connection.
-  Without explicit allowance, the shards' load tasks open their own DB
-  connection, which races with migrations and other tests' transactions
-  (manifests as `database is busy` on SQLite, lock timeouts on Postgres).
-
-  This module wires the long-lived coordinator processes into the
-  current test's sandboxed connection so all DB activity flows through
-  one transaction that rolls back at test end.
-
-  ## Usage
-
-      # In your test case template (e.g. Upkeep.TestSupport.DataCase):
-      setup tags do
-        pid = Ecto.Adapters.SQL.Sandbox.start_owner!(MyApp.Repo,
-                shared: not tags[:async])
-
-        Upkeep.Test.allow_sandbox(MyApp.Repo)
-
-        on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
-        :ok
-      end
-
-  Or with the configured default repo (`config :upkeep, repo: MyApp.Repo`):
-
-      Upkeep.Test.allow_sandbox()
+  Test helpers for resetting Upkeep runtime state, asserting source
+  reactivity, and wiring the coordinator into a host app's SQL sandbox.
   """
+
+  use Boundary,
+    top_level?: true,
+    deps: [
+      Ecto.Adapters.SQL,
+      ExUnit,
+      Upkeep.Coordinator,
+      Upkeep.Ecto,
+      Upkeep.Source
+    ]
 
   alias Upkeep.Coordinator.Graph
 

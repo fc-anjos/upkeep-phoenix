@@ -9,6 +9,12 @@ defmodule Upkeep.Change do
   old state is treated as a broad `:updated` invalidation for correctness.
   """
 
+  use Boundary,
+    top_level?: true,
+    deps: [
+      Logger
+    ]
+
   defstruct [:name, :action, :schema, :record, :from, :payload, meta: %{}]
 
   def inserted(record, opts \\ []) when is_struct(record) do

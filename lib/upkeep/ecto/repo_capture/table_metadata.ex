@@ -17,12 +17,23 @@ defmodule Upkeep.Ecto.RepoCapture.TableMetadata do
 
   def metadata(repo, source) do
     case repo.__adapter__() do
-      Ecto.Adapters.SQLite3 -> sqlite_metadata(repo, source)
       Ecto.Adapters.Postgres -> postgres_metadata(repo, source)
-      _adapter -> %{fields: [], primary_keys: []}
+      adapter when is_atom(adapter) -> adapter_metadata(repo, source, adapter)
     end
   rescue
     _ -> %{fields: [], primary_keys: []}
+  end
+
+  defp adapter_metadata(repo, source, adapter) do
+    if sqlite_adapter?(adapter) do
+      sqlite_metadata(repo, source)
+    else
+      %{fields: [], primary_keys: []}
+    end
+  end
+
+  defp sqlite_adapter?(adapter) do
+    Atom.to_string(adapter) == "Elixir.Ecto.Adapters.SQLite3"
   end
 
   defp sqlite_metadata(repo, source) do

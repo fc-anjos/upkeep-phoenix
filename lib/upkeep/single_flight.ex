@@ -1,7 +1,9 @@
 defmodule Upkeep.SingleFlight do
   @moduledoc false
 
-  use Boundary, exports: [Registry]
+  use Boundary,
+    top_level?: true,
+    exports: [Registry]
 
   defstruct loads: %{}, refs: %{}
 

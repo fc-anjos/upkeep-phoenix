@@ -136,7 +136,7 @@ defmodule Upkeep.Source.Spec do
             def load(params) do
               params
               |> __MODULE__.query()
-              |> Upkeep.read()
+              |> Upkeep.Source.read()
             end
           end
 

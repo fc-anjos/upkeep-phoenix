@@ -49,26 +49,17 @@ defmodule Upkeep do
 
   use Boundary,
     exports: [
-      Change,
-      Ecto.Repo,
       Live,
-      Observability,
-      Source,
-      Source.Coverage,
-      Test
+      Observability
     ],
     deps: [
-      Ecto.Changeset,
-      Ecto.Adapters.Postgres,
-      Ecto.Adapters.SQL,
-      Ecto.Migration.SchemaMigration,
-      Ecto.Multi,
-      Ecto.Query,
-      Ecto.Queryable,
-      Ecto.Schema.Metadata,
-      Ecto.SubQuery,
       Group,
-      Logger,
+      Upkeep.Change,
+      Upkeep.Coordinator,
+      Upkeep.DAG,
+      Upkeep.Ecto,
+      Upkeep.Mutation,
+      Upkeep.Source,
       {Mix, :compile}
     ]
 
@@ -89,8 +80,8 @@ defmodule Upkeep do
     Supervisor.init(children, strategy: :one_for_one)
   end
 
-  defdelegate mutate(fun), to: Upkeep.Mutation
-  defdelegate mutate(repo, fun), to: Upkeep.Mutation
+  defdelegate mutate(fun), to: Upkeep.Ecto.Mutation
+  defdelegate mutate(repo, fun), to: Upkeep.Ecto.Mutation
   defdelegate notify(event), to: Upkeep.Mutation
   defdelegate changed(name, payload, opts \\ []), to: Upkeep.Mutation
   defdelegate inserted(record, opts \\ []), to: Upkeep.Mutation
