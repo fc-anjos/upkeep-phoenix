@@ -17,33 +17,24 @@ defmodule Upkeep.Live.Inspector.GraphComponent do
         "bg-[linear-gradient(#f5f5f5_1px,transparent_1px),linear-gradient(90deg,#f5f5f5_1px,transparent_1px)] [background-size:24px_24px]"
       ]}
     >
-      <div class="pointer-events-none absolute inset-x-3 top-3 z-10 flex items-start gap-2">
-        <div class="pointer-events-auto rounded-md border border-neutral-200 bg-white px-3 py-2">
-          <h2 class="m-0 text-xs font-semibold uppercase text-neutral-950">DAG</h2>
-          <p class="mt-1 mb-0 font-mono text-xs leading-none text-neutral-500">
-            {length(@document.dag.nodes)} nodes / {length(@document.dag.edges)} edges
-          </p>
-        </div>
-
-        <div class="pointer-events-auto flex items-center gap-3 rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 font-mono text-xs text-neutral-600">
+      <div class="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-baseline justify-between gap-3 border-b border-neutral-200 bg-white/85 px-5 py-2 backdrop-blur-sm">
+        <h2 class="pointer-events-auto m-0 text-base font-semibold leading-tight text-neutral-950">
+          DAG
+          <span class="ml-2 font-mono text-xs font-normal text-neutral-500">
+            {length(@document.dag.nodes)} nodes · {length(@document.dag.edges)} edges
+          </span>
+        </h2>
+        <div class="pointer-events-auto flex items-center gap-4 font-mono text-xs text-neutral-600">
           <span class="inline-flex items-center gap-1.5">
-            <span class="h-2.5 w-2.5 rounded-sm border border-blue-600 bg-blue-50"></span>
-            active
+            <span class="h-2 w-2 rounded-full bg-blue-600"></span> active
           </span>
           <span class="inline-flex items-center gap-1.5">
-            <span class="h-2.5 w-2.5 rounded-sm border border-neutral-300 bg-white"></span>
-            idle
+            <span class="h-2 w-2 rounded-full border border-neutral-300 bg-white"></span> idle
           </span>
-        </div>
-
-        <div class="pointer-events-auto ml-auto flex items-center gap-3 rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 font-mono text-xs text-neutral-700">
-          <span>{length(@document.dag.nodes)} nodes</span>
-          <span>{length(@document.dag.edges)} edges</span>
-          <span>{length(@document.events)} events</span>
         </div>
       </div>
 
-      <div class="h-full w-full overflow-auto px-6 pb-6 pt-24">
+      <div class="h-full w-full overflow-auto px-6 pb-6 pt-12">
         <div class="flex h-full min-h-full w-full min-w-full items-center justify-center">
           <svg
             id="upkeep-dag-svg"

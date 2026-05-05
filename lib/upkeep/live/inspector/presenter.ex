@@ -4,19 +4,28 @@ defmodule Upkeep.Live.Inspector.Presenter do
   def timeline_events([]), do: []
 
   def timeline_events(events) do
-    base =
-      events
-      |> List.first()
-      |> Map.get(:at)
+    now = System.system_time(:microsecond)
 
     events
     |> Enum.reverse()
     |> Enum.map(fn event ->
       event
-      |> Map.put(:time_label, relative_time(event.at, base))
+      |> Map.put(:time_label, ago(event.at, now))
       |> Map.put(:tag, event_tag(event))
     end)
   end
+
+  def ago(at, now) when is_integer(at) and is_integer(now) do
+    delta = max(now - at, 0)
+    cond do
+      delta < 1_000_000 -> "just now"
+      delta < 60_000_000 -> "#{div(delta, 1_000_000)}s ago"
+      delta < 3_600_000_000 -> "#{div(delta, 60_000_000)}m ago"
+      true -> "#{div(delta, 3_600_000_000)}h ago"
+    end
+  end
+
+  def ago(_at, _now), do: ""
 
   def generated_declaration(document) do
     source_lines =
@@ -71,13 +80,6 @@ defmodule Upkeep.Live.Inspector.Presenter do
     """
     |> String.trim()
   end
-
-  defp relative_time(at, base) when is_integer(at) and is_integer(base) do
-    seconds = max(at - base, 0) / 1_000_000
-    "+" <> :erlang.float_to_binary(seconds, decimals: 2) <> "s"
-  end
-
-  defp relative_time(_at, _base), do: "-"
 
   defp event_tag(%{name: [:upkeep, :dag, :recompute | _]}), do: "diff"
 
