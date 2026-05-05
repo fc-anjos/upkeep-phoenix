@@ -55,4 +55,7 @@ defmodule Upkeep.Source do
 
   @doc false
   def coverage(source, params, deps), do: Upkeep.Source.Loader.coverage(source, params, deps)
+
+  @doc false
+  def dependency_label(deps), do: Upkeep.Source.Dependency.label(deps)
 end

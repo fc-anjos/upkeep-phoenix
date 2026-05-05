@@ -98,6 +98,7 @@ defmodule Upkeep.Live do
     with_current_scope(socket, &Upkeep.Runtime.refresh_matching(&1, event))
   end
 
+  @doc false
   def graph_snapshot(socket) do
     Snapshot.build(socket)
   end

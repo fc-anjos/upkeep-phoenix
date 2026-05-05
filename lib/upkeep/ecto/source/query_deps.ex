@@ -51,6 +51,31 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
 
   def coverage(%Ecto.Query{} = query), do: query |> from_query() |> coverage()
 
+  def label(%__MODULE__{} = deps) do
+    schemas =
+      deps.schemas
+      |> MapSet.to_list()
+      |> Enum.map(&module_label/1)
+      |> join_or_empty()
+
+    filters =
+      deps.equality_filters
+      |> Enum.flat_map(fn {schema, filters} ->
+        Enum.map(filters, fn {field, values} ->
+          "#{module_label(schema)}.#{field}=#{inspect(values, inspect_opts())}"
+        end)
+      end)
+
+    mode =
+      cond do
+        deps.broad? -> "broad"
+        filters == [] -> "broad"
+        true -> "precise"
+      end
+
+    "#{mode} query on #{schemas}#{if(filters == [], do: "", else: " filtered by #{Enum.join(filters, ", ")}")}"
+  end
+
   def interest_keys(query_or_deps)
 
   def interest_keys(%Ecto.Query{} = query), do: query |> from_query() |> interest_keys()
@@ -660,4 +685,21 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
       Enum.all?(filters, fn {field, values} -> Enum.member?(values, Map.get(fields, field)) end)
     end)
   end
+
+  defp module_label(nil), do: "unknown"
+
+  defp module_label(module) when is_atom(module) do
+    module
+    |> Module.split()
+    |> Enum.join(".")
+  rescue
+    _error -> inspect(module, inspect_opts())
+  end
+
+  defp module_label(module), do: inspect(module, inspect_opts())
+
+  defp join_or_empty([]), do: "none"
+  defp join_or_empty(values), do: Enum.join(values, ", ")
+
+  defp inspect_opts, do: [limit: 6, printable_limit: 160, charlists: :as_lists]
 end
