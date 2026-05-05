@@ -31,7 +31,7 @@ defmodule Upkeep do
   `Upkeep.mutate(MyApp.Repo, fn -> ... end)` and
   `Upkeep.Test.allow_sandbox(MyApp.Repo)` instead of configuring.
 
-  ## Public API
+  ## Current Entry Points
 
   - `mutate/1`, `mutate/2` — transaction boundary that journals notifications.
   - `notify/1` — publish a domain event.

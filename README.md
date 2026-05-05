@@ -4,10 +4,9 @@ Upkeep is a Phoenix LiveView runtime for domain-reactive server UI. LiveViews
 watch named sources, writes emit domain facts, and Upkeep refreshes the watched
 assigns whose source invalidation surface matches those facts.
 
-Start with the package guide in [docs/getting-started.md](docs/getting-started.md),
-the public API boundary in [docs/public-api.md](docs/public-api.md), and the
-pre-1.0 release policy in [docs/release-policy.md](docs/release-policy.md).
-The current roadmap lives in [docs/roadmap.md](docs/roadmap.md).
+Start with the package guide in [docs/getting-started.md](docs/getting-started.md).
+The current roadmap lives in [docs/roadmap.md](docs/roadmap.md), and the alpha
+release policy lives in [docs/release-policy.md](docs/release-policy.md).
 
 ## Installation
 

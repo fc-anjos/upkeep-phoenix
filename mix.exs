@@ -100,7 +100,6 @@ defmodule Upkeep.MixProject do
       extras: [
         "README.md",
         "docs/getting-started.md",
-        "docs/public-api.md",
         "docs/release-policy.md",
         "docs/known-gaps.md",
         "docs/query-coverage-known-gaps.md"
@@ -109,7 +108,6 @@ defmodule Upkeep.MixProject do
         Guides: [
           "README.md",
           "docs/getting-started.md",
-          "docs/public-api.md",
           "docs/release-policy.md"
         ],
         Reference: ["docs/known-gaps.md", "docs/query-coverage-known-gaps.md"]
