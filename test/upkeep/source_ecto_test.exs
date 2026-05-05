@@ -54,6 +54,20 @@ defmodule Upkeep.SourceEctoTest do
     end
   end
 
+  defmodule IssueWithStringTags do
+    use Ecto.Schema
+
+    @primary_key {:id, :integer, autogenerate: false}
+    schema "upkeep_source_ecto_test_issues" do
+      field :project_id, :integer
+      field :title, :string
+
+      many_to_many :tags, Upkeep.SourceEctoTest.Tag,
+        join_through: "upkeep_source_ecto_test_issue_tags",
+        join_keys: [issue_id: :id, tag_id: :id]
+    end
+  end
+
   defmodule Comment do
     use Ecto.Schema
 
@@ -97,6 +111,32 @@ defmodule Upkeep.SourceEctoTest do
     end
   end
 
+  defmodule UnsupportedOrProjectIssues do
+    use Upkeep.Source
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.Issue
+
+    def query(%{project_id: project_id, term: term}) do
+      from i in Issue,
+        where: i.project_id == ^project_id or fragment("lower(?)", i.title) == ^term
+    end
+  end
+
+  defmodule TernaryOrProjectIssues do
+    use Upkeep.Source
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.Issue
+
+    def query(%{project_id: project_id, user_id: user_id, status: status}) do
+      from i in Issue,
+        where: i.project_id == ^project_id or i.assignee_id == ^user_id or i.status == ^status
+    end
+  end
+
   defmodule JoinedIssueCards do
     use Upkeep.Source
 
@@ -129,6 +169,72 @@ defmodule Upkeep.SourceEctoTest do
         join: c in assoc(i, :column),
         where: i.project_id == ^project_id and c.project_id == ^project_id,
         select: {i.id, c.name}
+    end
+  end
+
+  defmodule NestedJoinedPreloadedComments do
+    use Upkeep.Source
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.Comment
+
+    def query(%{project_id: project_id}) do
+      from c in Comment,
+        join: i in assoc(c, :issue),
+        join: column in assoc(i, :column),
+        where: c.project_id == ^project_id,
+        preload: [issue: {i, column: column}]
+    end
+  end
+
+  defmodule NamedJoinedPreloadedIssues do
+    use Upkeep.Source
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.Issue
+
+    def query(%{project_id: project_id}) do
+      from i in Issue,
+        as: :issue,
+        join: c in assoc(i, :comments),
+        as: :comment,
+        where: i.project_id == ^project_id,
+        preload: [comments: c]
+    end
+  end
+
+  defmodule DynamicJoinedPreloadedIssues do
+    use Upkeep.Source
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.Issue
+
+    def query(%{project_id: project_id}) do
+      preloads = [comments: dynamic([comment: c], c)]
+
+      from i in Issue,
+        join: c in assoc(i, :comments),
+        as: :comment,
+        where: i.project_id == ^project_id,
+        preload: ^preloads
+    end
+  end
+
+  defmodule MixedJoinedAndQueryPreloadedIssues do
+    use Upkeep.Source
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.Issue
+
+    def query(%{project_id: project_id}) do
+      from i in Issue,
+        join: c in assoc(i, :comments),
+        where: i.project_id == ^project_id,
+        preload: [comments: c, column: []]
     end
   end
 
@@ -194,6 +300,21 @@ defmodule Upkeep.SourceEctoTest do
     end
   end
 
+  defmodule JoinedFragmentIssues do
+    use Upkeep.Source
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.{Column, Issue}
+
+    def query(%{project_id: project_id, term: term}) do
+      from i in Issue,
+        join: c in Column,
+        on: c.id == i.column_id,
+        where: i.project_id == ^project_id and fragment("lower(?)", c.name) == ^term
+    end
+  end
+
   defmodule PreloadedProjectIssues do
     use Upkeep.Source, repo: Upkeep.Repo
 
@@ -206,6 +327,20 @@ defmodule Upkeep.SourceEctoTest do
         where: i.project_id == ^project_id,
         order_by: [asc: i.position],
         preload: [:column, :comments, :tags]
+    end
+  end
+
+  defmodule StringManyToManyPreloadedIssues do
+    use Upkeep.Source, repo: Upkeep.Repo
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.IssueWithStringTags
+
+    def query(%{project_id: project_id}) do
+      from i in IssueWithStringTags,
+        where: i.project_id == ^project_id,
+        preload: [:tags]
     end
   end
 
@@ -453,17 +588,68 @@ defmodule Upkeep.SourceEctoTest do
            )
   end
 
-  test "unsupported query shapes fall back to broad schema invalidation" do
-    assert BroadProjectIssues.__upkeep_interest_keys__(%{project_id: 1, user_id: 9}) == [
+  test "simple or query shapes infer precise alternative invalidation keys" do
+    assert BroadProjectIssues.__upkeep_interest_keys__(%{project_id: 1, user_id: 9})
+           |> sort_terms() ==
+             [
+               {:upkeep_change, :inserted, Issue, [assignee_id: 9]},
+               {:upkeep_change, :updated, Issue, [assignee_id: 9]},
+               {:upkeep_change, :deleted, Issue, [assignee_id: 9]},
+               {:upkeep_change, :inserted, Issue, [project_id: 1]},
+               {:upkeep_change, :updated, Issue, [project_id: 1]},
+               {:upkeep_change, :deleted, Issue, [project_id: 1]}
+             ]
+             |> sort_terms()
+
+    assert BroadProjectIssues.reacts_to?(
+             issue(project_id: 2, assignee_id: 9, status: "open") |> Upkeep.Change.updated(),
+             %{project_id: 1, user_id: 9}
+           )
+
+    assert BroadProjectIssues.reacts_to?(
+             issue(project_id: 1, assignee_id: 10, status: "open") |> Upkeep.Change.updated(),
+             %{project_id: 1, user_id: 9}
+           )
+
+    refute BroadProjectIssues.reacts_to?(
+             issue(project_id: 2, assignee_id: 10, status: "open") |> Upkeep.Change.updated(),
+             %{project_id: 1, user_id: 9}
+           )
+
+    assert TernaryOrProjectIssues.__upkeep_interest_keys__(%{
+             project_id: 1,
+             user_id: 9,
+             status: "open"
+           })
+           |> sort_terms() ==
+             [
+               {:upkeep_change, :inserted, Issue, [assignee_id: 9]},
+               {:upkeep_change, :updated, Issue, [assignee_id: 9]},
+               {:upkeep_change, :deleted, Issue, [assignee_id: 9]},
+               {:upkeep_change, :inserted, Issue, [project_id: 1]},
+               {:upkeep_change, :updated, Issue, [project_id: 1]},
+               {:upkeep_change, :deleted, Issue, [project_id: 1]},
+               {:upkeep_change, :inserted, Issue, [status: "open"]},
+               {:upkeep_change, :updated, Issue, [status: "open"]},
+               {:upkeep_change, :deleted, Issue, [status: "open"]}
+             ]
+             |> sort_terms()
+  end
+
+  test "unsupported or query branches fall back to broad schema invalidation with reasons" do
+    params = %{project_id: 1, term: "issue"}
+
+    assert UnsupportedOrProjectIssues.__upkeep_interest_keys__(params) == [
              {:upkeep_change, :inserted, Issue},
              {:upkeep_change, :updated, Issue},
              {:upkeep_change, :deleted, Issue}
            ]
 
-    assert BroadProjectIssues.reacts_to?(
-             issue(project_id: 2, assignee_id: 10, status: "open") |> Upkeep.Change.updated(),
-             %{project_id: 1, user_id: 9}
-           )
+    coverage = Upkeep.Source.coverage(UnsupportedOrProjectIssues, params)
+
+    assert coverage.unknown == []
+    assert %{schema: Issue, reason: :fragment} in coverage.broad
+    assert %{schema: Issue, reason: :unsupported_or} in coverage.broad
   end
 
   test "joined queries infer dependencies for every schema with equality filters" do
@@ -517,6 +703,38 @@ defmodule Upkeep.SourceEctoTest do
                {:upkeep_change, :deleted, Issue, [project_id: 1]}
              ]
              |> sort_terms()
+  end
+
+  test "joined preload edge shapes add broad associated dependencies" do
+    params = %{project_id: 1}
+
+    assert NestedJoinedPreloadedComments.__upkeep_interest_keys__(params) |> sort_terms() ==
+             [
+               {:upkeep_change, :inserted, Column},
+               {:upkeep_change, :updated, Column},
+               {:upkeep_change, :deleted, Column},
+               {:upkeep_change, :inserted, Comment, [project_id: 1]},
+               {:upkeep_change, :updated, Comment, [project_id: 1]},
+               {:upkeep_change, :deleted, Comment, [project_id: 1]},
+               {:upkeep_change, :inserted, Issue},
+               {:upkeep_change, :updated, Issue},
+               {:upkeep_change, :deleted, Issue}
+             ]
+             |> sort_terms()
+
+    for source <- [
+          NamedJoinedPreloadedIssues,
+          DynamicJoinedPreloadedIssues,
+          MixedJoinedAndQueryPreloadedIssues
+        ] do
+      coverage = Upkeep.Source.coverage(source, params)
+
+      assert %{schema: Issue, fields: [:project_id]} in coverage.precise
+      assert %{schema: Comment, reason: :preload} in coverage.broad
+    end
+
+    mixed_coverage = Upkeep.Source.coverage(MixedJoinedAndQueryPreloadedIssues, params)
+    assert %{schema: Column, reason: :preload} in mixed_coverage.broad
   end
 
   test "joined projections without equality filters fall back only for that schema" do
@@ -621,10 +839,35 @@ defmodule Upkeep.SourceEctoTest do
 
     assert coverage.unknown == []
     assert %{schema: Issue, fields: [:project_id]} in coverage.precise
-    assert %{schema: Column, reason: :no_precise_filters} in coverage.broad
-    assert %{schema: Comment, reason: :no_precise_filters} in coverage.broad
-    assert %{schema: Tag, reason: :no_precise_filters} in coverage.broad
-    assert %{schema: IssueTag, reason: :no_precise_filters} in coverage.broad
+    assert %{schema: Column, reason: :preload} in coverage.broad
+    assert %{schema: Comment, reason: :preload} in coverage.broad
+    assert %{schema: Tag, reason: :preload} in coverage.broad
+    assert %{schema: IssueTag, reason: :many_to_many_join} in coverage.broad
+  end
+
+  test "string many-to-many preloads add broad table dependencies" do
+    params = %{project_id: 1}
+
+    assert StringManyToManyPreloadedIssues.__upkeep_interest_keys__(params) |> sort_terms() ==
+             [
+               {:upkeep_change, :inserted, "upkeep_source_ecto_test_issue_tags"},
+               {:upkeep_change, :updated, "upkeep_source_ecto_test_issue_tags"},
+               {:upkeep_change, :deleted, "upkeep_source_ecto_test_issue_tags"},
+               {:upkeep_change, :inserted, IssueWithStringTags, [project_id: 1]},
+               {:upkeep_change, :updated, IssueWithStringTags, [project_id: 1]},
+               {:upkeep_change, :deleted, IssueWithStringTags, [project_id: 1]},
+               {:upkeep_change, :inserted, Tag},
+               {:upkeep_change, :updated, Tag},
+               {:upkeep_change, :deleted, Tag}
+             ]
+             |> sort_terms()
+
+    coverage = Upkeep.Source.coverage(StringManyToManyPreloadedIssues, params)
+
+    assert %{schema: IssueWithStringTags, fields: [:project_id]} in coverage.precise
+    assert %{schema: Tag, reason: :preload} in coverage.broad
+
+    assert %{schema: "upkeep_source_ecto_test_issue_tags", reason: :many_to_many_join} in coverage.broad
   end
 
   test "coverage merges query preload deps" do
@@ -698,6 +941,31 @@ defmodule Upkeep.SourceEctoTest do
              issue(project_id: 2, title: "Other") |> Upkeep.Change.updated(),
              params
            )
+
+    coverage = Upkeep.Source.coverage(FragmentIssues, params)
+
+    assert coverage.unknown == []
+    assert %{schema: Issue, reason: :fragment} in coverage.broad
+  end
+
+  test "fragment broad fallback is scoped to the schema referenced by the fragment" do
+    params = %{project_id: 1, term: "backlog"}
+
+    assert JoinedFragmentIssues.__upkeep_interest_keys__(params) |> sort_terms() ==
+             [
+               {:upkeep_change, :inserted, Column},
+               {:upkeep_change, :updated, Column},
+               {:upkeep_change, :deleted, Column},
+               {:upkeep_change, :inserted, Issue, [project_id: 1]},
+               {:upkeep_change, :updated, Issue, [project_id: 1]},
+               {:upkeep_change, :deleted, Issue, [project_id: 1]}
+             ]
+             |> sort_terms()
+
+    coverage = Upkeep.Source.coverage(JoinedFragmentIssues, params)
+
+    assert %{schema: Issue, fields: [:project_id]} in coverage.precise
+    assert %{schema: Column, reason: :fragment} in coverage.broad
   end
 
   test "schemaless query sources infer table-keyed interest from field filters" do
