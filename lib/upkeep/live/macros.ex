@@ -4,7 +4,8 @@ defmodule Upkeep.Live.Macros do
   alias Upkeep.Live.SourceLocation
 
   defmacro watch(socket, assign_name, source, params) do
-    location = SourceLocation.capture(__CALLER__, :source, :watch, [socket, assign_name, source, params])
+    location =
+      SourceLocation.capture(__CALLER__, :source, :watch, [socket, assign_name, source, params])
 
     quote do
       Upkeep.Live.watch(
@@ -19,7 +20,13 @@ defmodule Upkeep.Live.Macros do
 
   defmacro watch(socket, assign_name, source, params, opts) do
     location =
-      SourceLocation.capture(__CALLER__, :source, :watch, [socket, assign_name, source, params, opts])
+      SourceLocation.capture(__CALLER__, :source, :watch, [
+        socket,
+        assign_name,
+        source,
+        params,
+        opts
+      ])
 
     quote do
       Upkeep.Live.watch(

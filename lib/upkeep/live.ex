@@ -104,7 +104,7 @@ defmodule Upkeep.Live do
     Map.get(socket.assigns, :upkeep_inspector?, false)
   end
 
-def queue_matching(socket, event) when is_struct(event) do
+  def queue_matching(socket, event) when is_struct(event) do
     with_current_scope(socket, &Upkeep.Runtime.queue_matching(&1, event))
   end
 

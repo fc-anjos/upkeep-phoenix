@@ -8,7 +8,15 @@ defmodule Upkeep.Runtime.Execution.Shared do
   alias Upkeep.Runtime.State
   alias Upkeep.Runtime.Subscriptions
 
-  def initial_value(socket, assign_name, dep_node_ids, dep_pairs, fun, compute, source_location \\ nil) do
+  def initial_value(
+        socket,
+        assign_name,
+        dep_node_ids,
+        dep_pairs,
+        fun,
+        compute,
+        source_location \\ nil
+      ) do
     base_metadata = sharing_metadata(socket, assign_name, dep_node_ids)
 
     with {:external, fun_identity} <- ScopeCapture.analyze(fun),
@@ -86,6 +94,7 @@ defmodule Upkeep.Runtime.Execution.Shared do
           assign_name: assign_name,
           source_location: source_location
         })
+
         {compute_initial_value(socket, dep_node_ids, compute), nil, metadata}
 
       {:captured, fun_identity} ->
