@@ -63,6 +63,29 @@ defmodule Upkeep.Test do
   end
 
   @doc """
+  Assert that a repo was configured with `use Upkeep.Ecto.Repo`.
+
+  Use this in host app tests to catch the highest-risk silent setup mistake:
+  sources can load successfully through a plain `Ecto.Repo`, but writes will
+  not automatically notify Upkeep unless repo capture is installed.
+  """
+  def assert_repo_capture_enabled!(repo \\ default_repo!())
+
+  def assert_repo_capture_enabled!(repo) when is_atom(repo) do
+    if Upkeep.Ecto.Repo.capture_enabled?(repo) do
+      :ok
+    else
+      raise ExUnit.AssertionError,
+        message: repo_capture_assertion_message(repo)
+    end
+  end
+
+  def assert_repo_capture_enabled!(repo) do
+    raise ExUnit.AssertionError,
+      message: repo_capture_assertion_message(repo)
+  end
+
+  @doc """
   Allow the calling test pid's sandboxed connection to be used by the
   coordinator's shard processes and their task supervisor.
 
@@ -90,6 +113,20 @@ defmodule Upkeep.Test do
 
           config :upkeep, repo: MyApp.Repo
       """
+  end
+
+  defp repo_capture_assertion_message(repo) do
+    """
+    expected #{inspect(repo)} to be capture-enabled for Upkeep
+
+    Configure the repo with `use Upkeep.Ecto.Repo` instead of `use Ecto.Repo`:
+
+        defmodule MyApp.Repo do
+          use Upkeep.Ecto.Repo,
+            otp_app: :my_app,
+            adapter: Ecto.Adapters.Postgres
+        end
+    """
   end
 
   defp allowable_pids do

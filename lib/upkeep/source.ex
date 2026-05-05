@@ -70,6 +70,10 @@ defmodule Upkeep.Source do
   defdelegate sharing_partition(source, params), to: Upkeep.Source.Runtime
   defdelegate retry_config(source), to: Upkeep.Source.Runtime
 
+  defdelegate verify_repo_capture!(source, params, opts \\ []),
+    to: Upkeep.Source.RepoCaptureGuard,
+    as: :verify_source!
+
   defdelegate matches?(event, notification), to: Upkeep.Source.Keys
   defdelegate equal_fields?(event, params, event_fields, source_fields), to: Upkeep.Source.Keys
 

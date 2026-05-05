@@ -8,7 +8,7 @@ defmodule Upkeep.Source.Runtime do
     repo = source.__upkeep_repo__() || Application.get_env(:upkeep, :repo)
 
     {value, deps} =
-      with_read_context(repo, source_id(source, params), fn ->
+      with_read_context(repo, source_id(source, params), source, params, fn ->
         value = source.load(params)
         {value, tracked_deps()}
       end)
@@ -24,6 +24,10 @@ defmodule Upkeep.Source.Runtime do
   def read(%Ecto.Query{} = query) do
     case Process.get(@context_key) do
       %{repo: repo} = ctx ->
+        Upkeep.Source.RepoCaptureGuard.ensure_repo_capture!(repo, ctx[:source], ctx[:params],
+          boundary: :read
+        )
+
         track_query(query)
         memoize_read(repo, ctx[:holder], query)
 
@@ -53,7 +57,7 @@ defmodule Upkeep.Source.Runtime do
     repo = source.__upkeep_repo__() || Application.get_env(:upkeep, :repo)
 
     {_value, deps} =
-      with_read_context(repo, source_id(source, params), fn ->
+      with_read_context(repo, source_id(source, params), source, params, fn ->
         value = source.load(params)
         {value, tracked_deps()}
       end)
@@ -126,9 +130,16 @@ defmodule Upkeep.Source.Runtime do
     if function_exported?(source, :query, 1), do: source.query(params), else: nil
   end
 
-  defp with_read_context(repo, holder, fun) do
+  defp with_read_context(repo, holder, source, params, fun) do
     previous = Process.get(@context_key)
-    Process.put(@context_key, %{repo: repo, deps: [], holder: holder})
+
+    Process.put(@context_key, %{
+      repo: repo,
+      deps: [],
+      holder: holder,
+      source: source,
+      params: params
+    })
 
     try do
       fun.()

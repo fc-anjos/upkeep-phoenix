@@ -5,6 +5,8 @@ defmodule Upkeep.Ecto.RepoCapture do
 
   defmacro __using__(_opts) do
     quote do
+      def __upkeep_repo_capture_enabled__?, do: true
+
       defoverridable transaction: 2,
                      insert: 2,
                      update: 2,

@@ -3,6 +3,7 @@ defmodule Upkeep.RepoCaptureTest do
 
   alias Ecto.Changeset
   alias Upkeep.Live
+  import ExUnit.CaptureLog
 
   defmodule Issue do
     use Ecto.Schema
@@ -34,6 +35,35 @@ defmodule Upkeep.RepoCaptureTest do
     end
   end
 
+  defmodule PlainRepo do
+    use Ecto.Repo,
+      otp_app: :upkeep,
+      adapter: Ecto.Adapters.SQLite3
+  end
+
+  defmodule PlainRepoProjectIssues do
+    use Upkeep.Source, repo: PlainRepo
+
+    import Ecto.Query
+
+    alias Upkeep.RepoCaptureTest.Issue
+
+    def query(%{project_id: project_id}) do
+      from i in Issue,
+        where: i.project_id == ^project_id
+    end
+  end
+
+  defmodule PlainRepoExplicitLoad do
+    use Upkeep.Source, repo: PlainRepo
+
+    alias Upkeep.RepoCaptureTest.Issue
+
+    invalidated_by(Issue, :updated, on: :project_id)
+
+    def load(_params), do: []
+  end
+
   defmodule TableProjectIssues do
     use Upkeep.Source, repo: Upkeep.Repo
 
@@ -57,6 +87,80 @@ defmodule Upkeep.RepoCaptureTest do
           position: field(i, :position)
         }
     end
+  end
+
+  test "repo capture capability is exposed for setup assertions" do
+    assert Upkeep.Ecto.Repo.capture_enabled?(Repo)
+    refute Upkeep.Ecto.Repo.capture_enabled?(PlainRepo)
+    refute Upkeep.Ecto.Repo.capture_enabled?(String)
+    refute Upkeep.Ecto.Repo.capture_enabled?(Upkeep.RepoCaptureTest.MissingRepo)
+  end
+
+  test "assert_repo_capture_enabled! accepts repos using Upkeep.Ecto.Repo" do
+    assert :ok = Upkeep.Test.assert_repo_capture_enabled!(Repo)
+  end
+
+  test "assert_repo_capture_enabled! rejects plain, missing, and non-repo modules" do
+    for repo <- [PlainRepo, Upkeep.RepoCaptureTest.MissingRepo, String] do
+      error =
+        assert_raise ExUnit.AssertionError, fn ->
+          Upkeep.Test.assert_repo_capture_enabled!(repo)
+        end
+
+      assert error.message =~ "expected #{inspect(repo)} to be capture-enabled"
+      assert error.message =~ "use Upkeep.Ecto.Repo"
+    end
+  end
+
+  test "watch-time guard raises for query sources using plain Ecto repos" do
+    location = %{
+      file_label: "lib/my_app_web/live/issues_live.ex",
+      line: 42,
+      snippet: "> 42  socket |> watch(:issues, PlainRepoProjectIssues, project_id: 1)"
+    }
+
+    error =
+      assert_raise ArgumentError, fn ->
+        %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+        |> Live.watch(:issues, PlainRepoProjectIssues, %{project_id: 1},
+          source_location: location
+        )
+      end
+
+    assert error.message =~ "does not use `Upkeep.Ecto.Repo`"
+    assert error.message =~ "PlainRepoProjectIssues"
+    assert error.message =~ "Declared at lib/my_app_web/live/issues_live.ex:42"
+    assert error.message =~ "watch(:issues, PlainRepoProjectIssues"
+  end
+
+  test "repo capture misconfiguration can warn and emit telemetry" do
+    location = %{
+      file_label: "lib/my_app_web/live/issues_live.ex",
+      line: 43,
+      snippet: "> 43  socket |> watch(:issues, PlainRepoExplicitLoad, project_id: 1)"
+    }
+
+    with_repo_capture_policy(:warn, fn ->
+      log =
+        capture_log(fn ->
+          %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+          |> Live.watch(:issues, PlainRepoExplicitLoad, %{project_id: 1},
+            source_location: location
+          )
+        end)
+
+      assert log =~ "does not use `Upkeep.Ecto.Repo`"
+      _ = :sys.get_state(Upkeep.Observability)
+
+      assert Enum.any?(Upkeep.recent_events(), fn event ->
+               event.event == [:upkeep, :repo, :capture_check] and
+                 event.metadata.repo == PlainRepo and
+                 event.metadata.source == PlainRepoExplicitLoad and
+                 event.metadata.status == :error and
+                 event.metadata.reason == :repo_capture_disabled and
+                 event.metadata.policy == :warn
+             end)
+    end)
   end
 
   test "repo insert capture refreshes Ecto query sources after mutate commits" do
@@ -546,5 +650,19 @@ defmodule Upkeep.RepoCaptureTest do
         title: field(i, :title),
         position: field(i, :position)
       }
+  end
+
+  defp with_repo_capture_policy(policy, fun) do
+    previous = Application.get_env(:upkeep, :repo_capture_misconfiguration, :__missing__)
+    Application.put_env(:upkeep, :repo_capture_misconfiguration, policy)
+
+    try do
+      fun.()
+    after
+      case previous do
+        :__missing__ -> Application.delete_env(:upkeep, :repo_capture_misconfiguration)
+        value -> Application.put_env(:upkeep, :repo_capture_misconfiguration, value)
+      end
+    end
   end
 end

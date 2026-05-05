@@ -21,4 +21,18 @@ defmodule Upkeep.Ecto.Repo do
       use Upkeep.Ecto.RepoCapture
     end
   end
+
+  @doc """
+  Returns whether `repo` was built with `use Upkeep.Ecto.Repo`.
+
+  This is primarily used by `Upkeep.Test.assert_repo_capture_enabled!/1` and
+  source watch guardrails. Applications should prefer the test helper when
+  asserting setup.
+  """
+  def capture_enabled?(repo) when is_atom(repo) do
+    Code.ensure_loaded?(repo) and function_exported?(repo, :__upkeep_repo_capture_enabled__?, 0) and
+      repo.__upkeep_repo_capture_enabled__?()
+  end
+
+  def capture_enabled?(_repo), do: false
 end

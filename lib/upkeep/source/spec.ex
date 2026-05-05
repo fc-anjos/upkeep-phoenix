@@ -178,6 +178,8 @@ defmodule Upkeep.Source.Spec do
       unquote(sharing_partition_definition)
 
       def __upkeep_repo__, do: unquote(repo)
+      def __upkeep_repo_explicit__?, do: unquote(not is_nil(repo))
+      def __upkeep_query_source__?, do: unquote(defines_query?)
       def __upkeep_retry__, do: unquote(Macro.escape(retry))
 
       def reacts_to?(event, params), do: unquote(reacts_to_body)
