@@ -1,7 +1,7 @@
 defmodule Upkeep.Internal.Coordinator.Graph.Shard.Loaders do
   @moduledoc false
 
-  alias Upkeep.Source.Runtime, as: Source
+  alias Upkeep.Internal.Source.Runtime, as: Source
 
   def run_with_deps(loader, metadata) when is_map(metadata) do
     :telemetry.execute(

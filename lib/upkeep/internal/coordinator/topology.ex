@@ -1,7 +1,7 @@
 defmodule Upkeep.Internal.Coordinator.Topology do
   @moduledoc false
 
-  alias Upkeep.Source.Runtime, as: Source
+  alias Upkeep.Internal.Source.Runtime, as: Source
 
   @nodes_table :upkeep_topology_nodes
   @index_table :upkeep_topology_index

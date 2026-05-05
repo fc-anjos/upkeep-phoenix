@@ -23,7 +23,7 @@ defmodule Upkeep.Source do
       @upkeep_retry retry
       Module.register_attribute(__MODULE__, :upkeep_invalidators, accumulate: true)
       Module.register_attribute(__MODULE__, :upkeep_reactors, accumulate: true)
-      @before_compile Upkeep.Source.Spec
+      @before_compile Upkeep.Internal.Source.Spec
     end
   end
 
@@ -58,31 +58,9 @@ defmodule Upkeep.Source do
     end
   end
 
-  defdelegate load(source, params), to: Upkeep.Source.Runtime
-  defdelegate read(query_or_value), to: Upkeep.Source.Runtime
-  defdelegate deps_interest_keys(deps), to: Upkeep.Source.Runtime
-  defdelegate deps_react_to?(deps, event), to: Upkeep.Source.Runtime
-  defdelegate coverage(source, params), to: Upkeep.Source.Runtime
-  defdelegate coverage(source, params, deps), to: Upkeep.Source.Runtime
-  defdelegate query_interest_keys(source, params), to: Upkeep.Source.Runtime
-  defdelegate query_reacts_to?(source, event, params), to: Upkeep.Source.Runtime
-  defdelegate source_id(source, params), to: Upkeep.Source.Runtime
-  defdelegate sharing_partition(source, params), to: Upkeep.Source.Runtime
-  defdelegate retry_config(source), to: Upkeep.Source.Runtime
-
-  defdelegate verify_repo_capture!(source, params, opts \\ []),
-    to: Upkeep.Source.RepoCaptureGuard,
-    as: :verify_source!
-
-  defdelegate matches?(event, notification), to: Upkeep.Source.Keys
-  defdelegate equal_fields?(event, params, event_fields, source_fields), to: Upkeep.Source.Keys
-
-  defdelegate interest_key(notification, event_fields, source_fields, params),
-    to: Upkeep.Source.Keys
-
-  defdelegate notification_key(notification), to: Upkeep.Source.Keys
-  defdelegate notification_key(notification, values), to: Upkeep.Source.Keys
-  defdelegate event_keys(event), to: Upkeep.Source.Keys
+  defdelegate read(query_or_value), to: Upkeep.Internal.Source.Runtime
+  defdelegate coverage(source, params), to: Upkeep.Internal.Source.Runtime
+  defdelegate coverage(source, params, deps), to: Upkeep.Internal.Source.Runtime
 
   defp build_invalidated_by(notification, opts) do
     on = Keyword.fetch!(opts, :on) |> List.wrap()

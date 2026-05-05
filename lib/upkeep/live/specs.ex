@@ -8,7 +8,7 @@ defmodule Upkeep.Live.Specs do
   alias Upkeep.Runtime.Producer
   alias Upkeep.Runtime.ScopeCapture
   alias Upkeep.Runtime.State
-  alias Upkeep.Source.Runtime, as: Source
+  alias Upkeep.Internal.Source.Runtime, as: Source
 
   def source(assign_name, source, params, component, source_location \\ nil)
       when is_atom(assign_name) and is_map(params) do

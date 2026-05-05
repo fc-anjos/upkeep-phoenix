@@ -6,7 +6,7 @@ defmodule Upkeep.Runtime.Refresh do
   alias Upkeep.Runtime.Effects
   alias Upkeep.Runtime.SourceLoads
   alias Upkeep.Runtime.State
-  alias Upkeep.Source.Runtime, as: Source
+  alias Upkeep.Internal.Source.Runtime, as: Source
 
   def refresh(socket, assign_name, source, params) when is_atom(assign_name) do
     {value, _tracked_deps} = Source.load(source, params)

@@ -1,4 +1,4 @@
-defmodule Upkeep.Source.Keys do
+defmodule Upkeep.Internal.Source.Keys do
   @moduledoc false
 
   def matches?(%Upkeep.Change{} = change, %{name: name, schema: schema}) do

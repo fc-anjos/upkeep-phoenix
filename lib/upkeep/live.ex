@@ -42,7 +42,10 @@ defmodule Upkeep.Live do
     location = Keyword.get(opts, :source_location)
 
     with_current_scope(socket, fn socket ->
-      Upkeep.Source.verify_repo_capture!(source, params, source_location: location)
+      Upkeep.Internal.Source.RepoCaptureGuard.verify_source!(source, params,
+        source_location: location
+      )
+
       spec = Specs.source(assign_name, source, params, component, location)
       announce_registration(spec, location)
       Upkeep.Runtime.mount(socket, spec)

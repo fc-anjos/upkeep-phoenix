@@ -3,7 +3,7 @@ defmodule Upkeep.Runtime.SourceLoads do
 
   alias Upkeep.Live.Telemetry
   alias Upkeep.Runtime.Subscriptions
-  alias Upkeep.Source.Runtime, as: Source
+  alias Upkeep.Internal.Source.Runtime, as: Source
 
   def load(watch, reason) do
     load(watch.source, watch.params, watch.source_id, watch.component, reason)

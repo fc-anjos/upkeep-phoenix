@@ -1,4 +1,4 @@
-defmodule Upkeep.Source.Runtime do
+defmodule Upkeep.Internal.Source.Runtime do
   @moduledoc false
 
   @context_key {Upkeep.Source, :read_context}
@@ -24,7 +24,10 @@ defmodule Upkeep.Source.Runtime do
   def read(%Ecto.Query{} = query) do
     case Process.get(@context_key) do
       %{repo: repo} = ctx ->
-        Upkeep.Source.RepoCaptureGuard.ensure_repo_capture!(repo, ctx[:source], ctx[:params],
+        Upkeep.Internal.Source.RepoCaptureGuard.ensure_repo_capture!(
+          repo,
+          ctx[:source],
+          ctx[:params],
           boundary: :read
         )
 
@@ -41,7 +44,7 @@ defmodule Upkeep.Source.Runtime do
 
   def read(value), do: value
 
-  defdelegate event_keys(event), to: Upkeep.Source.Keys
+  defdelegate event_keys(event), to: Upkeep.Internal.Source.Keys
 
   def deps_interest_keys(deps) do
     deps

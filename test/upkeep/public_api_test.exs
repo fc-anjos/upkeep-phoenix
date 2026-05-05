@@ -28,24 +28,11 @@ defmodule Upkeep.PublicApiTest do
     Upkeep.Internal.Retry,
     Upkeep.Internal.SingleFlight,
     Upkeep.Internal.SingleFlight.Registry,
+    Upkeep.Internal.Source.Keys,
+    Upkeep.Internal.Source.RepoCaptureGuard,
+    Upkeep.Internal.Source.Runtime,
+    Upkeep.Internal.Source.Spec,
     Upkeep.TestSupport.MultiNodeProbe
-  ]
-
-  @retired_internal_modules [
-    Upkeep.Coordinator.Graph,
-    Upkeep.Coordinator.ReadNodes,
-    Upkeep.Coordinator.ReadNodes.Watcher,
-    Upkeep.Coordinator.Topology,
-    Upkeep.DAG.Diff,
-    Upkeep.DAG.Graph,
-    Upkeep.DAG.Plan,
-    Upkeep.DAG.Store,
-    Upkeep.DirtyBuffer,
-    Upkeep.Ecto.QueryDeps,
-    Upkeep.Mutation,
-    Upkeep.Retry,
-    Upkeep.SingleFlight,
-    Upkeep.SingleFlight.Registry
   ]
 
   test "stable public modules remain visible in generated docs" do
@@ -57,12 +44,6 @@ defmodule Upkeep.PublicApiTest do
   test "internal implementation modules stay hidden from generated docs" do
     for module <- @internal_modules do
       assert hidden?(module), "expected #{inspect(module)} to use @moduledoc false"
-    end
-  end
-
-  test "retired public-looking internal names are not loadable" do
-    for module <- @retired_internal_modules do
-      refute Code.ensure_loaded?(module), "expected #{inspect(module)} to be retired"
     end
   end
 

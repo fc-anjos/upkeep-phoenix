@@ -296,10 +296,13 @@ defmodule Upkeep.Internal.Coordinator.ReadNodesTest do
       def __upkeep_sharing_partition__(params), do: params
     end
 
-    {_value, _deps} = Upkeep.Source.load(HolderSource, %{id: 1})
+    {_value, _deps} = Upkeep.Internal.Source.Runtime.load(HolderSource, %{id: 1})
     assert ReadNodes.count() == 1
 
-    Upkeep.Internal.Coordinator.ReadNodes.release(Upkeep.Source.source_id(HolderSource, %{id: 1}))
+    Upkeep.Internal.Coordinator.ReadNodes.release(
+      Upkeep.Internal.Source.Runtime.source_id(HolderSource, %{id: 1})
+    )
+
     assert ReadNodes.count() == 0
   end
 
