@@ -8,6 +8,7 @@ defmodule Upkeep.Introspection do
   around that graph.
   """
 
+  alias Upkeep.Introspection.DeveloperView
   alias Upkeep.Live.Snapshot
 
   @default_event_limit 30
@@ -17,17 +18,21 @@ defmodule Upkeep.Introspection do
     event_limit = Keyword.get(opts, :event_limit, @default_event_limit)
     socket_assigns = opts |> Keyword.get(:assigns, socket.assigns) |> normalize_assigns()
     runtime = Snapshot.build(socket)
+    events = recent_events(event_limit)
 
     assigns = decorate_assigns(runtime.assigns, socket_assigns)
-    watches = decorate_watches(runtime.watches)
+    watches = decorate_watches(runtime.watches, events)
+    dag = decorate_dag(runtime.dag, assigns, watches)
 
     %{
       live_view: live_view(socket),
-      dag: decorate_dag(runtime.dag, assigns, watches),
+      summary: DeveloperView.summary(assigns, watches, dag, events),
+      dag: dag,
       assigns: assigns,
       watches: watches,
       pending_refreshes: Enum.map(runtime.pending_refreshes, &term_label/1),
-      events: recent_events(event_limit)
+      optimizations: DeveloperView.optimizations(watches, dag),
+      events: events
     }
   end
 
@@ -59,11 +64,19 @@ defmodule Upkeep.Introspection do
 
     watches_by_node = Map.new(watches, &{&1.node_id, &1})
 
+    sharing_by_node =
+      assigns
+      |> Enum.filter(&Map.has_key?(&1, :sharing))
+      |> Map.new(&{&1.node_id, &1.sharing})
+
     nodes =
       dag.nodes
       |> Enum.with_index()
       |> Enum.map(fn {node, index} ->
         node_id = node.id
+        assign_names = Map.get(assigns_by_node, node_id, [])
+        watch = Map.get(watches_by_node, node_id)
+        sharing = Map.get(sharing_by_node, node_id)
 
         %{
           index: index,
@@ -75,8 +88,15 @@ defmodule Upkeep.Introspection do
           kind_label: Atom.to_string(node.kind),
           deps: Enum.map(node.deps, &term_label/1),
           dependents: Enum.map(node.dependents, &term_label/1),
-          assign_names: Map.get(assigns_by_node, node_id, []),
-          watch: Map.get(watches_by_node, node_id),
+          input_labels: Enum.map(node.deps, &DeveloperView.node_reference(&1, assigns_by_node)),
+          output_labels:
+            Enum.map(node.dependents, &DeveloperView.node_reference(&1, assigns_by_node)),
+          assign_names: assign_names,
+          watch: watch,
+          sharing: sharing,
+          explanation:
+            DeveloperView.node_explanation(node, assign_names, watch, sharing, assigns_by_node),
+          optimization: DeveloperView.node_optimization(node, watch, sharing),
           source_location:
             node
             |> Map.get(:metadata, %{})
@@ -104,12 +124,15 @@ defmodule Upkeep.Introspection do
       |> Map.put(:dom_id, "upkeep-assign-#{index}")
       |> Map.put(:label, "@#{assign.assign}")
       |> Map.put(:node_label, node_label(assign.node_id))
+      |> Map.merge(DeveloperView.assign_role_metadata(assign.node_id))
       |> Map.put(:shape, shape(value))
       |> Map.put(:changed?, Map.has_key?(changed_assigns, assign.assign))
     end)
   end
 
-  defp decorate_watches(watches) do
+  defp decorate_watches(watches, events) do
+    coverage_by_watch = DeveloperView.coverage_by_watch(events)
+
     Enum.map(watches, fn watch ->
       watch
       |> Map.put(:source_label, module_label(watch.source))
@@ -117,6 +140,7 @@ defmodule Upkeep.Introspection do
       |> Map.put(:params_label, term_label(watch.params))
       |> Map.put(:sharing_partition_label, term_label(watch.sharing_partition))
       |> Map.put(:assign_labels, Enum.map(watch.assign_names, &"@#{&1}"))
+      |> DeveloperView.decorate_watch(coverage_by_watch)
     end)
   end
 

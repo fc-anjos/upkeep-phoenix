@@ -17,12 +17,21 @@ defmodule Upkeep.Live.Inspector.GraphComponent do
         "bg-[linear-gradient(#f5f5f5_1px,transparent_1px),linear-gradient(90deg,#f5f5f5_1px,transparent_1px)] [background-size:24px_24px]"
       ]}
     >
-      <div class="pointer-events-none absolute inset-x-3 top-3 z-10 flex items-center gap-2">
+      <div class="pointer-events-none absolute inset-x-3 top-3 z-10 flex items-start gap-2">
+        <div class="pointer-events-auto rounded-md border border-neutral-200 bg-white/95 px-3 py-2 shadow-sm">
+          <h2 class="m-0 text-xs font-bold uppercase tracking-wide text-neutral-950">
+            DAG
+          </h2>
+          <p class="mt-1 mb-0 font-mono text-[11px] leading-none text-neutral-500">
+            {length(@document.dag.nodes)} nodes / {length(@document.dag.edges)} edges
+          </p>
+        </div>
+
         <div class="pointer-events-auto flex items-center gap-3 rounded-md border border-neutral-200 bg-white/90 px-2.5 py-1.5 font-mono text-[11px] text-neutral-600 shadow-sm">
           <span class="inline-flex items-center gap-1.5">
             <span class="h-2.5 w-2.5 rounded-sm border border-[oklch(0.55_0.15_250)] bg-[oklch(0.95_0.04_250)]">
             </span>
-            changed root
+            changed source
           </span>
           <span class="inline-flex items-center gap-1.5">
             <span class="h-2.5 w-2.5 rounded-sm border border-[oklch(0.68_0.15_70)] bg-[oklch(0.96_0.05_70)]">
@@ -36,7 +45,7 @@ defmodule Upkeep.Live.Inspector.GraphComponent do
           </span>
           <span class="inline-flex items-center gap-1.5">
             <span class="h-2.5 w-2.5 rounded-sm border border-neutral-300 bg-neutral-100"></span>
-            cold/skipped
+            idle/skipped
           </span>
         </div>
 
@@ -47,7 +56,7 @@ defmodule Upkeep.Live.Inspector.GraphComponent do
         </div>
       </div>
 
-      <div class="h-full overflow-auto px-6 pb-6 pt-14">
+      <div class="h-full overflow-auto px-6 pb-6 pt-24">
         <div class="flex min-h-full min-w-full items-center justify-center">
           <svg
             id="upkeep-dag-svg"

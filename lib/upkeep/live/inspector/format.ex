@@ -51,4 +51,23 @@ defmodule Upkeep.Live.Inspector.Format do
   def reason_class(:skipped), do: "gray"
   def reason_class(:cold), do: "gray"
   def reason_class(:idle), do: "gray"
+
+  def status_class(:live_query), do: "green"
+  def status_class(:declared_invalidation), do: "teal"
+  def status_class(:reactive_gap), do: "amber"
+  def status_class(:not_registered), do: "gray"
+  def status_class(:shared), do: "green"
+  def status_class(:local), do: "orange"
+  def status_class(:local_context), do: "orange"
+  def status_class(:shared_and_cached), do: "green"
+  def status_class(:shared_source), do: "teal"
+  def status_class(:read_node_cache), do: "green"
+  def status_class(:not_deduped), do: "gray"
+  def status_class(_status), do: "gray"
+
+  def role_class(:loaded), do: "teal"
+  def role_class(:computed), do: "blue"
+  def role_class(:context), do: "orange"
+  def role_class(:component), do: "amber"
+  def role_class(_role), do: "gray"
 end

@@ -60,7 +60,9 @@ defmodule Upkeep.Live.Snapshot do
         sharing_partition: Source.sharing_partition(watch.source, watch.params),
         component: watch.component,
         assign_names: watch.assign_names |> MapSet.to_list() |> Telemetry.sort_terms(),
-        interest_keys: Telemetry.sort_terms(watch.interest_keys)
+        interest_keys: Telemetry.sort_terms(watch.interest_keys),
+        registered?: watch.registered?,
+        tracked_deps: Map.get(watch, :tracked_deps, [])
       }
     end)
     |> sort_maps_by(:source_id)

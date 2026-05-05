@@ -2,14 +2,6 @@ defmodule Upkeep.Live.SourceLocation do
   @moduledoc false
 
   @context_radius 2
-  @capture_source_locations_default Code.ensure_loaded?(Mix) and
-                                      function_exported?(Mix, :env, 0) and
-                                      Mix.env() in [:dev, :test]
-  @capture_source_locations Application.compile_env(
-                              :upkeep,
-                              :capture_source_locations,
-                              @capture_source_locations_default
-                            )
 
   def capture(%Macro.Env{} = caller, kind, call_name, args) when is_atom(call_name) do
     if capture?() do
@@ -29,7 +21,11 @@ defmodule Upkeep.Live.SourceLocation do
   end
 
   defp capture? do
-    @capture_source_locations
+    Application.get_env(:upkeep, :capture_source_locations, default_capture?())
+  end
+
+  defp default_capture? do
+    Code.ensure_loaded?(Mix) and function_exported?(Mix, :env, 0) and Mix.env() in [:dev, :test]
   end
 
   defp file_label(nil), do: nil

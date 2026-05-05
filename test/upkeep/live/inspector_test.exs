@@ -166,10 +166,27 @@ defmodule Upkeep.Live.InspectorTest do
       |> IO.iodata_to_binary()
 
     assert html =~ "Upkeep Inspector"
+    assert html =~ ~s(id="upkeep-tabbed-workspace")
+    assert html =~ ~s(id="upkeep-overview-tab")
+    assert html =~ ~s(id="upkeep-flow-tab")
+    assert html =~ ~s(id="upkeep-data-tab")
+    assert html =~ ~s(id="upkeep-queries-tab")
+    assert html =~ ~s(id="upkeep-invalidation-tab")
+    assert html =~ ~s(id="upkeep-events-tab")
+    assert html =~ ~s(id="upkeep-source-tab")
     assert html =~ ~s(id="upkeep-playground-panel")
     assert html =~ ~s(id="upkeep-node-inspector-panel")
     assert html =~ ~s(id="upkeep-timeline-panel")
-    assert html =~ ~s(id="upkeep-code-panel")
+    assert html =~ ~s(id="upkeep-optimization-panel")
+    assert html =~ "Overview"
+    assert html =~ "Assign Surface"
+    assert html =~ "Sources &amp; Queries"
+    assert html =~ "Invalidation"
+    assert html =~ "Captured Source"
+    assert html =~ "@issue_count is computed from @issues"
+    assert html =~ "LiveView was not connected"
+    assert html =~ "declared live"
+    assert html =~ "no query dedup"
     assert html =~ "changed root"
     assert html =~ "recomputed, value changed"
     assert html =~ "upkeep.dag.recompute.stop"
