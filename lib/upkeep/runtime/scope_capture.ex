@@ -32,9 +32,11 @@ defmodule Upkeep.Runtime.ScopeCapture do
     case policy() do
       :raise ->
         assign_name = Map.fetch!(context, :assign_name)
+        location_suffix = location_suffix(Map.get(context, :source_location))
 
         raise Upkeep.ImplicitScopeError,
-              "Upkeep derive #{inspect(assign_name)} captures #{inspect(scope_capture)}. " <>
+              "Upkeep derive #{inspect(assign_name)}#{location_suffix} captures " <>
+                "#{inspect(scope_capture)}. " <>
                 "Use an external function that receives current_scope from the dependency map " <>
                 "instead of closing over socket/session/current_scope values."
 
@@ -44,6 +46,19 @@ defmodule Upkeep.Runtime.ScopeCapture do
   end
 
   def apply_policy(_analysis, _context), do: :ok
+
+  defp location_suffix(nil), do: ""
+
+  defp location_suffix(%{} = location) do
+    file = Map.get(location, :file_label) || Map.get(location, :file)
+    line = Map.get(location, :line)
+
+    cond do
+      is_binary(file) and is_integer(line) -> " (declared at #{file}:#{line})"
+      is_binary(file) -> " (declared at #{file})"
+      true -> ""
+    end
+  end
 
   def implicit_scope_metadata(socket, dep_node_ids) do
     cond do

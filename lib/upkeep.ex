@@ -27,6 +27,9 @@ defmodule Upkeep do
   - `inserted/2`, `updated/2`, `deleted/2`, `changed/3` — typed event helpers.
   - `read/1` — Ecto-backed read inside a source context.
   - `recent_events/1`, `clear_events/0` — observability buffer.
+
+  Optional: add `:upkeep_inspector` to your deps for an in-app dashboard
+  that renders the runtime DAG, sources, and telemetry trail.
   """
 
   use Supervisor
