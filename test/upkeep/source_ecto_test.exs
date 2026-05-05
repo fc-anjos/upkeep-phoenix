@@ -574,8 +574,14 @@ defmodule Upkeep.SourceEctoTest do
              params
            )
 
-    refute ProjectIssues.reacts_to?(
+    assert ProjectIssues.reacts_to?(
              issue(project_id: 1, assignee_id: 10, status: "open") |> Upkeep.Change.updated(),
+             params
+           )
+
+    refute ProjectIssues.reacts_to?(
+             issue(project_id: 1, assignee_id: 10, status: "open")
+             |> Upkeep.Change.updated(from: issue(project_id: 1, assignee_id: 10, status: "open")),
              params
            )
 
@@ -611,8 +617,14 @@ defmodule Upkeep.SourceEctoTest do
              %{project_id: 1, user_id: 9}
            )
 
-    refute BroadProjectIssues.reacts_to?(
+    assert BroadProjectIssues.reacts_to?(
              issue(project_id: 2, assignee_id: 10, status: "open") |> Upkeep.Change.updated(),
+             %{project_id: 1, user_id: 9}
+           )
+
+    refute BroadProjectIssues.reacts_to?(
+             issue(project_id: 2, assignee_id: 10, status: "open")
+             |> Upkeep.Change.updated(from: issue(project_id: 2, assignee_id: 10, status: "open")),
              %{project_id: 1, user_id: 9}
            )
 
@@ -680,7 +692,8 @@ defmodule Upkeep.SourceEctoTest do
            )
 
     refute JoinedIssueCards.reacts_to?(
-             issue(project_id: 1, status: "closed") |> Upkeep.Change.updated(),
+             issue(project_id: 1, status: "closed")
+             |> Upkeep.Change.updated(from: issue(project_id: 1, status: "closed")),
              params
            )
 
@@ -690,7 +703,7 @@ defmodule Upkeep.SourceEctoTest do
            )
 
     refute JoinedIssueCards.reacts_to?(
-             column(project_id: 2) |> Upkeep.Change.updated(),
+             column(project_id: 2) |> Upkeep.Change.updated(from: column(project_id: 2)),
              params
            )
   end
@@ -777,7 +790,8 @@ defmodule Upkeep.SourceEctoTest do
            )
 
     refute DynamicIssues.reacts_to?(
-             issue(project_id: 1, status: "closed") |> Upkeep.Change.updated(),
+             issue(project_id: 1, status: "closed")
+             |> Upkeep.Change.updated(from: issue(project_id: 1, status: "closed")),
              params
            )
   end

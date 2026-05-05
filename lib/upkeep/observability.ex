@@ -14,6 +14,7 @@ defmodule Upkeep.Observability do
   @default_limit 200
 
   @events [
+    [:upkeep, :change, :broad_update],
     [:upkeep, :source, :watch],
     [:upkeep, :source, :coverage],
     [:upkeep, :source, :queue],

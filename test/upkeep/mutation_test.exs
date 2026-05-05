@@ -2,9 +2,14 @@ defmodule Upkeep.MutationTest do
   use Upkeep.DataCase, async: false
 
   alias Upkeep.Live
+  import ExUnit.CaptureLog
 
   defmodule Issue do
     defstruct [:project_id, :issue_id]
+  end
+
+  defmodule WarningIssue do
+    defstruct [:project_id]
   end
 
   defmodule ProjectIssues do
@@ -201,6 +206,27 @@ defmodule Upkeep.MutationTest do
     drain_graph()
 
     refute_received {:dag_values, [{{ProjectIssues, %{project_id: 780}}, _}]}
+  end
+
+  test "updates without old state emit a broad-invalidation diagnostic" do
+    Upkeep.clear_events()
+
+    log =
+      capture_log(fn ->
+        assert :ok = Upkeep.notify(Upkeep.Change.updated(%WarningIssue{project_id: 123}))
+        drain_graph()
+        _ = :sys.get_state(Upkeep.Observability)
+      end)
+
+    assert log =~ "without `from: old_record`"
+    assert log =~ "refresh all matching `:updated` sources"
+
+    assert Enum.any?(Upkeep.recent_events(), fn event ->
+             event.event == [:upkeep, :change, :broad_update] and
+               event.metadata.schema == WarningIssue and
+               event.metadata.reason == :missing_old_state and
+               event.metadata.policy == :warn
+           end)
   end
 
   defp watch_project(project_id) do

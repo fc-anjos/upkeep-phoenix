@@ -10,11 +10,15 @@ defmodule Upkeep.Source.Keys do
   end
 
   def equal_fields?(%Upkeep.Change{} = change, params, event_fields, source_fields) do
-    change
-    |> Upkeep.Change.field_sets()
-    |> Enum.any?(fn fields ->
-      equal_field_set?(fields, params, event_fields, source_fields)
-    end)
+    if Upkeep.Change.broad_update?(change) do
+      true
+    else
+      change
+      |> Upkeep.Change.field_sets()
+      |> Enum.any?(fn fields ->
+        equal_field_set?(fields, params, event_fields, source_fields)
+      end)
+    end
   end
 
   def equal_fields?(event, params, event_fields, source_fields) when is_struct(event) do
@@ -43,26 +47,19 @@ defmodule Upkeep.Source.Keys do
     do: {:upkeep_change, name, schema, values}
 
   def event_keys(%Upkeep.Change{} = change) do
-    field_keys =
-      change
-      |> Upkeep.Change.field_sets()
-      |> Enum.flat_map(fn fields ->
-        fields
-        |> Map.to_list()
-        |> non_empty_subsets()
-        |> Enum.flat_map(fn values ->
-          [
-            notification_key(%{name: change.name, schema: change.schema}, values),
-            notification_key(%{name: change.name, schema: :_}, values)
-          ]
-        end)
-      end)
-
-    [
+    broad_keys = [
       notification_key(%{name: change.name, schema: change.schema}),
       notification_key(%{name: change.name, schema: :_})
-      | field_keys
     ]
+
+    field_keys =
+      if Upkeep.Change.broad_update?(change) do
+        []
+      else
+        field_event_keys(change)
+      end
+
+    (broad_keys ++ field_keys)
     |> Enum.uniq()
   end
 
@@ -83,6 +80,22 @@ defmodule Upkeep.Source.Keys do
     Enum.zip(event_fields, source_fields)
     |> Enum.all?(fn {event_field, source_field} ->
       Map.fetch!(fields, event_field) == Map.fetch!(params, source_field)
+    end)
+  end
+
+  defp field_event_keys(%Upkeep.Change{} = change) do
+    change
+    |> Upkeep.Change.field_sets()
+    |> Enum.flat_map(fn fields ->
+      fields
+      |> Map.to_list()
+      |> non_empty_subsets()
+      |> Enum.flat_map(fn values ->
+        [
+          notification_key(%{name: change.name, schema: change.schema}, values),
+          notification_key(%{name: change.name, schema: :_}, values)
+        ]
+      end)
     end)
   end
 

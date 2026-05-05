@@ -165,6 +165,7 @@ defmodule Upkeep.Mutation do
   defp dispatch_journal([]), do: :ok
 
   defp dispatch_journal(events) do
+    Enum.each(events, &Upkeep.Change.diagnose_broad_update/1)
     Enum.each(events, &Upkeep.Coordinator.Graph.notify/1)
     :ok
   end

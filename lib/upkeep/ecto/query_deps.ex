@@ -90,7 +90,8 @@ defmodule Upkeep.Ecto.QueryDeps do
     if MapSet.member?(deps.schemas, change.schema) do
       filter_sets = equality_filter_sets(deps, change.schema)
 
-      broad_schema?(deps, change.schema) or filter_sets == [] or
+      Upkeep.Change.broad_update?(change) or broad_schema?(deps, change.schema) or
+        filter_sets == [] or
         Enum.any?(filter_sets, &change_matches_filters?(change, &1))
     else
       false

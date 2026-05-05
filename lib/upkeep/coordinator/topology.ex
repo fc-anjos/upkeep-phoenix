@@ -97,11 +97,20 @@ defmodule Upkeep.Coordinator.Topology do
   end
 
   def affected_source_node_ids(event) when is_struct(event) do
-    event
-    |> Source.event_keys()
-    |> Enum.flat_map(&:ets.lookup(@index_table, &1))
-    |> Enum.map(fn {_key, node_id} -> node_id end)
-    |> Enum.uniq()
+    affected =
+      event
+      |> Source.event_keys()
+      |> Enum.flat_map(&:ets.lookup(@index_table, &1))
+      |> Enum.map(fn {_key, node_id} -> node_id end)
+
+    affected =
+      if Upkeep.Change.broad_update?(event) do
+        affected ++ broad_update_source_node_ids(event)
+      else
+        affected
+      end
+
+    Enum.uniq(affected)
   end
 
   def affected_source_node_ids(event, shard_idx)
@@ -191,4 +200,34 @@ defmodule Upkeep.Coordinator.Topology do
       _ -> :ok
     end
   end
+
+  defp broad_update_source_node_ids(%Upkeep.Change{} = change) do
+    @nodes_table
+    |> :ets.tab2list()
+    |> Enum.flat_map(fn
+      {node_id, :source, _shard_idx, interest_keys, _deps} ->
+        if Enum.any?(interest_keys, &updated_interest_key?(&1, change.schema)) do
+          [node_id]
+        else
+          []
+        end
+
+      _other ->
+        []
+    end)
+  end
+
+  defp updated_interest_key?({:upkeep_change, :updated, key_schema}, schema) do
+    change_schema_matches?(schema, key_schema)
+  end
+
+  defp updated_interest_key?({:upkeep_change, :updated, key_schema, _values}, schema) do
+    change_schema_matches?(schema, key_schema)
+  end
+
+  defp updated_interest_key?(_key, _schema), do: false
+
+  defp change_schema_matches?(_schema, :_), do: true
+  defp change_schema_matches?(schema, schema), do: true
+  defp change_schema_matches?(_schema, _key_schema), do: false
 end

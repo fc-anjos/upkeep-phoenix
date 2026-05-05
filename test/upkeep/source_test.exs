@@ -106,7 +106,14 @@ defmodule Upkeep.SourceTest do
     assert BoardColumns.reacts_to?(updated_issue(project_id: 123), %{project_id: 123})
     assert BoardColumns.reacts_to?(inserted_issue(project_id: 123), %{project_id: 123})
     assert BoardColumns.reacts_to?(issue_moved(project_id: 123), %{project_id: 123})
-    refute BoardColumns.reacts_to?(updated_issue(project_id: 456), %{project_id: 123})
+
+    refute BoardColumns.reacts_to?(
+             updated_issue(
+               project_id: 456,
+               from: %Issue{id: 1, project_id: 456, assignee_id: 9, column_id: 1}
+             ),
+             %{project_id: 123}
+           )
 
     assert MyIssues.reacts_to?(
              updated_issue(project_id: 123, assignee_id: 9),
@@ -135,6 +142,18 @@ defmodule Upkeep.SourceTest do
     assert MyIssues.reacts_to?(change, %{project_id: 123, user_id: 9})
     assert MyIssues.reacts_to?(change, %{project_id: 123, user_id: 10})
     refute MyIssues.reacts_to?(change, %{project_id: 123, user_id: 11})
+  end
+
+  test "updates without old state match declarative keys broadly" do
+    change = updated_issue(project_id: 456)
+
+    assert Upkeep.Change.broad_update?(change)
+    assert BoardColumns.reacts_to?(change, %{project_id: 123})
+
+    assert Upkeep.Source.event_keys(change) == [
+             {:upkeep_change, :updated, Issue},
+             {:upkeep_change, :updated, :_}
+           ]
   end
 
   test "custom reactors can inspect old and new record state" do
@@ -235,12 +254,29 @@ defmodule Upkeep.SourceTest do
 
     Live.watch(socket, :columns, BoardColumns, project_id: 123)
 
-    change = updated_issue(project_id: 456)
+    change =
+      updated_issue(
+        project_id: 456,
+        from: %Issue{id: 1, project_id: 456, assignee_id: 9, column_id: 1}
+      )
 
     assert :ok = Upkeep.notify(change)
     :ok = Upkeep.Coordinator.Graph.drain()
 
     refute_received {:dag_values, [{_, _}]}
+  end
+
+  test "coordinator dispatches field-indexed watchers broadly when update old state is missing" do
+    socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+
+    Live.watch(socket, :columns, BoardColumns, project_id: 123)
+
+    change = updated_issue(project_id: 456)
+
+    assert :ok = Upkeep.notify(change)
+    :ok = Upkeep.Coordinator.Graph.drain()
+
+    assert_receive {:dag_values, [{{BoardColumns, %{project_id: 123}}, [:todo]}]}
   end
 
   test "coordinator sends one event when a process watches overlapping source keys" do
