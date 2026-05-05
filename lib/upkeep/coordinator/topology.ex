@@ -1,16 +1,5 @@
 defmodule Upkeep.Coordinator.Topology do
-  @moduledoc """
-  Cluster-wide node registry for the coordinator.
-
-  Owns the global topology view: node kind, owning shard, interest keys, and
-  static deps. Backed by two ETS tables and read directly by every shard
-  process — no GenServer round-trip on the hot notify path.
-
-  All sharding/partitioning queries live here too (`shard_of/1`,
-  `shard_of_node/1`, `node_partition/1`, `shared_partition_info/1`); the
-  `Coordinator.Graph` module is now just the supervisor + Group/notification
-  surface.
-  """
+  @moduledoc false
 
   alias Upkeep.Source.Runtime, as: Source
 

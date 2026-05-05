@@ -1,44 +1,5 @@
 defmodule Upkeep.Coordinator.Graph do
-  @moduledoc """
-  Sharded graph-aware coordinator with `Group`-based interest tracking.
-
-  Subscribers register interest in nodes (`register_source/4`,
-  `register_derived/3`) declaring how their value is computed. The
-  coordinator owns the routing index and the canonical node values; each
-  shard:
-
-    1. Receives cluster-wide notifications via `Group.dispatch/3`, then looks
-       up affected local source nodes via `Upkeep.Coordinator.Topology` (no
-       event_keys subset enumeration at notify time).
-    2. Buffers, then on flush:
-       - dedups events,
-       - runs `load_fn/0` once per dirty source node,
-       - recomputes pure derived nodes whose deps changed via the
-         per-shard `Upkeep.DAG.Store`,
-       - dispatches values via `Group.dispatch/3`.
-
-  ## Why Group
-
-    * Per-pid GC: subscriber death triggers Group `:left` events; shards drop
-      refcounted nodes when the last subscriber leaves. No hand-rolled
-      subscriber monitors.
-    * Shape B lifecycle: shards `Group.join/4` themselves under
-      `graph/shard/<idx>`. LVs can `Group.monitor/2` that prefix and
-      re-register their watches on shard restart. Joining, rather than
-      registering, lets every Erlang node run the same shard indexes without
-      fighting over unique registry keys.
-    * Cluster notification fanout: shards join one Group notification key, so
-      writes dispatch once through Group and every node runs its own local
-      graph index.
-
-  ## Correctness contract
-
-    * Subscribers treat values as authoritative state, not deltas.
-    * Cross-shard ordering is not preserved (eventually consistent).
-    * Dirty-source buffers dedupe per flush and never intentionally drop
-      matching nodes.
-    * Derived nodes must colocate with their deps (raises otherwise).
-  """
+  @moduledoc false
 
   use Supervisor
 

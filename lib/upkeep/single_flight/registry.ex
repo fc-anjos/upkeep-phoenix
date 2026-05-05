@@ -1,11 +1,5 @@
 defmodule Upkeep.SingleFlight.Registry do
-  @moduledoc """
-  Process-wide single-flight registry backed by `Upkeep.SingleFlight`.
-
-  The registry owns only in-flight metadata. The caller that wins the
-  reservation runs the load in its own process; waiters block on tagged
-  messages and receive the same outcome.
-  """
+  @moduledoc false
 
   use GenServer
 

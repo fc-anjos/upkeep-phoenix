@@ -1,20 +1,5 @@
 defmodule Upkeep.DirtyBuffer do
-  @moduledoc """
-  Threshold-driven dirty-set with deferred flush.
-
-  Callers `enqueue/2` items as they arrive. The buffer reports back:
-
-    * `:flush_now` once the size hits its `:threshold` — the caller drains
-      and processes immediately;
-    * `:schedule` the first time items arrive while idle — the caller arms
-      a timer (e.g. `Process.send_after(self(), :flush, …)`);
-    * `:wait` once a flush is already scheduled — the caller does nothing.
-
-  `drain/1` returns the buffered items as a list and clears both the dirty
-  set and the scheduled flag, so the next `enqueue/2` arms a fresh timer.
-
-  Plain functional state. Owning processes hold one buffer per work class.
-  """
+  @moduledoc false
 
   defstruct dirty: MapSet.new(), threshold: 1_000, scheduled?: false
 

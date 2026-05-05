@@ -1,14 +1,5 @@
 defmodule Upkeep.Mutation do
-  @moduledoc """
-  Transaction boundary for domain facts.
-
-  Notifications emitted inside `mutate/2` are journaled in the calling process
-  and handed to the graph notifier only after the database transaction commits.
-  The notifier batches queued events outside the mutating process, routes dirty
-  source nodes to shards, and shards flush their dirty buffers asynchronously.
-  Tests that need to assert on subscriber messages can call
-  `Upkeep.Coordinator.Graph.drain/0` as the graph quiescence boundary.
-  """
+  @moduledoc false
 
   @journal_key {__MODULE__, :journal}
 

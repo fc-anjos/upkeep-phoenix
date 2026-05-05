@@ -1,15 +1,5 @@
 defmodule Upkeep.SingleFlight do
-  @moduledoc """
-  In-flight call dedup for register-and-load patterns.
-
-  When multiple callers ask for the same keyed value while a load is in
-  flight, they share one task: the first call starts the load and tracks
-  its monitor ref; subsequent calls `join/3` the waiter list. On result
-  or DOWN, the caller `pop/2`s by ref and replies to all waiters.
-
-  Plain functional state — the owning GenServer holds a coalescer per
-  load class (e.g., one for sources, one for derived nodes).
-  """
+  @moduledoc false
 
   defstruct loads: %{}, refs: %{}
 

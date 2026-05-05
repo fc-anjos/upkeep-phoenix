@@ -1,11 +1,5 @@
 defmodule Upkeep.DAG.Graph do
-  @moduledoc """
-  Pure topology for a dependency graph.
-
-  Tracks nodes, deps, and dependents. Knows nothing about cached values or
-  compute functions. All queries return `Plan` structs or id lists, never a
-  mutated graph — callers compose with `Upkeep.DAG.Store` when they need values.
-  """
+  @moduledoc false
 
   defstruct nodes: %{}, deps: %{}, dependents: %{}
 

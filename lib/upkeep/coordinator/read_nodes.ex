@@ -1,29 +1,5 @@
 defmodule Upkeep.Coordinator.ReadNodes do
-  @moduledoc """
-  Library-level read-node graph.
-
-  A *read-node* is a first-class node keyed by `{repo, fingerprint(query)}`
-  whose value is the result of running that query against the database.
-  Source `load/1` callbacks no longer hit the database directly — every
-  `Upkeep.read/1` looks up (or installs) a read-node, so two callbacks
-  that need the same query share one fetch and one cached value.
-
-  ## Lookup vs. invalidation
-
-  Read-nodes are indexed under a *coarse* key, `{action, schema}`, instead
-  of registering against the same explosive interest-key set the source
-  graph uses. A typical write (e.g. `inserted` of a struct with N fields)
-  generates `2^N` interest keys for source-node matching; replicating that
-  work synchronously in the mutator's process turned out to dominate
-  end-to-end submit latency. Read-nodes only need a per-schema invalidation
-  surface, since their precise dependencies are recomputed via
-  `Upkeep.Ecto.QueryDeps.matches_change?/2` against the candidate set —
-  cheap and exact.
-
-  Cached values live in a single public ETS table so any process can hit
-  them without cross-shard messaging. The supporting tables are owned by
-  the `Upkeep.Coordinator.Graph` supervisor and share its lifecycle.
-  """
+  @moduledoc false
 
   alias Upkeep.SingleFlight.Registry
   alias Upkeep.Ecto.QueryDeps

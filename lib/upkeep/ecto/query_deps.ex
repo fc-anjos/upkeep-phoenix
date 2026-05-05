@@ -1,11 +1,5 @@
 defmodule Upkeep.Ecto.QueryDeps do
-  @moduledoc """
-  Extracts runtime invalidation dependencies from Ecto queries.
-
-  This intentionally starts with the Phoenix common path: schema-backed queries
-  with equality filters. Unsupported shapes are treated as broad dependencies
-  on the schemas Upkeep can see, preserving correctness at the cost of precision.
-  """
+  @moduledoc false
 
   @actions [:inserted, :updated, :deleted]
   defstruct bindings: %{},

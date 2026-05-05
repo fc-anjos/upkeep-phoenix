@@ -1,11 +1,5 @@
 defmodule Upkeep.DAG.Store do
-  @moduledoc """
-  Value cache and recompute engine layered over `Upkeep.DAG.Graph`.
-
-  The graph owns topology; the store owns cached values, compute functions,
-  and the recompute walk. Mutations return `{store, ...}` so callers can chain;
-  topology queries should go through `graph/1` directly.
-  """
+  @moduledoc false
 
   alias Upkeep.DAG.{Diff, Graph}
 

@@ -1,20 +1,5 @@
 defmodule Upkeep.Coordinator.ReadNodes.Watcher do
-  @moduledoc """
-  Per-node read-node invalidator.
-
-  `Upkeep.Coordinator.Graph.notify/1` dispatches each event through
-  `Group.dispatch/3`, which delivers cluster-wide. The mutating node
-  invalidates its own read-node cache synchronously inside `notify/1`
-  — that preserves the "next read after notify sees fresh data"
-  guarantee for the local caller. But remote nodes only learn about
-  the event through the dispatched message; without a subscriber,
-  their local read-node caches drift stale.
-
-  This Watcher closes that gap: it joins the notification group on
-  every node and runs `ReadNodes.invalidate/1` for each event. On the
-  originating node the call is a cheap no-op (the cache was already
-  cleared by `notify/1`); on remote nodes it does the real work.
-  """
+  @moduledoc false
 
   use GenServer
 
