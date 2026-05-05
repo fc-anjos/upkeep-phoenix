@@ -4,7 +4,6 @@ defmodule Bench.InitialSharingSupport do
   @moduledoc false
 
   @default_watches 1_000
-  @join_window_ms 250
   @await_timeout_ms 10_000
   @default_parallelism System.schedulers_online()
 
@@ -40,7 +39,7 @@ defmodule Bench.InitialSharingSupport do
     end
   end
 
-  def start_first_and_joiners(watches, fun, wait_for_first) do
+  def start_first_and_joiners(watches, fun, wait_for_first, wait_for_joiners \\ fn _ -> :ok end) do
     first = Task.async(fun)
     first_pid = wait_for_first.()
 
@@ -49,11 +48,12 @@ defmodule Bench.InitialSharingSupport do
         Task.async(fun)
       end
 
+    wait_for_joiners.(max(watches - 1, 0))
+
     {first_pid, [first | tasks]}
   end
 
   def release(pid) do
-    Process.sleep(@join_window_ms)
     send(pid, :continue)
   end
 
@@ -85,6 +85,43 @@ defmodule Bench.InitialSharingSupport do
       {^tag, pid, ^run_id} -> pid
     after
       timeout -> raise "benchmark #{inspect(tag)} did not start"
+    end
+  end
+
+  def telemetry_probe(events, predicate) when is_list(events) and is_function(predicate, 3) do
+    owner = self()
+    handler_id = {__MODULE__, owner, make_ref()}
+
+    :ok =
+      :telemetry.attach_many(
+        handler_id,
+        events,
+        &__MODULE__.handle_telemetry_probe/4,
+        %{owner: owner, handler_id: handler_id, predicate: predicate}
+      )
+
+    handler_id
+  end
+
+  def handle_telemetry_probe(event, measurements, metadata, config) do
+    if config.predicate.(event, measurements, metadata) do
+      send(config.owner, {:telemetry_probe, config.handler_id})
+    end
+  end
+
+  def detach_telemetry_probe(handler_id) do
+    :telemetry.detach(handler_id)
+  end
+
+  def wait_for_probe(handler_id, count, timeout \\ 5_000)
+
+  def wait_for_probe(_handler_id, 0, _timeout), do: :ok
+
+  def wait_for_probe(handler_id, count, timeout) when count > 0 do
+    receive do
+      {:telemetry_probe, ^handler_id} -> wait_for_probe(handler_id, count - 1, timeout)
+    after
+      timeout -> raise "benchmark telemetry probe #{inspect(handler_id)} missed #{count} event(s)"
     end
   end
 

@@ -3,12 +3,11 @@ defmodule Upkeep.Mutation do
   Transaction boundary for domain facts.
 
   Notifications emitted inside `mutate/2` are journaled in the calling process
-  and dispatched to graph shards only after the database transaction commits.
-  Dispatch is synchronous to shard mailboxes (each shard observes the event
-  before `mutate/2` returns), but shard flushes and subscriber dispatches
-  happen on the shards' own ~1ms flush timers. Tests that need to assert on
-  the absence of subscriber messages can still call
-  `Upkeep.Coordinator.Graph.drain/0` explicitly.
+  and handed to the graph notifier only after the database transaction commits.
+  The notifier batches queued events outside the mutating process, routes dirty
+  source nodes to shards, and shards flush their dirty buffers asynchronously.
+  Tests that need to assert on subscriber messages can call
+  `Upkeep.Coordinator.Graph.drain/0` as the graph quiescence boundary.
   """
 
   @journal_key {__MODULE__, :journal}

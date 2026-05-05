@@ -76,6 +76,32 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
     end
   end
 
+  describe "cluster-wide graph dispatch" do
+    test "Graph.notify on parent refreshes graph subscriber registered on peer", %{
+      peer_node: peer_node
+    } do
+      node_id = {:peer_graph_source, System.unique_integer([:positive])}
+      interest_key = {:upkeep_change, :multi_node_graph_dispatch, nil}
+      value = {:loaded_on_peer, peer_node}
+
+      {:ok, subscriber} =
+        :erpc.call(peer_node, Upkeep.TestSupport.MultiNodeProbe, :start_graph_subscriber, [
+          self(),
+          node_id,
+          interest_key,
+          value
+        ])
+
+      assert_receive {:peer_graph_subscriber_registered, ^peer_node, ^subscriber, ^node_id}, 1_000
+
+      Graph.notify(Upkeep.Change.changed(:multi_node_graph_dispatch, %{id: 1}))
+
+      assert_receive {:peer_dag_values, ^peer_node, ^subscriber, [{^node_id, ^value}]}, 3_000
+
+      send(subscriber, :stop)
+    end
+  end
+
   # Discovered gap (deferred):
   #
   # **Cross-node single-flight (cluster-wide coalescing).** Each node's

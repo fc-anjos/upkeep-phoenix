@@ -88,27 +88,40 @@ defmodule Bench.InitialDerivedSharing do
 
     {same_us, {same_count_computes, same_label_computes}} =
       Bench.InitialSharingSupport.timed(fn ->
+        count_probe = derived_hit_probe(:issue_count)
+        label_probe = derived_hit_probe(:issue_label)
+
         {count_pid, tasks} =
           Bench.InitialSharingSupport.start_first_and_joiners(
             watches,
             fn -> watch_chain(same_run_id) end,
             fn ->
               Bench.InitialSharingSupport.wait_for_started(:bench_count_started, same_run_id)
+            end,
+            fn expected ->
+              Bench.InitialSharingSupport.wait_for_probe(count_probe, expected)
             end
           )
 
-        Bench.InitialSharingSupport.release(count_pid)
+        try do
+          Bench.InitialSharingSupport.release(count_pid)
 
-        same_run_id
-        |> then(&Bench.InitialSharingSupport.wait_for_started(:bench_label_started, &1))
-        |> Bench.InitialSharingSupport.release()
+          label_pid =
+            Bench.InitialSharingSupport.wait_for_started(:bench_label_started, same_run_id)
 
-        Bench.InitialSharingSupport.await_all(tasks)
+          Bench.InitialSharingSupport.wait_for_probe(label_probe, max(watches - 1, 0))
+          Bench.InitialSharingSupport.release(label_pid)
 
-        {
-          Bench.InitialSharingSupport.counter_value(same_count_counter),
-          Bench.InitialSharingSupport.counter_value(same_label_counter)
-        }
+          Bench.InitialSharingSupport.await_all(tasks)
+
+          {
+            Bench.InitialSharingSupport.counter_value(same_count_counter),
+            Bench.InitialSharingSupport.counter_value(same_label_counter)
+          }
+        after
+          Bench.InitialSharingSupport.detach_telemetry_probe(count_probe)
+          Bench.InitialSharingSupport.detach_telemetry_probe(label_probe)
+        end
       end)
 
     {distinct_us, {distinct_count_computes, distinct_label_computes}} =
@@ -150,6 +163,15 @@ defmodule Bench.InitialDerivedSharing do
     )
     |> Live.derive(:issue_count, [:issues], &Compute.count/1)
     |> Live.derive(:issue_label, [:issue_count], &Compute.label/1)
+  end
+
+  defp derived_hit_probe(assign_name) do
+    Bench.InitialSharingSupport.telemetry_probe(
+      [[:upkeep, :graph, :derived_initial, :hit]],
+      fn _event, _measurements, metadata ->
+        metadata.assign_name == assign_name
+      end
+    )
   end
 end
 

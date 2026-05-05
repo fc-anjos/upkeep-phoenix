@@ -45,16 +45,29 @@ defmodule Bench.InitialSourceSharing do
 
     {same_us, same_loads} =
       Bench.InitialSharingSupport.timed(fn ->
+        probe =
+          Bench.InitialSharingSupport.telemetry_probe(
+            [[:upkeep, :graph, :initial_load, :hit]],
+            fn _event, _measurements, metadata ->
+              metadata.source == Source and metadata.params.run_id == run_id
+            end
+          )
+
         {loader_pid, tasks} =
           Bench.InitialSharingSupport.start_first_and_joiners(
             watches,
             fn -> watch_same(run_id, same_counter, test_pid) end,
-            fn -> Bench.InitialSharingSupport.wait_for_started(:bench_load_started, run_id) end
+            fn -> Bench.InitialSharingSupport.wait_for_started(:bench_load_started, run_id) end,
+            fn expected -> Bench.InitialSharingSupport.wait_for_probe(probe, expected) end
           )
 
-        Bench.InitialSharingSupport.release(loader_pid)
-        Bench.InitialSharingSupport.await_all(tasks)
-        Bench.InitialSharingSupport.counter_value(same_counter)
+        try do
+          Bench.InitialSharingSupport.release(loader_pid)
+          Bench.InitialSharingSupport.await_all(tasks)
+          Bench.InitialSharingSupport.counter_value(same_counter)
+        after
+          Bench.InitialSharingSupport.detach_telemetry_probe(probe)
+        end
       end)
 
     {distinct_us, distinct_loads} =

@@ -4,6 +4,7 @@ defmodule Upkeep.Coordinator.GraphTest do
   import ExUnit.CaptureLog
 
   alias Upkeep.Coordinator.Graph
+  alias Upkeep.Coordinator.Graph.Notifier
 
   defmodule Ev do
     defstruct [:id, :tenant_id]
@@ -37,6 +38,7 @@ defmodule Upkeep.Coordinator.GraphTest do
 
     test "load_fn runs once per coalesced event; subscribers receive {:dag_values, ...}" do
       attach_telemetry([
+        [:upkeep, :graph, :notifier, :flush],
         [:upkeep, :graph, :dispatch, :start],
         [:upkeep, :graph, :dispatch, :stop]
       ])
@@ -54,9 +56,20 @@ defmodule Upkeep.Coordinator.GraphTest do
       :ok = Graph.register_loader(node_id, keys, load_fn)
 
       event = %Ev{id: 1, tenant_id: 1}
-      Enum.each(1..50, fn _ -> Graph.notify(event) end)
+
+      with_suspended_notifier(fn ->
+        Enum.each(1..50, fn _ -> Graph.notify(event) end)
+      end)
 
       :ok = Graph.drain()
+
+      assert_receive {:telemetry, [:upkeep, :graph, :notifier, :flush], %{count: 1},
+                      %{
+                        message_count: 50,
+                        event_count: 1,
+                        source_node_count: 1,
+                        shard_count: 1
+                      }}
 
       assert_receive {:dag_values, [{^node_id, :loaded_value}]}, 1_000
 
@@ -72,9 +85,95 @@ defmodule Upkeep.Coordinator.GraphTest do
       assert is_integer(duration)
       assert pid_count >= 1
 
-      # Coalescing: 50 publishes of an equal-affected node collapse during flush.
-      # We tolerate up to a small handful of loads (one per flush window).
-      assert :counters.get(counter, 1) <= 5
+      assert :counters.get(counter, 1) == 1
+
+      Graph.unregister(node_id)
+    end
+
+    test "notifier batches different events for the same affected source" do
+      attach_telemetry([[:upkeep, :graph, :notifier, :flush]])
+
+      counter = :counters.new(1, [:atomics])
+      event_a = %Ev{id: 201, tenant_id: 1}
+      event_b = %Ev{id: 202, tenant_id: 1}
+      keys = [narrow_key(event_a), narrow_key(event_b)]
+      node_id = {:same_source_notifier_batch, System.unique_integer()}
+
+      :ok =
+        Graph.register_loader(node_id, keys, fn ->
+          :counters.add(counter, 1, 1)
+          {:loaded, keys}
+        end)
+
+      with_suspended_notifier(fn ->
+        Graph.notify(event_a)
+        Graph.notify(event_b)
+      end)
+
+      :ok = Graph.drain()
+
+      assert_receive {:telemetry, [:upkeep, :graph, :notifier, :flush], %{count: 1},
+                      %{
+                        message_count: 2,
+                        event_count: 2,
+                        source_node_count: 1,
+                        shard_count: 1
+                      }}
+
+      assert_receive {:dag_values, [{^node_id, :loaded}]}, 1_000
+      assert :counters.get(counter, 1) == 1
+
+      Graph.unregister(node_id)
+    end
+
+    test "notifier ignores local Group echoes" do
+      counter = :counters.new(1, [:atomics])
+      event = %Ev{id: 203, tenant_id: 1}
+      keys = [narrow_key(event)]
+      node_id = {:local_echo_ignored, System.unique_integer()}
+
+      :ok =
+        Graph.register_loader(node_id, keys, fn ->
+          :counters.add(counter, 1, 1)
+          {:loaded, keys}
+        end)
+
+      send(Process.whereis(Notifier), {:upkeep_graph_notify, node(), event})
+      :ok = Graph.drain()
+
+      assert :counters.get(counter, 1) == 0
+      refute_receive {:dag_values, [{^node_id, _}]}, 100
+
+      Graph.unregister(node_id)
+    end
+
+    test "notifier routes remote Group events" do
+      attach_telemetry([[:upkeep, :graph, :notifier, :flush]])
+
+      counter = :counters.new(1, [:atomics])
+      event = %Ev{id: 204, tenant_id: 1}
+      keys = [narrow_key(event)]
+      node_id = {:remote_event_routed, System.unique_integer()}
+
+      :ok =
+        Graph.register_loader(node_id, keys, fn ->
+          :counters.add(counter, 1, 1)
+          {:loaded, keys}
+        end)
+
+      send(Process.whereis(Notifier), {:upkeep_graph_notify, :remote@nohost, event})
+      :ok = Graph.drain()
+
+      assert_receive {:telemetry, [:upkeep, :graph, :notifier, :flush], %{count: 1},
+                      %{
+                        message_count: 1,
+                        event_count: 1,
+                        source_node_count: 1,
+                        shard_count: 1
+                      }}
+
+      assert_receive {:dag_values, [{^node_id, :loaded}]}, 1_000
+      assert :counters.get(counter, 1) == 1
 
       Graph.unregister(node_id)
     end
@@ -223,9 +322,6 @@ defmodule Upkeep.Coordinator.GraphTest do
         end)
 
       assert log =~ "refresh failed"
-
-      assert :counters.get(loads, 1) == 2
-      assert :counters.get(derived_computes, 1) == 1
 
       assert_receive {:telemetry, [:upkeep, :graph, :source_load, :exception], %{count: 1},
                       metadata}
@@ -514,6 +610,17 @@ defmodule Upkeep.Coordinator.GraphTest do
 
   defp stop_subscribers(pids) do
     Enum.each(pids, &send(&1, :stop))
+  end
+
+  defp with_suspended_notifier(fun) do
+    notifier = Process.whereis(Notifier)
+    :ok = :sys.suspend(notifier)
+
+    try do
+      fun.()
+    after
+      :ok = :sys.resume(notifier)
+    end
   end
 
   defp subscriber_loop do

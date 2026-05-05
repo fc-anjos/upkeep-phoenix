@@ -115,10 +115,30 @@ defmodule Bench.Sub do
     source_pids ++ derived_pids
   end
 
+  def sync_all(pids) do
+    ref = make_ref()
+
+    Enum.each(pids, fn pid ->
+      send(pid, {:sync, self(), ref})
+    end)
+
+    Enum.each(pids, fn pid ->
+      receive do
+        {:synced, ^ref, ^pid} -> :ok
+      after
+        5_000 -> raise "subscriber #{inspect(pid)} did not sync"
+      end
+    end)
+  end
+
   defp loop(d) do
     receive do
       {:dag_values, pairs} ->
         :counters.add(d, 1, length(pairs))
+        loop(d)
+
+      {:sync, caller, ref} ->
+        send(caller, {:synced, ref, self()})
         loop(d)
 
       _ ->
@@ -179,10 +199,10 @@ n_subs = 100
 duration_ms = 3_000
 publisher_levels = [1, 4, 8, 16]
 
-_subs = Bench.Sub.spawn_many(n_subs, pool, queries, derived_computes, deliveries)
+subs = Bench.Sub.spawn_many(n_subs, pool, queries, derived_computes, deliveries)
 # Drain shards so :group :joined backlog is processed before measuring.
 Upkeep.Coordinator.Graph.drain()
-Process.sleep(500)
+Bench.Sub.sync_all(subs)
 
 IO.puts(
   "subscribers=#{n_subs} (50 source + 50 derived) pool_size=#{length(pool)} query_us=#{Bench.Q.query_us()}"
@@ -200,7 +220,7 @@ results =
 
     calls = Bench.Run.run(p, duration_ms, pool)
     Upkeep.Coordinator.Graph.drain()
-    Process.sleep(500)
+    Bench.Sub.sync_all(subs)
 
     q = :counters.get(queries, 1)
     dc = :counters.get(derived_computes, 1)
