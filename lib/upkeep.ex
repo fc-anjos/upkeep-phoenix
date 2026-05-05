@@ -47,6 +47,17 @@ defmodule Upkeep do
   that renders the runtime DAG, sources, and telemetry trail.
   """
 
+  use Boundary,
+    exports: [
+      Change,
+      Ecto.Repo,
+      Live,
+      Observability,
+      Source,
+      Source.Coverage,
+      Test
+    ]
+
   use Supervisor
 
   def start_link(opts \\ []) do

@@ -3,6 +3,8 @@ defmodule Upkeep.Runtime.ScopeCapture do
 
   alias Upkeep.Live.Ids
 
+  @default_policy if(Mix.env() == :dev, do: :raise, else: :telemetry)
+
   def analyze(fun) when is_function(fun) do
     info = :erlang.fun_info(fun)
 
@@ -80,21 +82,7 @@ defmodule Upkeep.Runtime.ScopeCapture do
     {module, name, arity}
   end
 
-  defp default_policy do
-    case runtime_env() do
-      :dev -> :raise
-      :prod -> :telemetry
-      _other -> :telemetry
-    end
-  end
-
-  defp runtime_env do
-    if Code.ensure_loaded?(Mix) and function_exported?(Mix, :env, 0) do
-      Mix.env()
-    else
-      :prod
-    end
-  end
+  defp default_policy, do: @default_policy
 
   defp scope_like_capture(values) do
     Enum.find_value(values, &scope_like_value/1)

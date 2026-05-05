@@ -1,8 +1,8 @@
 defmodule Upkeep.Coordinator.Graph.Shard.Lifecycle do
   @moduledoc false
 
-  alias Upkeep.Coordinator.Graph
   alias Upkeep.Coordinator.Graph.Shard.Nodes
+  alias Upkeep.Coordinator.Subscriptions
   alias Upkeep.Coordinator.Topology
 
   @generation_table :upkeep_graph_shard_generations
@@ -10,17 +10,11 @@ defmodule Upkeep.Coordinator.Graph.Shard.Lifecycle do
   def start(idx) do
     sweep_owned_ets(idx)
 
-    :ok = Group.monitor(Graph.group(), "graph/source/")
+    :ok = Subscriptions.monitor_sources()
 
     generation = bump_generation(idx)
 
-    :ok =
-      Group.join(Graph.group(), Graph.shard_key(idx), %{
-        kind: :graph_shard,
-        shard: idx,
-        pid: self(),
-        generation: generation
-      })
+    :ok = Subscriptions.join_shard(idx, generation)
 
     generation
   end
@@ -35,7 +29,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Lifecycle do
         state
 
       node_id ->
-        if Group.member_count(Graph.group(), key) == 0,
+        if Subscriptions.member_count(key) == 0,
           do: Nodes.remove(state, node_id),
           else: state
     end
@@ -44,7 +38,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Lifecycle do
   defp handle_group_event(_other, state), do: state
 
   defp decode_owned_source_key(key, idx) do
-    node_id = Graph.decode_source_key(key)
+    node_id = Subscriptions.decode_source_key(key)
 
     case Topology.lookup(node_id) do
       {:ok, %{shard_idx: ^idx}} -> node_id

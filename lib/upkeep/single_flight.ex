@@ -1,6 +1,8 @@
 defmodule Upkeep.SingleFlight do
   @moduledoc false
 
+  use Boundary, exports: [Registry]
+
   defstruct loads: %{}, refs: %{}
 
   def new, do: %__MODULE__{}

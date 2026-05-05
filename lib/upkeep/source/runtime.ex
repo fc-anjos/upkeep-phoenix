@@ -1,8 +1,8 @@
 defmodule Upkeep.Source.Runtime do
   @moduledoc false
 
-  @context_key {Upkeep.Source, :read_context}
-  @warn_dedup_key {Upkeep.Source, :no_invalidation_warned}
+  @context_key {__MODULE__, :read_context}
+  @warn_dedup_key {__MODULE__, :no_invalidation_warned}
 
   def load(source, params) when is_atom(source) do
     repo = source.__upkeep_repo__() || Application.get_env(:upkeep, :repo)

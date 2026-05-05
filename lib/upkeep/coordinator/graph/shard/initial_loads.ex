@@ -1,9 +1,10 @@
 defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
   @moduledoc false
 
-  alias Upkeep.Coordinator.Graph
   alias Upkeep.Coordinator.Graph.Shard.Loaders
   alias Upkeep.Coordinator.Node
+  alias Upkeep.Coordinator.Shards
+  alias Upkeep.Coordinator.Subscriptions
   alias Upkeep.Coordinator.Topology
   alias Upkeep.DAG.Store
   alias Upkeep.SingleFlight
@@ -21,7 +22,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
         load_metadata = source_load_metadata(state, node_id, node)
 
         task =
-          Task.Supervisor.async_nolink(Graph.task_sup(), fn ->
+          Task.Supervisor.async_nolink(Shards.task_sup(), fn ->
             {value, current_keys, tracked_deps} =
               Loaders.run_with_deps(node.loader, load_metadata)
 
@@ -51,7 +52,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
         emit_derived(:miss, state.idx, node_id, dep_ids, metadata)
 
         task =
-          Task.Supervisor.async_nolink(Graph.task_sup(), fn ->
+          Task.Supervisor.async_nolink(Shards.task_sup(), fn ->
             {node_id, compute_fn.(dep_values)}
           end)
 
@@ -161,8 +162,8 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
   end
 
   defp subscriber_count(%Node{encoded_key: encoded_key}) do
-    Graph.group()
-    |> Group.members(encoded_key)
+    encoded_key
+    |> Subscriptions.members()
     |> length()
   end
 end

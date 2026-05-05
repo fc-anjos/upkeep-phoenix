@@ -5,6 +5,7 @@ defmodule Upkeep.Runtime.Push do
   alias Upkeep.Runtime.DAGOperations
   alias Upkeep.Runtime.Effects
   alias Upkeep.Runtime.State
+  alias Upkeep.Runtime.Watches
 
   def apply_dag_values(socket, pairs) when is_list(pairs) do
     {socket, changed_nodes, shared_nodes, effects} =
@@ -30,7 +31,7 @@ defmodule Upkeep.Runtime.Push do
       end)
 
     {socket, recompute_effects} =
-      Upkeep.Runtime.recompute_derived(socket, changed_nodes, skip: shared_nodes)
+      recompute_derived(socket, changed_nodes, skip: shared_nodes)
 
     {:ok, socket, effects ++ recompute_effects}
   end
@@ -38,7 +39,7 @@ defmodule Upkeep.Runtime.Push do
   def apply_dag_value(socket, source_id, value) do
     case put_pushed_value(socket, source_id, value) do
       {_kind, socket, local_node_id, true, assign_effects} ->
-        {socket, recompute_effects} = Upkeep.Runtime.recompute_derived(socket, [local_node_id])
+        {socket, recompute_effects} = recompute_derived(socket, [local_node_id])
         {:ok, socket, assign_effects ++ recompute_effects}
 
       {_kind, socket, _local_node_id, false, assign_effects} ->
@@ -74,5 +75,13 @@ defmodule Upkeep.Runtime.Push do
         {:shared, socket, local_node_id, changed?,
          Effects.assign_shared_derived(socket, local_node_id, value)}
     end
+  end
+
+  defp recompute_derived(socket, changed_source_nodes, opts \\ [])
+
+  defp recompute_derived(socket, [], _opts), do: {socket, []}
+
+  defp recompute_derived(socket, changed_source_nodes, opts) do
+    DAGOperations.recompute_derived(socket, changed_source_nodes, &Watches.remove_watch/2, opts)
   end
 end

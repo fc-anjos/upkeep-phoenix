@@ -2,6 +2,7 @@ defmodule Upkeep.Live.SourceLocation do
   @moduledoc false
 
   @context_radius 2
+  @default_capture? Mix.env() in [:dev, :test]
 
   @doc """
   Compile-time capture from a `Macro.Env`. Used by `Upkeep.Live.Macros`.
@@ -27,9 +28,7 @@ defmodule Upkeep.Live.SourceLocation do
     Application.get_env(:upkeep, :capture_source_locations, default_capture?())
   end
 
-  defp default_capture? do
-    Code.ensure_loaded?(Mix) and function_exported?(Mix, :env, 0) and Mix.env() in [:dev, :test]
-  end
+  defp default_capture?, do: @default_capture?
 
   defp file_label(nil), do: nil
 

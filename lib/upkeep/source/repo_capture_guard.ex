@@ -1,7 +1,8 @@
 defmodule Upkeep.Source.RepoCaptureGuard do
   @moduledoc false
 
-  @warn_dedup_key {Upkeep.Source, :repo_capture_warned}
+  @warn_dedup_key {__MODULE__, :repo_capture_warned}
+  @default_repo_capture_policy if(Mix.env() in [:dev, :test], do: :raise, else: :warn)
 
   def verify_source!(source, params, opts \\ []) when is_atom(source) and is_map(params) do
     cond do
@@ -109,14 +110,7 @@ defmodule Upkeep.Source.RepoCaptureGuard do
     Application.get_env(:upkeep, :repo_capture_misconfiguration, default_repo_capture_policy())
   end
 
-  defp default_repo_capture_policy do
-    if Code.ensure_loaded?(Mix) and function_exported?(Mix, :env, 0) and
-         Mix.env() in [:dev, :test] do
-      :raise
-    else
-      :warn
-    end
-  end
+  defp default_repo_capture_policy, do: @default_repo_capture_policy
 
   defp repo_capture_message(repo, source, params, reason, source_location) do
     location = source_location_text(source_location)

@@ -7,10 +7,12 @@ defmodule Upkeep.MixProject do
       version: "0.1.0",
       elixir: "~> 1.15",
       elixirc_paths: elixirc_paths(Mix.env()),
+      compilers: compilers(Mix.env()),
       start_permanent: Mix.env() == :prod,
       description: description(),
       package: package(),
       docs: docs(),
+      boundary: boundary(),
       aliases: aliases(),
       deps: deps()
     ]
@@ -36,6 +38,20 @@ defmodule Upkeep.MixProject do
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
+  defp compilers(env) when env in [:dev, :test], do: [:boundary] ++ Mix.compilers()
+  defp compilers(_env), do: Mix.compilers()
+
+  defp boundary do
+    [
+      default: [
+        check: [
+          aliases: true,
+          apps: [{:mix, :runtime}]
+        ]
+      ]
+    ]
+  end
+
   # Specifies your project dependencies.
   #
   # Type `mix help deps` for examples and options.
@@ -48,6 +64,7 @@ defmodule Upkeep.MixProject do
       {:ecto_sqlite3, ">= 0.0.0", only: :test},
       {:telemetry, "~> 1.0"},
       {:group, "~> 0.1"},
+      {:boundary, "~> 0.10.4", runtime: false},
       {:benchee, "~> 1.3", only: [:dev, :test], runtime: false}
     ]
   end
@@ -55,7 +72,13 @@ defmodule Upkeep.MixProject do
   defp aliases do
     [
       "test.setup": ["ecto.create --quiet", "ecto.migrate --quiet"],
-      precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]
+      precommit: [
+        "compile --warnings-as-errors",
+        "xref graph --format cycles --label compile-connected --fail-above 0",
+        "deps.unlock --unused",
+        "format",
+        "test"
+      ]
     ]
   end
 

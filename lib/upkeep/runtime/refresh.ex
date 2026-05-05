@@ -6,6 +6,7 @@ defmodule Upkeep.Runtime.Refresh do
   alias Upkeep.Runtime.Effects
   alias Upkeep.Runtime.SourceLoads
   alias Upkeep.Runtime.State
+  alias Upkeep.Runtime.Watches
   alias Upkeep.Source.Runtime, as: Source
 
   def refresh(socket, assign_name, source, params) when is_atom(assign_name) do
@@ -53,7 +54,7 @@ defmodule Upkeep.Runtime.Refresh do
         end)
       end)
 
-    {socket, recompute_effects} = Upkeep.Runtime.recompute_derived(socket, changed_source_nodes)
+    {socket, recompute_effects} = recompute_derived(socket, changed_source_nodes)
     {:ok, socket, effects ++ recompute_effects}
   end
 
@@ -88,5 +89,11 @@ defmodule Upkeep.Runtime.Refresh do
     {socket, changed, Effects.assign_watch(watch, value)}
   rescue
     _ -> {socket, changed, []}
+  end
+
+  defp recompute_derived(socket, []), do: {socket, []}
+
+  defp recompute_derived(socket, changed_source_nodes) do
+    DAGOperations.recompute_derived(socket, changed_source_nodes, &Watches.remove_watch/2)
   end
 end

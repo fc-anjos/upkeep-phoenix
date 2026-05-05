@@ -1,9 +1,10 @@
 defmodule Upkeep.Coordinator.Graph.Shard.Flush do
   @moduledoc false
 
-  alias Upkeep.Coordinator.Graph
   alias Upkeep.Coordinator.Graph.Shard.{Dispatch, Loaders, Retries}
   alias Upkeep.Coordinator.Node
+  alias Upkeep.Coordinator.Shards
+  alias Upkeep.Coordinator.Subscriptions
   alias Upkeep.Coordinator.Topology
   alias Upkeep.DAG.Store
   alias Upkeep.DirtyBuffer
@@ -68,7 +69,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
   defp load_sources(node_ids, state) do
     stream =
       Task.Supervisor.async_stream_nolink(
-        Graph.task_sup(),
+        Shards.task_sup(),
         node_ids,
         fn node_id ->
           node = Store.fetch_metadata!(state.store, node_id)
@@ -143,6 +144,6 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
   defp maybe_put_node_id(metadata, node_id), do: Map.put(metadata, :node_id, node_id)
 
   defp subscriber_count(%Node{encoded_key: encoded_key}) do
-    Group.member_count(Graph.group(), encoded_key)
+    Subscriptions.member_count(encoded_key)
   end
 end

@@ -3,8 +3,8 @@ defmodule Upkeep.Coordinator.ReadNodes.Watcher do
 
   use GenServer
 
-  alias Upkeep.Coordinator.Graph
   alias Upkeep.Coordinator.ReadNodes
+  alias Upkeep.Coordinator.Subscriptions
 
   def start_link(_opts \\ []) do
     GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
@@ -12,10 +12,8 @@ defmodule Upkeep.Coordinator.ReadNodes.Watcher do
 
   @impl true
   def init(_) do
-    case Group.join(Graph.group(), Graph.notification_key(), %{kind: :read_node_watcher}) do
-      :ok -> {:ok, %{}}
-      :already_joined -> {:ok, %{}}
-    end
+    :ok = Subscriptions.join_notifications(:read_node_watcher)
+    {:ok, %{}}
   end
 
   @impl true

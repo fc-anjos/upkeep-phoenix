@@ -3,7 +3,8 @@ defmodule Upkeep.Coordinator.Graph.Notifier do
 
   use GenServer
 
-  alias Upkeep.Coordinator.Graph
+  alias Upkeep.Coordinator.Shards
+  alias Upkeep.Coordinator.Subscriptions
   alias Upkeep.Coordinator.Topology
 
   @max_batch_messages 1_000
@@ -22,10 +23,8 @@ defmodule Upkeep.Coordinator.Graph.Notifier do
 
   @impl true
   def init(_) do
-    case Group.join(Graph.group(), Graph.notification_key(), %{kind: :graph_notifier}) do
-      :ok -> {:ok, new_state()}
-      :already_joined -> {:ok, new_state()}
-    end
+    :ok = Subscriptions.join_notifications(:graph_notifier)
+    {:ok, new_state()}
   end
 
   @impl true
@@ -119,7 +118,7 @@ defmodule Upkeep.Coordinator.Graph.Notifier do
       |> Enum.group_by(&Topology.shard_of_node/1)
 
     Enum.each(routes, fn {shard, node_ids} ->
-      GenServer.cast(Graph.shard_name(shard), {:notify_source_nodes, node_ids})
+      Shards.notify_source_nodes(shard, node_ids)
     end)
 
     emit_flush(events, message_count, routes)
