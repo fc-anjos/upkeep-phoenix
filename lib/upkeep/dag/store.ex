@@ -162,14 +162,15 @@ defmodule Upkeep.DAG.Store do
       |> Enum.filter(&MapSet.member?(changed, &1))
 
     recomputed = Enum.reverse(recomputed)
-    skipped_node_ids = Graph.topological_subset(store.graph, skip_ids)
-    subgraphs = Graph.subgraphs_for(store.graph, MapSet.new(order))
+
+    skipped_node_ids =
+      if MapSet.size(skip_ids) == 0,
+        do: [],
+        else: Graph.topological_subset(store.graph, skip_ids)
 
     diff = %Diff{
       roots: changed_ids |> MapSet.to_list() |> Enum.sort_by(&inspect/1),
       selected_node_ids: order,
-      subgraphs: subgraphs,
-      largest_subgraphs: Graph.largest_subgraphs(subgraphs),
       boundaries: Enum.map(skipped_node_ids, &%{node_id: &1, reason: :skipped}),
       changed_node_ids: derived_changed,
       recomputed_node_ids: recomputed,
