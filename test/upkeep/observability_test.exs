@@ -109,6 +109,14 @@ defmodule Upkeep.ObservabilityTest do
                Map.get(event.metadata, :pid_count, 0) >= 1 and
                is_integer(event.measurements.duration)
            end)
+
+    assert Enum.any?(events, fn event ->
+             event.event == [:upkeep, :graph, :source_load, :stop] and
+               event.metadata.source == ProjectIssues and
+               is_integer(event.metadata.shard) and
+               is_integer(event.metadata.subscriber_count) and
+               is_integer(event.measurements.duration)
+           end)
   end
 
   test "stores derive sharing diagnostics", %{table: table} do

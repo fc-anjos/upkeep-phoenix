@@ -72,8 +72,11 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
         node_ids,
         fn node_id ->
           node = Store.fetch_metadata!(state.store, node_id)
+          metadata = source_load_metadata(node, state, node_id)
 
-          {value, current_keys, tracked_deps} = Loaders.run_with_deps(node.loader)
+          {value, current_keys, tracked_deps} =
+            Loaders.run_with_deps(node.loader, metadata)
+
           {node_id, value, current_keys, tracked_deps, node}
         end,
         ordered: true,
@@ -125,9 +128,19 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
   defp exception_metadata(%Node{} = node, state, reason) do
     node.loader
     |> Loaders.exception_metadata(reason)
+    |> Map.merge(source_load_metadata(node, state))
+  end
+
+  defp source_load_metadata(%Node{} = node, state, node_id \\ nil) do
+    node.loader
+    |> Loaders.metadata()
     |> Map.put(:shard, state.idx)
     |> Map.put(:subscriber_count, subscriber_count(node))
+    |> maybe_put_node_id(node_id)
   end
+
+  defp maybe_put_node_id(metadata, nil), do: metadata
+  defp maybe_put_node_id(metadata, node_id), do: Map.put(metadata, :node_id, node_id)
 
   defp subscriber_count(%Node{encoded_key: encoded_key}) do
     Group.member_count(Graph.group(), encoded_key)

@@ -3,6 +3,28 @@ defmodule Upkeep.Coordinator.Graph.Shard.Loaders do
 
   alias Upkeep.Source.Runtime, as: Source
 
+  def run_with_deps(loader, metadata) when is_map(metadata) do
+    :telemetry.execute(
+      [:upkeep, :graph, :source_load, :start],
+      %{system_time: System.system_time()},
+      metadata
+    )
+
+    started_at = System.monotonic_time()
+    {value, current_keys, tracked_deps} = run_with_deps(loader)
+    duration = System.monotonic_time() - started_at
+
+    :telemetry.execute(
+      [:upkeep, :graph, :source_load, :stop],
+      %{duration: duration},
+      metadata
+      |> Map.put(:registered_key_count, length(current_keys))
+      |> Map.put(:tracked_deps, length(tracked_deps))
+    )
+
+    {value, current_keys, tracked_deps}
+  end
+
   def run_with_deps({:source, source, params}) do
     {value, deps} = Source.load(source, params)
     dep_keys = Source.deps_interest_keys(deps)

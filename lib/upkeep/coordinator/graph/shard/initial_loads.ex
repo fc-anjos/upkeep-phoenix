@@ -18,10 +18,13 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
 
       :no_load ->
         emit_source(:miss, state.idx, node_id, node.loader)
+        load_metadata = source_load_metadata(state, node_id, node)
 
         task =
           Task.Supervisor.async_nolink(Graph.task_sup(), fn ->
-            {value, current_keys, tracked_deps} = Loaders.run_with_deps(node.loader)
+            {value, current_keys, tracked_deps} =
+              Loaders.run_with_deps(node.loader, load_metadata)
+
             {node_id, value, current_keys, tracked_deps, node}
           end)
 
@@ -144,11 +147,17 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
     metadata =
       node.loader
       |> Loaders.exception_metadata(reason)
-      |> Map.put(:shard, state.idx)
-      |> Map.put(:node_id, node_id)
-      |> Map.put(:subscriber_count, subscriber_count(node))
+      |> Map.merge(source_load_metadata(state, node_id, node))
 
     :telemetry.execute([:upkeep, :graph, :source_load, :exception], %{count: 1}, metadata)
+  end
+
+  defp source_load_metadata(state, node_id, %Node{} = node) do
+    node.loader
+    |> Loaders.metadata()
+    |> Map.put(:shard, state.idx)
+    |> Map.put(:node_id, node_id)
+    |> Map.put(:subscriber_count, subscriber_count(node))
   end
 
   defp subscriber_count(%Node{encoded_key: encoded_key}) do
