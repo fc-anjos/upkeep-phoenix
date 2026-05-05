@@ -8,13 +8,15 @@ defmodule Upkeep.Source.Spec do
       |> Macro.expand(__CALLER__)
 
     retry = Keyword.get(opts, :retry, :default)
+    query_adapter = Keyword.get(opts, :query_adapter)
 
-    quote bind_quoted: [repo: repo, retry: retry] do
+    quote bind_quoted: [repo: repo, retry: retry, query_adapter: query_adapter] do
       import Upkeep.Source,
         only: [query: 1, invalidated_by: 2, invalidated_by: 3, reacts_to: 2, reacts_to: 3]
 
       @upkeep_repo repo
       @upkeep_retry retry
+      @upkeep_query_adapter query_adapter
       Module.register_attribute(__MODULE__, :upkeep_invalidators, accumulate: true)
       Module.register_attribute(__MODULE__, :upkeep_reactors, accumulate: true)
       @before_compile Upkeep.Source.Spec
@@ -62,6 +64,7 @@ defmodule Upkeep.Source.Spec do
     reactors = Module.get_attribute(env.module, :upkeep_reactors)
     repo = Module.get_attribute(env.module, :upkeep_repo)
     retry = Module.get_attribute(env.module, :upkeep_retry)
+    query_adapter = Module.get_attribute(env.module, :upkeep_query_adapter)
     defines_load? = Module.defines?(env.module, {:load, 1})
     defines_query? = Module.defines?(env.module, {:query, 1})
     defines_sharing_partition? = Module.defines?(env.module, {:__upkeep_sharing_partition__, 1})
@@ -105,9 +108,9 @@ defmodule Upkeep.Source.Spec do
     reacts_to_body =
       case invalidator_checks ++ reactor_checks do
         [] ->
-          if defines_query? do
+          if defines_query? and query_adapter do
             quote do
-              Upkeep.Source.Reactivity.query_reacts_to?(__MODULE__, event, params)
+              unquote(query_adapter).query_reacts_to?(__MODULE__, event, params)
             end
           else
             false
@@ -115,9 +118,9 @@ defmodule Upkeep.Source.Spec do
 
         checks ->
           query_check =
-            if defines_query? do
+            if defines_query? and query_adapter do
               quote do
-                Upkeep.Source.Reactivity.query_reacts_to?(__MODULE__, event, params)
+                unquote(query_adapter).query_reacts_to?(__MODULE__, event, params)
               end
             else
               false
@@ -131,12 +134,20 @@ defmodule Upkeep.Source.Spec do
         defines_load? ->
           []
 
-        defines_query? ->
+        defines_query? and query_adapter ->
           quote do
             def load(params) do
               params
               |> __MODULE__.query()
-              |> Upkeep.Source.read()
+              |> unquote(query_adapter).read()
+            end
+          end
+
+        defines_query? ->
+          quote do
+            def load(_params) do
+              raise ArgumentError,
+                    "#{inspect(__MODULE__)} defines query/1 but uses Upkeep.Source without a query adapter. Use Upkeep.Ecto.Source for Ecto-backed query sources."
             end
           end
 
@@ -150,9 +161,9 @@ defmodule Upkeep.Source.Spec do
       end
 
     query_interest_keys =
-      if defines_query? do
+      if defines_query? and query_adapter do
         quote do
-          Upkeep.Source.Reactivity.query_interest_keys(__MODULE__, params)
+          unquote(query_adapter).query_interest_keys(__MODULE__, params)
         end
       else
         []
@@ -178,9 +189,23 @@ defmodule Upkeep.Source.Spec do
           end
       end
 
+    verify_definition =
+      if query_adapter do
+        quote do
+          def __upkeep_verify__!(params, opts) do
+            unquote(query_adapter).verify_source!(__MODULE__, params, opts)
+          end
+        end
+      else
+        quote do
+          def __upkeep_verify__!(_params, _opts), do: :ok
+        end
+      end
+
     quote do
       unquote(load_definition)
       unquote(sharing_partition_definition)
+      unquote(verify_definition)
 
       def __upkeep_repo__, do: unquote(repo)
       def __upkeep_repo_explicit__?, do: unquote(not is_nil(repo))

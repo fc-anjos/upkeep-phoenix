@@ -82,7 +82,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule ProjectIssues do
-    use Upkeep.Source, repo: Upkeep.TestSupport.Repo
+    use Upkeep.Ecto.Source, repo: Upkeep.TestSupport.Repo
 
     import Ecto.Query
 
@@ -99,7 +99,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule BroadProjectIssues do
-    use Upkeep.Source
+    use Upkeep.Ecto.Source
 
     import Ecto.Query
 
@@ -112,7 +112,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule UnsupportedOrProjectIssues do
-    use Upkeep.Source
+    use Upkeep.Ecto.Source
 
     import Ecto.Query
 
@@ -125,7 +125,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule TernaryOrProjectIssues do
-    use Upkeep.Source
+    use Upkeep.Ecto.Source
 
     import Ecto.Query
 
@@ -138,7 +138,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule JoinedIssueCards do
-    use Upkeep.Source
+    use Upkeep.Ecto.Source
 
     import Ecto.Query
 
@@ -158,7 +158,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule AssocJoinedIssueCards do
-    use Upkeep.Source
+    use Upkeep.Ecto.Source
 
     import Ecto.Query
 
@@ -173,7 +173,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule NestedJoinedPreloadedComments do
-    use Upkeep.Source
+    use Upkeep.Ecto.Source
 
     import Ecto.Query
 
@@ -189,7 +189,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule NamedJoinedPreloadedIssues do
-    use Upkeep.Source
+    use Upkeep.Ecto.Source
 
     import Ecto.Query
 
@@ -206,7 +206,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule DynamicJoinedPreloadedIssues do
-    use Upkeep.Source
+    use Upkeep.Ecto.Source
 
     import Ecto.Query
 
@@ -224,7 +224,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule MixedJoinedAndQueryPreloadedIssues do
-    use Upkeep.Source
+    use Upkeep.Ecto.Source
 
     import Ecto.Query
 
@@ -239,7 +239,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule JoinedColumnProjection do
-    use Upkeep.Source
+    use Upkeep.Ecto.Source
 
     import Ecto.Query
 
@@ -255,7 +255,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule DynamicIssues do
-    use Upkeep.Source
+    use Upkeep.Ecto.Source
 
     import Ecto.Query
 
@@ -270,7 +270,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule CommentedIssues do
-    use Upkeep.Source
+    use Upkeep.Ecto.Source
 
     import Ecto.Query
 
@@ -288,7 +288,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule FragmentIssues do
-    use Upkeep.Source
+    use Upkeep.Ecto.Source
 
     import Ecto.Query
 
@@ -301,7 +301,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule JoinedFragmentIssues do
-    use Upkeep.Source
+    use Upkeep.Ecto.Source
 
     import Ecto.Query
 
@@ -316,7 +316,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule PreloadedProjectIssues do
-    use Upkeep.Source, repo: Upkeep.TestSupport.Repo
+    use Upkeep.Ecto.Source, repo: Upkeep.TestSupport.Repo
 
     import Ecto.Query
 
@@ -331,7 +331,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule StringManyToManyPreloadedIssues do
-    use Upkeep.Source, repo: Upkeep.TestSupport.Repo
+    use Upkeep.Ecto.Source, repo: Upkeep.TestSupport.Repo
 
     import Ecto.Query
 
@@ -345,7 +345,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule QueryPreloadedProjectIssues do
-    use Upkeep.Source, repo: Upkeep.TestSupport.Repo
+    use Upkeep.Ecto.Source, repo: Upkeep.TestSupport.Repo
 
     import Ecto.Query
 
@@ -363,7 +363,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule NestedQueryPreloadedComments do
-    use Upkeep.Source, repo: Upkeep.TestSupport.Repo
+    use Upkeep.Ecto.Source, repo: Upkeep.TestSupport.Repo
 
     import Ecto.Query
 
@@ -381,7 +381,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule SchemalessProjectIssues do
-    use Upkeep.Source
+    use Upkeep.Ecto.Source
 
     import Ecto.Query
 
@@ -406,7 +406,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule BoardViewModel do
-    use Upkeep.Source, repo: Upkeep.TestSupport.Repo
+    use Upkeep.Ecto.Source, repo: Upkeep.TestSupport.Repo
 
     import Ecto.Query
 
@@ -445,7 +445,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defmodule RepeatingReadSource do
-    use Upkeep.Source, repo: Upkeep.TestSupport.Repo
+    use Upkeep.Ecto.Source, repo: Upkeep.TestSupport.Repo
 
     import Ecto.Query
 

@@ -1,0 +1,92 @@
+defmodule Upkeep.Ecto.Source do
+  @moduledoc false
+
+  use Boundary,
+    top_level?: true,
+    exports: [
+      QueryDeps,
+      RepoCaptureGuard
+    ],
+    deps: [
+      Ecto.Adapters.SQL,
+      Ecto.Query,
+      Ecto.SubQuery,
+      Logger,
+      Upkeep.Change,
+      Upkeep.Source,
+      {Mix, :compile}
+    ],
+    type: :strict
+
+  defmacro __using__(opts) do
+    opts = Keyword.put(opts, :query_adapter, __MODULE__)
+
+    quote do
+      use Upkeep.Source.Spec, unquote(opts)
+    end
+  end
+
+  def read(%Ecto.Query{} = query) do
+    case Upkeep.Source.Loader.read_context() do
+      %{repo: repo, holder: holder, source: source, params: params} ->
+        Upkeep.Ecto.Source.RepoCaptureGuard.ensure_repo_capture!(repo, source, params,
+          boundary: :read
+        )
+
+        deps = Upkeep.Ecto.Source.QueryDeps.from_query(query)
+        Upkeep.Source.Loader.track_dependency(deps)
+
+        fingerprint = read_fingerprint(repo, query)
+
+        Upkeep.Source.Loader.memoized_read(
+          fingerprint,
+          fn ->
+            node_id = {:read, repo, fingerprint}
+
+            Upkeep.Source.ReadCache.fetch_or_load(
+              node_id,
+              deps,
+              fn -> repo.all(query) end,
+              holder
+            )
+          end
+        )
+
+      _ ->
+        raise ArgumentError,
+              "Upkeep.read/1 must be called inside a source context. " <>
+                "Use it only inside a source's load/1 or query/1 callback. " <>
+                "For ad-hoc queries, call Repo.all/1 directly."
+    end
+  end
+
+  def read(value), do: value
+
+  def verify_source!(source, params, opts \\ []) do
+    Upkeep.Ecto.Source.RepoCaptureGuard.verify_source!(source, params, opts)
+  end
+
+  def query_interest_keys(source, params) when is_atom(source) do
+    source
+    |> source_query(params)
+    |> Upkeep.Ecto.Source.QueryDeps.interest_keys()
+  end
+
+  def query_reacts_to?(source, event, params) when is_atom(source) and is_struct(event) do
+    deps =
+      source
+      |> source_query(params)
+      |> Upkeep.Ecto.Source.QueryDeps.from_query()
+
+    Upkeep.Ecto.Source.QueryDeps.matches_change?(deps, event)
+  end
+
+  defp source_query(source, params) do
+    if function_exported?(source, :query, 1), do: source.query(params), else: nil
+  end
+
+  defp read_fingerprint(repo, query) do
+    {sql, params} = Ecto.Adapters.SQL.to_sql(:all, repo, query)
+    :erlang.phash2({sql, params})
+  end
+end

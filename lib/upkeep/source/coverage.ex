@@ -123,7 +123,7 @@ defmodule Upkeep.Source.Coverage do
     {
       "no invalidation surface",
       "The source did not declare invalidators and its load did not report any tracked reads.",
-      "Add invalidated_by/reacts_to declarations, define query/1, or call Upkeep.read/1 inside load/1."
+      "Add invalidated_by/reacts_to declarations, use Upkeep.Ecto.Source for query/1, or call Upkeep.read/1 inside an Ecto source load/1."
     }
   end
 

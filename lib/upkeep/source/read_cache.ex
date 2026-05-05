@@ -2,7 +2,7 @@ defmodule Upkeep.Source.ReadCache do
   @moduledoc false
 
   alias Upkeep.SingleFlight.Registry
-  alias Upkeep.Source.QueryDeps
+  alias Upkeep.Source.Dependency
 
   @values :upkeep_read_node_values
   @index :upkeep_read_node_index
@@ -25,13 +25,9 @@ defmodule Upkeep.Source.ReadCache do
   end
 
   @doc """
-  Look up the cached value for `query` against `repo`, or run `repo.all/1`
-  to populate it. Returns the result list.
+  Look up the cached value for `node_id`, or run `load` to populate it.
   """
-  def fetch_or_load(repo, %Ecto.Query{} = query, holder \\ nil) do
-    fp = fingerprint(repo, query)
-    node_id = {:read, repo, fp}
-
+  def fetch_or_load(node_id, deps, load, holder \\ nil) when is_function(load, 0) do
     value =
       case :ets.lookup(@values, node_id) do
         [{^node_id, value}] ->
@@ -47,11 +43,10 @@ defmodule Upkeep.Source.ReadCache do
                 value
 
               [] ->
-                deps = QueryDeps.from_query(query)
-                value = repo.all(query)
+                value = load.()
                 :ets.insert(@values, {node_id, value})
 
-                Enum.each(coarse_keys(deps), fn key ->
+                Enum.each(Dependency.coarse_keys(deps), fn key ->
                   :ets.insert(@index, {key, {node_id, deps}})
                 end)
 
@@ -111,7 +106,7 @@ defmodule Upkeep.Source.ReadCache do
     |> Enum.flat_map(&:ets.lookup(@index, &1))
     |> Enum.uniq_by(fn {_key, {node_id, _deps}} -> node_id end)
     |> Enum.reduce(0, fn {_key, {node_id, deps}}, acc ->
-      if QueryDeps.matches_change?(deps, event) do
+      if Dependency.matches_change?(deps, event) do
         evict(node_id, deps)
         acc + 1
       else
@@ -141,7 +136,7 @@ defmodule Upkeep.Source.ReadCache do
   defp evict(node_id, deps) do
     :ets.delete(@values, node_id)
 
-    Enum.each(coarse_keys(deps), fn key ->
+    Enum.each(Dependency.coarse_keys(deps), fn key ->
       :ets.match_delete(@index, {key, {node_id, :_}})
     end)
 
@@ -150,22 +145,9 @@ defmodule Upkeep.Source.ReadCache do
     :ets.match_delete(@refs, {:_, node_id})
   end
 
-  defp coarse_keys(%QueryDeps{schemas: schemas}) do
-    actions = [:inserted, :updated, :deleted]
-
-    for schema <- schemas, action <- actions do
-      {action, schema}
-    end
-  end
-
   defp candidate_keys(%{action: action, schema: schema}) when not is_nil(schema) do
     [{action, schema}]
   end
 
   defp candidate_keys(_event), do: []
-
-  defp fingerprint(repo, query) do
-    {sql, params} = Ecto.Adapters.SQL.to_sql(:all, repo, query)
-    :erlang.phash2({sql, params})
-  end
 end

@@ -54,7 +54,7 @@ cache.
 
 ```elixir
 defmodule MyApp.Issues.OpenIssues do
-  use Upkeep.Source, repo: MyApp.Repo
+  use Upkeep.Ecto.Source, repo: MyApp.Repo
 
   import Ecto.Query
 

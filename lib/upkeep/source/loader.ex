@@ -1,10 +1,16 @@
 defmodule Upkeep.Source.Loader do
   @moduledoc false
 
-  defdelegate verify_source!(source, params, opts \\ []), to: Upkeep.Source.RepoCaptureGuard
-
   @context_key {__MODULE__, :read_context}
   @warn_dedup_key {__MODULE__, :no_invalidation_warned}
+
+  def verify_source!(source, params, opts \\ []) when is_atom(source) and is_map(params) do
+    if function_exported?(source, :__upkeep_verify__!, 2) do
+      source.__upkeep_verify__!(params, opts)
+    else
+      :ok
+    end
+  end
 
   def load(source, params) when is_atom(source) do
     repo = source.__upkeep_repo__() || Application.get_env(:upkeep, :repo)
@@ -29,24 +35,6 @@ defmodule Upkeep.Source.Loader do
     {value, deps}
   end
 
-  def read(%Ecto.Query{} = query) do
-    case Process.get(@context_key) do
-      %{repo: repo} = ctx ->
-        Upkeep.Source.RepoCaptureGuard.ensure_repo_capture!(repo, ctx[:source], ctx[:params],
-          boundary: :read
-        )
-
-        track_query(query)
-        memoize_read(repo, ctx[:holder], query)
-
-      _ ->
-        raise ArgumentError,
-              "Upkeep.read/1 must be called inside a source context. " <>
-                "Use it only inside a source's load/1 or query/1 callback. " <>
-                "For ad-hoc queries, call Repo.all/1 directly."
-    end
-  end
-
   def read(value), do: value
 
   def coverage(source, params) when is_atom(source) and is_map(params) do
@@ -69,13 +57,29 @@ defmodule Upkeep.Source.Loader do
 
   def coverage(source, params, deps) when is_atom(source) and is_map(params) and is_list(deps) do
     deps
-    |> Enum.map(&Upkeep.Source.QueryDeps.coverage/1)
+    |> Enum.map(&Upkeep.Source.Dependency.coverage/1)
     |> Enum.reduce(base_coverage(source, params), &Upkeep.Source.Coverage.merge/2)
     |> attach_unknown_if_empty()
   end
 
-  defp memoize_read(repo, holder, query) do
-    fingerprint = read_fingerprint(repo, query)
+  @doc false
+  def read_context, do: Process.get(@context_key)
+
+  @doc false
+  def track_dependency(deps) do
+    case Process.get(@context_key) do
+      %{deps: existing_deps} = context ->
+        Process.put(@context_key, %{context | deps: [deps | existing_deps]})
+
+      _ ->
+        raise "Upkeep.Source.Loader.track_dependency/1 called outside a source context. " <>
+                "This usually means a Task spawned inside load/1 lost the context — " <>
+                "explicit propagation is required for concurrent reads."
+    end
+  end
+
+  @doc false
+  def memoized_read(fingerprint, read) when is_function(read, 0) do
     cache = Map.get(Process.get(@context_key), :reads, %{})
 
     case Map.fetch(cache, fingerprint) do
@@ -83,16 +87,11 @@ defmodule Upkeep.Source.Loader do
         value
 
       :error ->
-        value = Upkeep.Source.ReadCache.fetch_or_load(repo, query, holder)
+        value = read.()
         ctx = Process.get(@context_key)
         Process.put(@context_key, Map.put(ctx, :reads, Map.put(cache, fingerprint, value)))
         value
     end
-  end
-
-  defp read_fingerprint(repo, query) do
-    {sql, params} = Ecto.Adapters.SQL.to_sql(:all, repo, query)
-    :erlang.phash2({sql, params})
   end
 
   defp with_read_context(repo, holder, source, params, fun) do
@@ -115,19 +114,6 @@ defmodule Upkeep.Source.Loader do
 
   defp restore_read_context(nil), do: Process.delete(@context_key)
   defp restore_read_context(previous), do: Process.put(@context_key, previous)
-
-  defp track_query(query) do
-    case Process.get(@context_key) do
-      %{deps: deps} = context ->
-        deps = [Upkeep.Source.QueryDeps.from_query(query) | deps]
-        Process.put(@context_key, %{context | deps: deps})
-
-      _ ->
-        raise "Upkeep.Source.Loader.track_query/1 called outside a source context. " <>
-                "This usually means a Task spawned inside load/1 lost the context — " <>
-                "explicit propagation is required for concurrent reads."
-    end
-  end
 
   defp emit_coverage(%Upkeep.Source.Coverage{} = coverage) do
     :telemetry.execute(

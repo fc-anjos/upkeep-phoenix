@@ -19,7 +19,7 @@ defmodule Upkeep.RepoCaptureTest do
   end
 
   defmodule ProjectIssues do
-    use Upkeep.Source, repo: Upkeep.TestSupport.Repo
+    use Upkeep.Ecto.Source, repo: Upkeep.TestSupport.Repo
 
     import Ecto.Query
 
@@ -42,7 +42,7 @@ defmodule Upkeep.RepoCaptureTest do
   end
 
   defmodule PlainRepoProjectIssues do
-    use Upkeep.Source, repo: PlainRepo
+    use Upkeep.Ecto.Source, repo: PlainRepo
 
     import Ecto.Query
 
@@ -55,7 +55,7 @@ defmodule Upkeep.RepoCaptureTest do
   end
 
   defmodule PlainRepoExplicitLoad do
-    use Upkeep.Source, repo: PlainRepo
+    use Upkeep.Ecto.Source, repo: PlainRepo
 
     alias Upkeep.RepoCaptureTest.Issue
 
@@ -65,7 +65,7 @@ defmodule Upkeep.RepoCaptureTest do
   end
 
   defmodule TableProjectIssues do
-    use Upkeep.Source, repo: Upkeep.TestSupport.Repo
+    use Upkeep.Ecto.Source, repo: Upkeep.TestSupport.Repo
 
     import Ecto.Query
 

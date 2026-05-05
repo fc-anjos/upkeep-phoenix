@@ -3,6 +3,7 @@ defmodule Upkeep.Source.ReadCacheTest do
 
   import Ecto.Query
 
+  alias Upkeep.Ecto.Source.QueryDeps
   alias Upkeep.Source.ReadCache, as: ReadCache
   alias Upkeep.TestSupport.Repo
 
@@ -50,9 +51,9 @@ defmodule Upkeep.Source.ReadCacheTest do
 
     q = from(p in Project, order_by: p.id)
 
-    a = ReadCache.fetch_or_load(Repo, q)
-    b = ReadCache.fetch_or_load(Repo, q)
-    c = ReadCache.fetch_or_load(Repo, q)
+    a = fetch_query(q)
+    b = fetch_query(q)
+    c = fetch_query(q)
 
     assert a == b and b == c
     assert Enum.map(a, & &1.name) == ["alpha", "beta"]
@@ -65,11 +66,11 @@ defmodule Upkeep.Source.ReadCacheTest do
 
     q = from(p in Project)
 
-    ReadCache.fetch_or_load(Repo, q)
+    fetch_query(q)
     assert ReadCache.count() == 1
 
     # Same query against the same repo is the same cache entry.
-    ReadCache.fetch_or_load(Repo, q)
+    fetch_query(q)
     assert ReadCache.count() == 1
   end
 
@@ -90,8 +91,8 @@ defmodule Upkeep.Source.ReadCacheTest do
 
     q = from(p in Project)
 
-    ReadCache.fetch_or_load(Repo, q)
-    ReadCache.fetch_or_load(Repo, q)
+    fetch_query(q)
+    fetch_query(q)
     assert :counters.get(counter, 1) == 1
     assert ReadCache.count() == 1
 
@@ -100,7 +101,7 @@ defmodule Upkeep.Source.ReadCacheTest do
     ReadCache.invalidate(event)
     assert ReadCache.count() == 0
 
-    ReadCache.fetch_or_load(Repo, q)
+    fetch_query(q)
     assert :counters.get(counter, 1) == 2
   end
 
@@ -108,7 +109,7 @@ defmodule Upkeep.Source.ReadCacheTest do
     Repo.insert!(%Project{id: 1, name: "alpha"})
 
     q = from(p in Project)
-    ReadCache.fetch_or_load(Repo, q)
+    fetch_query(q)
     assert ReadCache.count() == 1
 
     Upkeep.Coordinator.Graph.notify(Upkeep.Change.inserted(%Project{id: 2, name: "beta"}))
@@ -147,7 +148,7 @@ defmodule Upkeep.Source.ReadCacheTest do
             {^barrier, :go} -> :ok
           end
 
-          rows = ReadCache.fetch_or_load(Repo, q)
+          rows = fetch_query(q)
           send(parent, {:done, i, length(rows)})
         end)
       end
@@ -216,7 +217,7 @@ defmodule Upkeep.Source.ReadCacheTest do
     Repo.insert!(%Project{id: 1, name: "alpha"})
 
     q = from(p in Project)
-    ReadCache.fetch_or_load(Repo, q)
+    fetch_query(q)
     assert ReadCache.count() == 1
 
     # Simulate a dispatched notification arriving on a *remote* node by
@@ -242,8 +243,8 @@ defmodule Upkeep.Source.ReadCacheTest do
     holder_a = {:source_a, %{}}
     holder_b = {:source_b, %{}}
 
-    ReadCache.fetch_or_load(Repo, q, holder_a)
-    ReadCache.fetch_or_load(Repo, q, holder_b)
+    fetch_query(q, holder_a)
+    fetch_query(q, holder_b)
     assert ReadCache.count() == 1
 
     # Releasing one holder leaves the read-cache entry alive — another holder
@@ -261,7 +262,7 @@ defmodule Upkeep.Source.ReadCacheTest do
     Repo.insert!(%Project{id: 1, name: "alpha"})
 
     q = from(p in Project)
-    ReadCache.fetch_or_load(Repo, q)
+    fetch_query(q)
     assert ReadCache.count() == 1
 
     assert ReadCache.release({:never_seen, %{}}) == 0
@@ -274,7 +275,7 @@ defmodule Upkeep.Source.ReadCacheTest do
     Repo.insert!(%Project{id: 1, name: "alpha"})
 
     defmodule HolderSource do
-      use Upkeep.Source, repo: Upkeep.TestSupport.Repo
+      use Upkeep.Ecto.Source, repo: Upkeep.TestSupport.Repo
 
       import Ecto.Query
 
@@ -301,5 +302,13 @@ defmodule Upkeep.Source.ReadCacheTest do
 
     pids = Enum.map(members, fn {pid, _meta} -> pid end)
     assert Process.whereis(Upkeep.Coordinator.SourceInvalidator) in pids
+  end
+
+  defp fetch_query(query, holder \\ nil) do
+    deps = QueryDeps.from_query(query)
+    {sql, params} = Ecto.Adapters.SQL.to_sql(:all, Repo, query)
+    node_id = {:read, Repo, :erlang.phash2({sql, params})}
+
+    ReadCache.fetch_or_load(node_id, deps, fn -> Repo.all(query) end, holder)
   end
 end

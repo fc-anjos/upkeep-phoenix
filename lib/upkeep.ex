@@ -58,6 +58,7 @@ defmodule Upkeep do
       Upkeep.Coordinator,
       Upkeep.DAG,
       Upkeep.Ecto,
+      Upkeep.Ecto.Source,
       Upkeep.Mutation,
       Upkeep.Source,
       {Mix, :compile}
@@ -87,7 +88,7 @@ defmodule Upkeep do
   defdelegate inserted(record, opts \\ []), to: Upkeep.Mutation
   defdelegate updated(record, opts \\ []), to: Upkeep.Mutation
   defdelegate deleted(record, opts \\ []), to: Upkeep.Mutation
-  defdelegate read(query), to: Upkeep.Source
+  defdelegate read(query), to: Upkeep.Ecto.Source
   defdelegate recent_events(opts \\ []), to: Upkeep.Observability, as: :recent
   defdelegate clear_events(), to: Upkeep.Observability, as: :clear
 end

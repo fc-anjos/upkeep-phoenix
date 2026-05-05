@@ -2,16 +2,18 @@ defmodule Upkeep.Source do
   @moduledoc """
   Source authoring helpers for Upkeep-style reactive reads.
 
-  A source is a module that can load a live read. Ecto-backed sources should
-  perform database reads through `Upkeep.read/1`; those reads are tracked as
-  the source's reactive surface.
+  A source is a module that can load a live read. Ecto-backed sources use
+  `Upkeep.Ecto.Source`, which plugs Ecto query analysis into this generic
+  source contract.
   """
 
   use Boundary,
     top_level?: true,
     exports: [
       Coverage,
+      Dependency,
       Identity,
+      Keys,
       Loader,
       Reactivity,
       ReadCache
@@ -19,12 +21,7 @@ defmodule Upkeep.Source do
     deps: [
       Upkeep.Change,
       Upkeep.SingleFlight,
-      Ecto.Adapters.SQL,
-      Ecto.Query,
-      Ecto.Queryable,
-      Ecto.SubQuery,
-      Logger,
-      {Mix, :compile}
+      Logger
     ],
     type: :strict
 
@@ -54,7 +51,9 @@ defmodule Upkeep.Source do
     Upkeep.Source.Spec.reacts_to_definition(schema, action, fun, __CALLER__)
   end
 
-  defdelegate read(query_or_value), to: Upkeep.Source.Loader
-  defdelegate coverage(source, params), to: Upkeep.Source.Loader
-  defdelegate coverage(source, params, deps), to: Upkeep.Source.Loader
+  def read(value), do: Upkeep.Source.Loader.read(value)
+
+  def coverage(source, params), do: Upkeep.Source.Loader.coverage(source, params)
+
+  def coverage(source, params, deps), do: Upkeep.Source.Loader.coverage(source, params, deps)
 end

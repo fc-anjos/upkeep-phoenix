@@ -1,4 +1,4 @@
-defmodule Upkeep.Source.QueryDeps do
+defmodule Upkeep.Ecto.Source.QueryDeps do
   @moduledoc false
 
   @actions [:inserted, :updated, :deleted]
@@ -11,7 +11,7 @@ defmodule Upkeep.Source.QueryDeps do
             warnings: []
 
   def from_query(%Ecto.Query{} = query) do
-    bindings = Upkeep.Source.QueryDeps.Bindings.from_query(query)
+    bindings = Upkeep.Ecto.Source.QueryDeps.Bindings.from_query(query)
 
     %__MODULE__{bindings: bindings, schemas: bindings |> Map.values() |> MapSet.new()}
     |> collect_query_fields(query)
@@ -74,6 +74,14 @@ defmodule Upkeep.Source.QueryDeps do
 
   def interest_keys(_query), do: []
 
+  def coarse_keys(%__MODULE__{schemas: schemas}) do
+    for schema <- schemas, action <- @actions do
+      {action, schema}
+    end
+  end
+
+  def coarse_keys(_deps), do: []
+
   def matches_change?(query_or_deps, event)
 
   def matches_change?(%Ecto.Query{} = query, event),
@@ -96,7 +104,7 @@ defmodule Upkeep.Source.QueryDeps do
 
   defp collect_query_fields(deps, query) do
     query
-    |> Upkeep.Source.QueryDeps.Expressions.all()
+    |> Upkeep.Ecto.Source.QueryDeps.Expressions.all()
     |> Enum.reduce(deps, fn expr, deps -> collect_fields(deps, expr) end)
   end
 
@@ -104,7 +112,7 @@ defmodule Upkeep.Source.QueryDeps do
     {_expr, deps} =
       Macro.prewalk(expr, deps, fn
         node, deps ->
-          case Upkeep.Source.QueryDeps.Expressions.field_ref(node) do
+          case Upkeep.Ecto.Source.QueryDeps.Expressions.field_ref(node) do
             {binding, field} -> {node, put_field(deps, binding, field)}
             nil -> {node, deps}
           end
@@ -198,7 +206,7 @@ defmodule Upkeep.Source.QueryDeps do
   end
 
   defp maybe_add_equality_filter(filters, field_side, value_side, params) do
-    with {binding, field} <- Upkeep.Source.QueryDeps.Expressions.field_ref(field_side),
+    with {binding, field} <- Upkeep.Ecto.Source.QueryDeps.Expressions.field_ref(field_side),
          {:ok, value} <- equality_value(value_side, params) do
       [{binding, field, value} | filters]
     else
@@ -207,7 +215,7 @@ defmodule Upkeep.Source.QueryDeps do
   end
 
   defp maybe_add_membership_filter(filters, field_side, value_side, params) do
-    with {binding, field} <- Upkeep.Source.QueryDeps.Expressions.field_ref(field_side),
+    with {binding, field} <- Upkeep.Ecto.Source.QueryDeps.Expressions.field_ref(field_side),
          {:ok, values} <- membership_values(value_side, params) do
       [{binding, field, values} | filters]
     else
@@ -297,7 +305,7 @@ defmodule Upkeep.Source.QueryDeps do
       end)
 
     query
-    |> Upkeep.Source.QueryDeps.Expressions.all()
+    |> Upkeep.Ecto.Source.QueryDeps.Expressions.all()
     |> Enum.reduce(deps, &mark_fragments/2)
   end
 
@@ -353,7 +361,7 @@ defmodule Upkeep.Source.QueryDeps do
   defp schemas_for_expr(expr, deps) do
     {_expr, schemas} =
       Macro.prewalk(expr, MapSet.new(), fn node, schemas ->
-        case Upkeep.Source.QueryDeps.Expressions.field_ref(node) do
+        case Upkeep.Ecto.Source.QueryDeps.Expressions.field_ref(node) do
           {binding, _field} ->
             case Map.fetch(deps.bindings, binding) do
               {:ok, schema} -> {node, MapSet.put(schemas, schema)}
@@ -373,7 +381,7 @@ defmodule Upkeep.Source.QueryDeps do
 
   defp collect_subquery_deps(deps, query) do
     query
-    |> Upkeep.Source.QueryDeps.Expressions.structs()
+    |> Upkeep.Ecto.Source.QueryDeps.Expressions.structs()
     |> Enum.flat_map(&Map.get(&1, :subqueries, []))
     |> Enum.reduce(deps, fn %Ecto.SubQuery{query: query}, deps ->
       merge_deps(deps, from_query(query))
@@ -444,7 +452,7 @@ defmodule Upkeep.Source.QueryDeps do
   defp preload_warnings(_preloads), do: []
 
   defp preload_schema_reasons(query) do
-    root_schema = Map.get(Upkeep.Source.QueryDeps.Bindings.from_query(query), 0)
+    root_schema = Map.get(Upkeep.Ecto.Source.QueryDeps.Bindings.from_query(query), 0)
 
     query.preloads
     |> schema_reasons_for_preloads(root_schema)
@@ -479,7 +487,7 @@ defmodule Upkeep.Source.QueryDeps do
   defp schema_reasons_for_preloads(_preloads, _owner_schema), do: []
 
   defp schema_reasons_for_assocs(assocs, query) when is_list(assocs) do
-    bindings = Upkeep.Source.QueryDeps.Bindings.from_query(query)
+    bindings = Upkeep.Ecto.Source.QueryDeps.Bindings.from_query(query)
 
     Enum.flat_map(assocs, fn
       {assoc, {binding, nested}} when is_atom(assoc) and is_integer(binding) ->

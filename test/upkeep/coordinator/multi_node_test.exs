@@ -111,7 +111,7 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
   # wait via `Group.dispatch` of the settled value.
 
   defp seed_local_read_node(schema, fingerprint) do
-    deps = %Upkeep.Source.QueryDeps{schemas: MapSet.new([schema])}
+    deps = %Upkeep.Ecto.Source.QueryDeps{schemas: MapSet.new([schema])}
     node_id = {:read, :synthetic_repo, fingerprint}
     :ets.insert(ReadCache.values_table(), {node_id, []})
 
@@ -124,7 +124,7 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
 
   defp seed_peer_read_node(peer, schema, fingerprint) do
     peer_node = node_of(peer)
-    deps = %Upkeep.Source.QueryDeps{schemas: MapSet.new([schema])}
+    deps = %Upkeep.Ecto.Source.QueryDeps{schemas: MapSet.new([schema])}
     node_id = {:read, :synthetic_repo, fingerprint}
 
     :erpc.call(peer_node, :ets, :insert, [ReadCache.values_table(), {node_id, []}])
