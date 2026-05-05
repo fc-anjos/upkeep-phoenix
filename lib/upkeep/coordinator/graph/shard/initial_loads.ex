@@ -6,12 +6,12 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
   alias Upkeep.Coordinator.Node
   alias Upkeep.Coordinator.Topology
   alias Upkeep.DAG.Store
-  alias Upkeep.LoadCoalescer
+  alias Upkeep.SingleFlight
 
   def register_source_and_load(state, node_id, from) do
     node = Store.fetch_metadata!(state.store, node_id)
 
-    case LoadCoalescer.join(state.source_loads, node_id, from) do
+    case SingleFlight.join(state.source_loads, node_id, from) do
       {:joined, _load, source_loads} ->
         emit_source(:hit, state.idx, node_id, node.loader)
         {:noreply, %{state | source_loads: source_loads}}
@@ -25,13 +25,21 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
             {node_id, value, current_keys, tracked_deps, node}
           end)
 
-        source_loads = LoadCoalescer.start(state.source_loads, node_id, task.ref, from, node)
+        source_loads = SingleFlight.start(state.source_loads, node_id, task.ref, from, node)
         {:noreply, %{state | source_loads: source_loads}}
     end
   end
 
-  def register_derived_and_compute(state, node_id, dep_ids, dep_values, compute_fn, metadata, from) do
-    case LoadCoalescer.join(state.derived_loads, node_id, from) do
+  def register_derived_and_compute(
+        state,
+        node_id,
+        dep_ids,
+        dep_values,
+        compute_fn,
+        metadata,
+        from
+      ) do
+    case SingleFlight.join(state.derived_loads, node_id, from) do
       {:joined, _load, derived_loads} ->
         emit_derived(:hit, state.idx, node_id, dep_ids, metadata)
         {:noreply, %{state | derived_loads: derived_loads}}
@@ -44,13 +52,13 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
             {node_id, compute_fn.(dep_values)}
           end)
 
-        derived_loads = LoadCoalescer.start(state.derived_loads, node_id, task.ref, from)
+        derived_loads = SingleFlight.start(state.derived_loads, node_id, task.ref, from)
         {:noreply, %{state | derived_loads: derived_loads}}
     end
   end
 
   def handle_source_result(state, ref, node_id, value, current_keys, tracked_deps, %Node{} = node) do
-    case LoadCoalescer.pop(state.source_loads, ref) do
+    case SingleFlight.pop(state.source_loads, ref) do
       {:ok, ^node_id, load, source_loads} ->
         Process.demonitor(ref, [:flush])
 
@@ -67,7 +75,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
             %Node{node | registered_keys: current_keys, tracked_deps: tracked_deps, loaded?: true}
           )
 
-        LoadCoalescer.reply_all(load, {:ok, value, tracked_deps})
+        SingleFlight.reply_all(load, {:ok, value, tracked_deps})
 
         %{state | store: store, source_loads: source_loads}
 
@@ -77,10 +85,10 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
   end
 
   def handle_derived_result(state, ref, _node_id, value) do
-    case LoadCoalescer.pop(state.derived_loads, ref) do
+    case SingleFlight.pop(state.derived_loads, ref) do
       {:ok, _key, load, derived_loads} ->
         Process.demonitor(ref, [:flush])
-        LoadCoalescer.reply_all(load, {:ok, value})
+        SingleFlight.reply_all(load, {:ok, value})
         %{state | derived_loads: derived_loads}
 
       :stale ->
@@ -89,14 +97,14 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
   end
 
   def handle_down(state, ref, reason) do
-    case LoadCoalescer.pop(state.source_loads, ref) do
+    case SingleFlight.pop(state.source_loads, ref) do
       {:ok, node_id, load, source_loads} ->
         emit_source_exception(state, node_id, load.extra, reason)
-        LoadCoalescer.reply_all(load, {:error, reason})
+        SingleFlight.reply_all(load, {:error, reason})
         %{state | source_loads: source_loads}
 
       :stale ->
-        case LoadCoalescer.pop(state.derived_loads, ref) do
+        case SingleFlight.pop(state.derived_loads, ref) do
           {:ok, _key, load, derived_loads} ->
             :telemetry.execute(
               [:upkeep, :graph, :derived_initial, :exception],
@@ -104,7 +112,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
               %{shard: state.idx, reason: reason}
             )
 
-            LoadCoalescer.reply_all(load, {:error, reason})
+            SingleFlight.reply_all(load, {:error, reason})
             %{state | derived_loads: derived_loads}
 
           :stale ->

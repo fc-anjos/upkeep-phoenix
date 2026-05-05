@@ -111,7 +111,7 @@ defmodule Bench.InitialMultiSourceDerivedSharing do
 
     {distinct_us, distinct_dashboard_computes} =
       Bench.InitialSharingSupport.timed(fn ->
-        Enum.each(1..watches, fn idx ->
+        Bench.InitialSharingSupport.parallel_each(1..watches, fn idx ->
           run_id = System.unique_integer([:positive])
           :ets.insert(@table, {{:counter, run_id, :dashboard}, distinct_dashboard_counter})
 
@@ -123,7 +123,7 @@ defmodule Bench.InitialMultiSourceDerivedSharing do
 
     {cross_partition_us, cross_partition_dashboard_computes} =
       Bench.InitialSharingSupport.timed(fn ->
-        Enum.each(1..watches, fn idx ->
+        Bench.InitialSharingSupport.parallel_each(1..watches, fn idx ->
           run_id = System.unique_integer([:positive])
 
           :ets.insert(

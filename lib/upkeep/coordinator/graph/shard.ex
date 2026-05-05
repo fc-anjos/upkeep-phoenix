@@ -5,7 +5,8 @@ defmodule Upkeep.Coordinator.Graph.Shard do
   alias Upkeep.Coordinator.Graph.Shard.{Flush, InitialLoads, Lifecycle, Nodes, Retries}
   alias Upkeep.DAG.Store
   alias Upkeep.DirtyBuffer
-  alias Upkeep.LoadCoalescer
+  alias Upkeep.Retry
+  alias Upkeep.SingleFlight
 
   ## Public
 
@@ -26,10 +27,9 @@ defmodule Upkeep.Coordinator.Graph.Shard do
        idx: idx,
        generation: generation,
        store: Store.new(),
-       source_loads: LoadCoalescer.new(),
-       derived_loads: LoadCoalescer.new(),
-       retry_attempts: %{},
-       retry_timers: %{},
+       source_loads: SingleFlight.new(),
+       derived_loads: SingleFlight.new(),
+       retries: Retry.new(),
        buffer: DirtyBuffer.new(threshold: 1_000)
      }}
   end
@@ -78,10 +78,9 @@ defmodule Upkeep.Coordinator.Graph.Shard do
       |> Retries.cancel_all()
       |> Map.merge(%{
         store: Store.new(),
-        source_loads: LoadCoalescer.new(),
-        derived_loads: LoadCoalescer.new(),
-        retry_attempts: %{},
-        retry_timers: %{},
+        source_loads: SingleFlight.new(),
+        derived_loads: SingleFlight.new(),
+        retries: Retry.new(),
         buffer: DirtyBuffer.new(threshold: 1_000)
       })
 
@@ -89,12 +88,7 @@ defmodule Upkeep.Coordinator.Graph.Shard do
   end
 
   @impl true
-  def handle_info(:flush, state), do: {:noreply, Flush.flush(state)}
-
-  @impl true
-  def handle_info({:upkeep_graph_notify, event}, state) do
-    node_ids = Upkeep.Coordinator.Topology.affected_source_node_ids(event, state.idx)
-
+  def handle_cast({:notify_source_nodes, node_ids}, state) do
     state =
       case node_ids do
         [] -> state
@@ -103,6 +97,17 @@ defmodule Upkeep.Coordinator.Graph.Shard do
 
     {:noreply, state}
   end
+
+  @impl true
+  def handle_info(:flush, state), do: {:noreply, Flush.flush(state)}
+
+  @impl true
+  def handle_info({:upkeep_graph_notify, _origin, _event}, state) do
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:upkeep_graph_notify, _event}, state), do: {:noreply, state}
 
   @impl true
   def handle_info({:retry_source, node_id, timer_ref}, state) do
@@ -155,8 +160,8 @@ defmodule Upkeep.Coordinator.Graph.Shard do
   end
 
   defp demonitor_initial_loads(state) do
-    LoadCoalescer.demonitor_all(state.source_loads)
-    LoadCoalescer.demonitor_all(state.derived_loads)
+    SingleFlight.demonitor_all(state.source_loads)
+    SingleFlight.demonitor_all(state.derived_loads)
     state
   end
 end

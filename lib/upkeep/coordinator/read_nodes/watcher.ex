@@ -34,6 +34,15 @@ defmodule Upkeep.Coordinator.ReadNodes.Watcher do
   end
 
   @impl true
+  def handle_info({:upkeep_graph_notify, origin, _event}, state) when origin == node() do
+    {:noreply, state}
+  end
+
+  def handle_info({:upkeep_graph_notify, _origin, event}, state) do
+    ReadNodes.invalidate(event)
+    {:noreply, state}
+  end
+
   def handle_info({:upkeep_graph_notify, event}, state) do
     ReadNodes.invalidate(event)
     {:noreply, state}

@@ -1,4 +1,4 @@
-defmodule Upkeep.LoadCoalescer do
+defmodule Upkeep.SingleFlight do
   @moduledoc """
   In-flight call dedup for register-and-load patterns.
 
@@ -21,7 +21,8 @@ defmodule Upkeep.LoadCoalescer do
   time (e.g., the `%Node{}` snapshot at load start).
   """
   def start(%__MODULE__{} = coalescer, key, ref, from, extra \\ nil) when is_reference(ref) do
-    load = %{ref: ref, waiters: [from], extra: extra}
+    waiters = if is_nil(from), do: [], else: [from]
+    load = %{ref: ref, waiters: waiters, extra: extra}
 
     %{
       coalescer

@@ -23,14 +23,14 @@ defmodule Upkeep.Coordinator.GraphTest do
     test "notify delegates cluster fanout to the Group notification group" do
       event = %Ev{id: 200, tenant_id: 1}
 
-      assert Group.member_count(Graph.group(), Graph.notification_key()) >= Graph.shard_count()
+      assert Group.member_count(Graph.group(), Graph.notification_key()) >= 2
       assert Group.member_count(Graph.group(), "graph/shard/") >= Graph.shard_count()
 
       :ok = Group.join(Graph.group(), Graph.notification_key(), %{role: :probe})
 
       Graph.notify(event)
 
-      assert_receive {:upkeep_graph_notify, ^event}, 1_000
+      assert_receive {:upkeep_graph_notify, _origin, ^event}, 1_000
 
       :ok = Group.leave(Graph.group(), Graph.notification_key())
     end

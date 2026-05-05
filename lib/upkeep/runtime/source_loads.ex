@@ -3,6 +3,7 @@ defmodule Upkeep.Runtime.SourceLoads do
 
   alias Upkeep.Live.Telemetry
   alias Upkeep.Runtime.Subscriptions
+  alias Upkeep.Source.Runtime, as: Source
 
   def load(watch, reason) do
     load(watch.source, watch.params, watch.source_id, watch.component, reason)
@@ -13,7 +14,7 @@ defmodule Upkeep.Runtime.SourceLoads do
       [:source, :reload],
       Telemetry.source_metadata(source, params, source_id, component, reason),
       fn ->
-        {value, tracked_deps} = Upkeep.Source.load(source, params)
+        {value, tracked_deps} = Source.load(source, params)
         {{value, tracked_deps}, %{changed?: nil, tracked_deps: length(tracked_deps)}}
       end
     )
@@ -44,12 +45,12 @@ defmodule Upkeep.Runtime.SourceLoads do
   end
 
   def reacts_to?(watch, event) do
-    Upkeep.Source.deps_react_to?(Map.get(watch, :tracked_deps, []), event) or
+    Source.deps_react_to?(Map.get(watch, :tracked_deps, []), event) or
       watch.source.reacts_to?(event, watch.params)
   end
 
   defp interest_keys(source, params, tracked_deps) do
-    (source.__upkeep_interest_keys__(params) ++ Upkeep.Source.deps_interest_keys(tracked_deps))
+    (source.__upkeep_interest_keys__(params) ++ Source.deps_interest_keys(tracked_deps))
     |> Enum.uniq()
   end
 end

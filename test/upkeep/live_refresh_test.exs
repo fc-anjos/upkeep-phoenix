@@ -1407,6 +1407,7 @@ defmodule Upkeep.LiveRefreshTest do
     change = inserted_comment(1, 1)
     source_id = {IssueComments, %{issue_id: 1}}
     assert :ok = Upkeep.notify(change)
+    assert :ok = Upkeep.Coordinator.Graph.drain()
     assert_receive {:dag_values, [{^source_id, [:comment_a, :comment_c]}]}
 
     socket = Live.apply_dag_value(socket, source_id, [:comment_a, :comment_c])

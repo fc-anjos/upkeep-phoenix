@@ -43,6 +43,7 @@ defmodule Upkeep.Coordinator.Graph do
   use Supervisor
 
   alias Upkeep.Coordinator.ReadNodes
+  alias Upkeep.Coordinator.Graph.Notifier
   alias Upkeep.Coordinator.Topology
 
   @group Upkeep.Group
@@ -219,12 +220,17 @@ defmodule Upkeep.Coordinator.Graph do
 
   def notify(event) when is_struct(event) do
     ReadNodes.invalidate(event)
-    Group.dispatch(@group, @notification_key, {:upkeep_graph_notify, event})
+    Notifier.notify(event)
+    Group.dispatch(@group, @notification_key, {:upkeep_graph_notify, node(), event})
   end
 
   @doc "Synchronously drain all shards."
   def drain do
-    for idx <- 0..(Topology.shard_count() - 1), do: GenServer.call(shard_name(idx), :drain, 60_000)
+    Notifier.drain()
+
+    for idx <- 0..(Topology.shard_count() - 1),
+        do: GenServer.call(shard_name(idx), :drain, 60_000)
+
     :ok
   end
 
@@ -270,8 +276,10 @@ defmodule Upkeep.Coordinator.Graph do
     Enum.each(ReadNodes.table_specs(), fn {name, opts} -> ensure_table(name, opts) end)
 
     children = [
-      Upkeep.Coordinator.ReadNodes.Coalescer,
+      {Upkeep.SingleFlight.Registry,
+       name: Upkeep.Coordinator.ReadNodes.Coalescer, telemetry_prefix: [:upkeep, :read_nodes]},
       Upkeep.Coordinator.ReadNodes.Watcher,
+      Upkeep.Coordinator.Graph.Notifier,
       {Task.Supervisor, name: task_sup()}
       | for idx <- 0..(shards - 1) do
           Supervisor.child_spec(

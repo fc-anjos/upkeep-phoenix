@@ -12,7 +12,7 @@ defmodule Upkeep.Coordinator.Topology do
   surface.
   """
 
-  alias Upkeep.Source
+  alias Upkeep.Source.Runtime, as: Source
 
   @nodes_table :upkeep_topology_nodes
   @index_table :upkeep_topology_index
@@ -96,12 +96,18 @@ defmodule Upkeep.Coordinator.Topology do
     end
   end
 
-  def affected_source_node_ids(event, shard_idx) when is_struct(event) and is_integer(shard_idx) do
+  def affected_source_node_ids(event) when is_struct(event) do
     event
     |> Source.event_keys()
     |> Enum.flat_map(&:ets.lookup(@index_table, &1))
     |> Enum.map(fn {_key, node_id} -> node_id end)
     |> Enum.uniq()
+  end
+
+  def affected_source_node_ids(event, shard_idx)
+      when is_struct(event) and is_integer(shard_idx) do
+    event
+    |> affected_source_node_ids()
     |> Enum.filter(&(shard_of_node(&1) == shard_idx))
   end
 

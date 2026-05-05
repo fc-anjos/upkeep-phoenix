@@ -22,13 +22,6 @@ defmodule Upkeep.Coordinator.Graph.Shard.Lifecycle do
         generation: generation
       })
 
-    :ok =
-      Group.join(Graph.group(), Graph.notification_key(), %{
-        kind: :graph_shard,
-        shard: idx,
-        generation: generation
-      })
-
     generation
   end
 

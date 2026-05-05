@@ -1,9 +1,11 @@
 defmodule Upkeep.Coordinator.Graph.Shard.Loaders do
   @moduledoc false
 
+  alias Upkeep.Source.Runtime, as: Source
+
   def run_with_deps({:source, source, params}) do
-    {value, deps} = Upkeep.Source.load(source, params)
-    dep_keys = Upkeep.Source.deps_interest_keys(deps)
+    {value, deps} = Source.load(source, params)
+    dep_keys = Source.deps_interest_keys(deps)
     {value, Enum.uniq(source.__upkeep_interest_keys__(params) ++ dep_keys), deps}
   end
 
@@ -16,7 +18,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Loaders do
     %{
       source: source,
       params: params,
-      sharing_partition: Upkeep.Source.sharing_partition(source, params)
+      sharing_partition: Source.sharing_partition(source, params)
     }
   end
 

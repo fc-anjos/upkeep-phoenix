@@ -6,7 +6,9 @@ defmodule Upkeep.Live.Specs do
   alias Upkeep.Runtime.NodeSpec
   alias Upkeep.Runtime.Materializer
   alias Upkeep.Runtime.Producer
+  alias Upkeep.Runtime.ScopeCapture
   alias Upkeep.Runtime.State
+  alias Upkeep.Source.Runtime, as: Source
 
   def source(assign_name, source, params, component)
       when is_atom(assign_name) and is_map(params) do
@@ -33,7 +35,7 @@ defmodule Upkeep.Live.Specs do
         source: source,
         params: params,
         component: component,
-        sharing_partition: Upkeep.Source.sharing_partition(source, params)
+        sharing_partition: Source.sharing_partition(source, params)
       }
     }
   end
@@ -80,16 +82,9 @@ defmodule Upkeep.Live.Specs do
   end
 
   defp external_fun_identity(fun) do
-    info = :erlang.fun_info(fun)
-
-    with {:env, []} <- List.keyfind(info, :env, 0),
-         {:type, :external} <- List.keyfind(info, :type, 0),
-         {:module, module} <- List.keyfind(info, :module, 0),
-         {:name, name} <- List.keyfind(info, :name, 0),
-         {:arity, arity} <- List.keyfind(info, :arity, 0) do
-      {module, name, arity}
-    else
-      _ -> nil
+    case ScopeCapture.analyze(fun) do
+      {:external, identity} -> identity
+      _other -> nil
     end
   end
 

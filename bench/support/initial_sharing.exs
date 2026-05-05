@@ -6,6 +6,7 @@ defmodule Bench.InitialSharingSupport do
   @default_watches 1_000
   @join_window_ms 250
   @await_timeout_ms 10_000
+  @default_parallelism System.schedulers_online()
 
   def default_watches do
     case System.get_env("BENCH_WATCHES") do
@@ -57,6 +58,27 @@ defmodule Bench.InitialSharingSupport do
   end
 
   def await_all(tasks), do: Enum.each(tasks, &Task.await(&1, @await_timeout_ms))
+
+  def parallel_each(enumerable, fun) do
+    enumerable
+    |> Task.async_stream(
+      fun,
+      max_concurrency: parallelism(),
+      timeout: @await_timeout_ms,
+      ordered: false
+    )
+    |> Enum.each(fn
+      {:ok, _result} -> :ok
+      {:exit, reason} -> exit(reason)
+    end)
+  end
+
+  def parallelism do
+    case System.get_env("BENCH_PARALLELISM") do
+      nil -> @default_parallelism
+      value -> String.to_integer(value)
+    end
+  end
 
   def wait_for_started(tag, run_id, timeout \\ 5_000) do
     receive do
