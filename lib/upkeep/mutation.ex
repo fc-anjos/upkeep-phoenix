@@ -51,7 +51,6 @@ defmodule Upkeep.Mutation do
     end
   end
 
-  @doc false
   def with_isolated_journal(fun) when is_function(fun, 0) do
     previous = Process.get(@journal_key, :upkeep_no_journal)
     put_journal([])
@@ -97,7 +96,6 @@ defmodule Upkeep.Mutation do
     end
   end
 
-  @doc false
   def dispatch_journal([]), do: :ok
 
   def dispatch_journal(events) do
@@ -106,14 +104,8 @@ defmodule Upkeep.Mutation do
 
   defp transaction_committed?({:ok, _result}), do: true
   defp transaction_committed?(_result), do: false
-
-  @doc false
   def journal_active?, do: is_list(Process.get(@journal_key))
-
-  @doc false
   def journal, do: Process.get(@journal_key, [])
-
-  @doc false
   def put_journal(events), do: Process.put(@journal_key, events)
 
   defp restore_journal(:upkeep_no_journal), do: Process.delete(@journal_key)

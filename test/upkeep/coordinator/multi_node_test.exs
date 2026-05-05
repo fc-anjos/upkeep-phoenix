@@ -15,7 +15,6 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
 
   @moduletag :multi_node
 
-  alias Upkeep.Coordinator.Graph
   alias Upkeep.Invalidation.ReadCache, as: ReadCache
 
   defmodule FakeSchema, do: defstruct([:id])
@@ -77,7 +76,7 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
   end
 
   describe "cluster-wide graph dispatch" do
-    test "Graph.notify on parent refreshes graph subscriber registered on peer", %{
+    test "invalidation dispatch on parent refreshes graph subscriber registered on peer", %{
       peer_node: peer_node
     } do
       node_id = {:peer_graph_source, System.unique_integer([:positive])}
@@ -94,7 +93,7 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
 
       assert_receive {:peer_graph_subscriber_registered, ^peer_node, ^subscriber, ^node_id}, 1_000
 
-      Graph.notify(Upkeep.Change.changed(:multi_node_graph_dispatch, %{id: 1}))
+      Upkeep.Invalidation.dispatch(Upkeep.Change.changed(:multi_node_graph_dispatch, %{id: 1}))
 
       assert_receive {:peer_dag_values, ^peer_node, ^subscriber, [{^node_id, ^value}]}, 3_000
 

@@ -239,6 +239,6 @@ defmodule Upkeep.MutationTest do
   defp issue(project_id, issue_id), do: %Issue{project_id: project_id, issue_id: issue_id}
 
   defp drain_graph do
-    :ok = Upkeep.Coordinator.Graph.drain()
+    :ok = Upkeep.Test.drain()
   end
 end

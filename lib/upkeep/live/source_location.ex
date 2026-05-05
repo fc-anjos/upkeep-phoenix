@@ -3,10 +3,6 @@ defmodule Upkeep.Live.SourceLocation do
 
   @context_radius 2
   @default_capture? Mix.env() in [:dev, :test]
-
-  @doc """
-  Compile-time capture from a `Macro.Env`. Used by `Upkeep.Live.Macros`.
-  """
   def capture(%Macro.Env{} = caller, kind, call_name, args) when is_atom(call_name) do
     if capture?() do
       %{

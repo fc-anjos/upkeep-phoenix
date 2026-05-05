@@ -7,15 +7,10 @@ defmodule Upkeep.Invalidation.ReadCache do
   @values :upkeep_read_node_values
   @index :upkeep_read_node_index
   @refs :upkeep_read_node_refs
-
-  @doc false
   def values_table, do: @values
-  @doc false
   def index_table, do: @index
-  @doc false
   def refs_table, do: @refs
 
-  @doc false
   def table_specs do
     [
       {@values, [:set, :public, :named_table, read_concurrency: true, write_concurrency: true]},
@@ -24,9 +19,6 @@ defmodule Upkeep.Invalidation.ReadCache do
     ]
   end
 
-  @doc """
-  Look up the cached value for `node_id`, or run `load` to populate it.
-  """
   def fetch_or_load(node_id, deps, load, holder \\ nil) when is_function(load, 0) do
     value =
       case :ets.lookup(@values, node_id) do
@@ -59,12 +51,6 @@ defmodule Upkeep.Invalidation.ReadCache do
     value
   end
 
-  @doc """
-  Release every read-node held by `holder` (a source node id). Read-nodes
-  with no remaining holders are evicted along with their index entries.
-
-  Returns the count of evicted read-nodes.
-  """
   def release(holder) do
     held = :ets.lookup(@refs, holder)
     :ets.delete(@refs, holder)
@@ -95,11 +81,6 @@ defmodule Upkeep.Invalidation.ReadCache do
     :ok
   end
 
-  @doc """
-  Evict every read-node whose query matches `event`.
-
-  Returns the count of evicted read-nodes.
-  """
   def invalidate(%{action: _, schema: _} = event) do
     event
     |> candidate_keys()
@@ -117,9 +98,6 @@ defmodule Upkeep.Invalidation.ReadCache do
 
   def invalidate(_event), do: 0
 
-  @doc """
-  Drop every cached read-node and reset the index.
-  """
   def clear do
     :ets.delete_all_objects(@values)
     :ets.delete_all_objects(@index)
@@ -127,10 +105,7 @@ defmodule Upkeep.Invalidation.ReadCache do
     :ok
   end
 
-  @doc false
   def count, do: :ets.info(@values, :size)
-
-  @doc false
   def coalescer_name, do: Upkeep.Invalidation.ReadCache.Coalescer
 
   defp evict(node_id, deps) do

@@ -30,6 +30,22 @@ defmodule Upkeep.Test do
   end
 
   @doc """
+  Synchronously drain pending Upkeep graph notifications.
+
+  Use this after `Upkeep.notify/1` in tests that need to assert graph-pushed
+  values without waiting on eventual message delivery.
+  """
+  def drain, do: Graph.drain()
+
+  @doc """
+  Return true if `pid` is subscribed to an Upkeep source node.
+
+  This is a test diagnostic for assertions around watcher lifecycle. Host
+  applications should not use coordinator internals directly.
+  """
+  def subscribed?(node_id, pid \\ self()), do: Graph.subscribed?(node_id, pid)
+
+  @doc """
   Assert that Upkeep can see a source's invalidation surface.
 
   This executes the source once so custom `load/1` callbacks can report any

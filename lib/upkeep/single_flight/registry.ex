@@ -20,9 +20,6 @@ defmodule Upkeep.SingleFlight.Registry do
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
-  @doc """
-  Run `fun` exactly once across concurrent callers for `key`.
-  """
   @spec coalesce(GenServer.server(), term(), (-> term())) :: term()
   def coalesce(name, key, fun) when is_function(fun, 0) do
     case GenServer.call(name, {:reserve, key}, :infinity) do
@@ -52,7 +49,6 @@ defmodule Upkeep.SingleFlight.Registry do
     end
   end
 
-  @doc false
   def pending?(name, key), do: GenServer.call(name, {:pending?, key})
 
   @impl true

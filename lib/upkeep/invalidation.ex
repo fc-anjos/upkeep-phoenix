@@ -3,11 +3,7 @@ defmodule Upkeep.Invalidation do
 
   use Boundary,
     top_level?: true,
-    exports: [
-      Bus,
-      ReadCache,
-      SourceInvalidator
-    ],
+    exports: [],
     deps: [
       Group,
       Upkeep.Change,
@@ -49,6 +45,18 @@ defmodule Upkeep.Invalidation do
   def reset do
     ReadCache.clear()
   end
+
+  def group, do: Bus.group()
+
+  def notification_key, do: Bus.key()
+
+  def join_notifications(kind), do: Bus.join(kind)
+
+  def fetch_read(node_id, deps, load, holder \\ nil) do
+    ReadCache.fetch_or_load(node_id, deps, load, holder)
+  end
+
+  def release_read_holder(holder), do: ReadCache.release(holder)
 
   defp dispatch_one(event) do
     Upkeep.Change.diagnose_broad_update(event)

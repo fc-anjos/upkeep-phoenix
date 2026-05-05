@@ -128,11 +128,6 @@ defmodule Upkeep.Coordinator.Topology do
     :erlang.phash2(node_partition(node_id), shard_count())
   end
 
-  @doc """
-  Resolve a node to its owning shard. Sources hash to a shard via their
-  partition; derived nodes have an explicit override stored at registration so
-  they colocate with their deps.
-  """
   def shard_of_node(node_id) do
     case lookup(node_id) do
       {:ok, %{shard_idx: shard_idx}} -> shard_idx
@@ -170,11 +165,6 @@ defmodule Upkeep.Coordinator.Topology do
     end
   end
 
-  @doc """
-  Group `dep_node_ids` by their owning shard, sorted by descending colocated
-  count then shard index. Used by `register_derived` to enforce the single-
-  shard colocation invariant and to format informative error messages.
-  """
   def dependency_shard_groups(dep_node_ids) when is_list(dep_node_ids) do
     dep_node_ids
     |> Enum.group_by(&shard_of_node/1)

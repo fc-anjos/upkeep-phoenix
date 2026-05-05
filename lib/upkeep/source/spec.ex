@@ -23,18 +23,15 @@ defmodule Upkeep.Source.Spec do
     end
   end
 
-  @doc false
   def invalidated_by_definition(notification, opts, caller) do
     build_invalidated_by(normalize_notification(notification, caller), opts)
   end
 
-  @doc false
   def invalidated_by_definition(schema, action, opts, caller) do
     notification = normalize_notification(schema, action, caller)
     build_invalidated_by(notification, opts)
   end
 
-  @doc false
   def reacts_to_definition(notification, fun, caller) do
     notification = normalize_notification(notification, caller)
 
@@ -43,7 +40,6 @@ defmodule Upkeep.Source.Spec do
     end
   end
 
-  @doc false
   def reacts_to_definition(schema, action, fun, caller) do
     notification = normalize_notification(schema, action, caller)
 

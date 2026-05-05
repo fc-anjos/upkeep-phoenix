@@ -18,7 +18,7 @@ defmodule Upkeep.Coordinator.Graph.Notifier do
 
   @impl true
   def init(_) do
-    :ok = Upkeep.Invalidation.Bus.join(:graph_notifier)
+    :ok = Upkeep.Invalidation.join_notifications(:graph_notifier)
     {:ok, new_state()}
   end
 

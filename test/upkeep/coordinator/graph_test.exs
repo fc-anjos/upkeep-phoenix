@@ -53,8 +53,10 @@ defmodule Upkeep.Coordinator.GraphTest do
     {:upkeep_event, Ev, Enum.sort([{:id, id}, {:tenant_id, tid}])}
   end
 
+  defp notify(event), do: Upkeep.Invalidation.dispatch(event)
+
   describe "source nodes" do
-    test "notify delegates cluster fanout to the invalidation bus" do
+    test "invalidation dispatch reaches the invalidation bus" do
       event = %Ev{id: 200, tenant_id: 1}
 
       assert Group.member_count(Bus.group(), Bus.key()) >= 2
@@ -62,7 +64,7 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       :ok = Group.join(Bus.group(), Bus.key(), %{role: :probe})
 
-      Graph.notify(event)
+      notify(event)
 
       assert_receive {:upkeep_invalidation, _origin, ^event}, 1_000
 
@@ -91,7 +93,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       event = %Ev{id: 1, tenant_id: 1}
 
       with_suspended_notifier(fn ->
-        Enum.each(1..12, fn _ -> Graph.notify(event) end)
+        Enum.each(1..12, fn _ -> notify(event) end)
       end)
 
       :ok = Graph.drain()
@@ -139,8 +141,8 @@ defmodule Upkeep.Coordinator.GraphTest do
         end)
 
       with_suspended_notifier(fn ->
-        Graph.notify(event_a)
-        Graph.notify(event_b)
+        notify(event_a)
+        notify(event_b)
       end)
 
       :ok = Graph.drain()
@@ -227,11 +229,11 @@ defmodule Upkeep.Coordinator.GraphTest do
       :ok = Graph.register_loader(node_id, [key_a], load_fn)
 
       # First flush: routes via key_a.
-      Graph.notify(%Ev{id: 1, tenant_id: 1})
+      notify(%Ev{id: 1, tenant_id: 1})
       :ok = Graph.drain()
       assert_receive {:dag_values, [{^node_id, :v}]}, 1_000
 
-      Graph.notify(%Ev{id: 1, tenant_id: 2})
+      notify(%Ev{id: 1, tenant_id: 2})
       :ok = Graph.drain()
       assert_receive {:dag_values, [{^node_id, :v}]}, 1_000
 
@@ -247,7 +249,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       :ok = Graph.unregister(node_id)
 
       # No subscribers; notify must not deliver anything.
-      Graph.notify(%Ev{id: 99, tenant_id: 1})
+      notify(%Ev{id: 99, tenant_id: 1})
       :ok = Graph.drain()
       refute_received {:dag_values, [{^node_id, _}]}
     end
@@ -259,13 +261,13 @@ defmodule Upkeep.Coordinator.GraphTest do
       :ok = Graph.register_loader(node_id, [key], fn -> {:old, [key]} end)
       :ok = Graph.reset()
 
-      Graph.notify(%Ev{id: 100, tenant_id: 1})
+      notify(%Ev{id: 100, tenant_id: 1})
       :ok = Graph.drain()
       refute_received {:dag_values, [{^node_id, _}]}
 
       :ok = Graph.register_loader(node_id, [key], fn -> {:new, [key]} end)
 
-      Graph.notify(%Ev{id: 100, tenant_id: 1})
+      notify(%Ev{id: 100, tenant_id: 1})
       :ok = Graph.drain()
       assert_receive {:dag_values, [{^node_id, :new}]}, 1_000
 
@@ -297,7 +299,7 @@ defmodule Upkeep.Coordinator.GraphTest do
           end)
       end)
 
-      Graph.notify(%Ev{id: 10, tenant_id: 1})
+      notify(%Ev{id: 10, tenant_id: 1})
       :ok = Graph.drain()
 
       assert_receive {:dag_values, [{^matching_id, :matched}]}, 1_000
@@ -339,7 +341,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       :ok = Graph.register_loader(node_id, [key], load_fn)
       :ok = Graph.register_derived(derived_id, [node_id], compute_fn)
 
-      Graph.notify(event)
+      notify(event)
       :ok = Graph.drain()
 
       assert_receive {:dag_values, batch}, 1_000
@@ -350,7 +352,7 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       log =
         capture_log(fn ->
-          Graph.notify(event)
+          notify(event)
           :ok = Graph.drain()
         end)
 
@@ -414,7 +416,7 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       :ok = Graph.register_loader(node_id, [key], load_fn)
 
-      Graph.notify(event)
+      notify(event)
       :ok = Graph.drain()
       assert_receive {:dag_values, [{^node_id, :stable_value}]}, 1_000
 
@@ -422,7 +424,7 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       log =
         capture_log(fn ->
-          Graph.notify(event)
+          notify(event)
           :ok = Graph.drain()
           send(parent, {:retry_failures, receive_source_exception_metadata_until_exhausted()})
         end)
@@ -439,7 +441,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       refute_received {:dag_values, [{^node_id, _}]}
 
       :ets.insert(table, {:mode, :recover})
-      Graph.notify(event)
+      notify(event)
       :ok = Graph.drain()
 
       assert_receive {:dag_values, [{^node_id, :recovered_value}]}, 1_000
@@ -463,7 +465,7 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       log =
         capture_log(fn ->
-          Graph.notify(event)
+          notify(event)
           :ok = Graph.drain()
         end)
 
@@ -506,7 +508,7 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       log =
         capture_log(fn ->
-          Graph.notify(event)
+          notify(event)
           :ok = Graph.drain()
           send(parent, {:retry_failures, receive_source_exception_metadata_until_exhausted()})
         end)
@@ -554,7 +556,7 @@ defmodule Upkeep.Coordinator.GraphTest do
           :ok = Graph.register_derived(derived_id, [source_id], compute_fn)
         end)
 
-      Graph.notify(%Ev{id: 20, tenant_id: 1})
+      notify(%Ev{id: 20, tenant_id: 1})
       :ok = Graph.drain()
 
       assert_receive {:dag_values, batch}, 1_000
@@ -592,7 +594,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       :ok = Graph.register_loader(source_id, keys, load_fn)
       :ok = Graph.register_derived(derived_id, [source_id], compute_fn)
 
-      Enum.each(1..12, fn _ -> Graph.notify(event) end)
+      Enum.each(1..12, fn _ -> notify(event) end)
       :ok = Graph.drain()
 
       assert_receive {:dag_values, batch}, 1_000
@@ -631,7 +633,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       :ok = Graph.register_loader(source_id, keys, load_fn)
       :ok = Graph.register_derived(derived_id, [source_id], compute_fn)
 
-      Enum.each(1..12, fn _ -> Graph.notify(%Ev{id: 7, tenant_id: 1}) end)
+      Enum.each(1..12, fn _ -> notify(%Ev{id: 7, tenant_id: 1}) end)
       :ok = Graph.drain()
 
       assert_receive {:dag_values, batch}, 1_000

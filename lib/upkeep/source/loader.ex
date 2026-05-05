@@ -62,10 +62,8 @@ defmodule Upkeep.Source.Loader do
     |> attach_unknown_if_empty()
   end
 
-  @doc false
   def read_context, do: Process.get(@context_key)
 
-  @doc false
   def track_dependency(deps) do
     case Process.get(@context_key) do
       %{deps: existing_deps} = context ->
@@ -78,7 +76,6 @@ defmodule Upkeep.Source.Loader do
     end
   end
 
-  @doc false
   def memoized_read(fingerprint, read) when is_function(read, 0) do
     cache = Map.get(Process.get(@context_key), :reads, %{})
 

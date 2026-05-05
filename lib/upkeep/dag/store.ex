@@ -13,11 +13,6 @@ defmodule Upkeep.DAG.Store do
 
   def fetch!(%__MODULE__{values: values}, id), do: Map.fetch!(values, id)
 
-  @doc """
-  Attach an opaque metadata payload to an existing node. Domain code uses this
-  for per-node payloads that aren't computed values (loaders, registration
-  records, telemetry tags).
-  """
   def put_metadata(%__MODULE__{} = store, id, metadata) do
     unless Graph.has_node?(store.graph, id) do
       raise ArgumentError, "unknown DAG node #{inspect(id)}"
@@ -40,20 +35,12 @@ defmodule Upkeep.DAG.Store do
     Map.get(metadata, id, default)
   end
 
-  @doc """
-  Register or update a source node and its value. Returns `{store, changed?}`
-  reporting whether the cached value actually moved.
-  """
   def put_source(%__MODULE__{} = store, id, value, deps \\ []) when is_list(deps) do
     store
     |> ensure_topology(id, :source, deps)
     |> put_value(id, value)
   end
 
-  @doc """
-  Register a derived node and compute its initial value from its deps' cached
-  values.
-  """
   def put_derived(%__MODULE__{} = store, id, deps, compute)
       when is_list(deps) and is_function(compute, 1) do
     store
@@ -62,11 +49,6 @@ defmodule Upkeep.DAG.Store do
     |> compute_and_store(id)
   end
 
-  @doc """
-  Register a derived node without computing or seeding a value. Use when deps
-  may not yet have values — the value will materialize on the first
-  `recompute/3` that touches the node.
-  """
   def register_derived(%__MODULE__{} = store, id, deps, compute)
       when is_list(deps) and is_function(compute, 1) do
     store
@@ -74,10 +56,6 @@ defmodule Upkeep.DAG.Store do
     |> put_compute(id, compute)
   end
 
-  @doc """
-  Register a component node and compute its initial value. Behaves like
-  `put_derived/4` but tags the node kind as `:component`.
-  """
   def put_component(%__MODULE__{} = store, id, deps, compute)
       when is_list(deps) and is_function(compute, 1) do
     store
@@ -86,10 +64,6 @@ defmodule Upkeep.DAG.Store do
     |> compute_and_store(id)
   end
 
-  @doc """
-  Set a value on an existing node without recomputing dependents. Returns
-  `{store, changed?}`.
-  """
   def seed(%__MODULE__{} = store, id, value) do
     unless Graph.has_node?(store.graph, id) do
       raise ArgumentError, "unknown DAG node #{inspect(id)}"
@@ -98,9 +72,6 @@ defmodule Upkeep.DAG.Store do
     put_value(store, id, value)
   end
 
-  @doc """
-  Drop a node and everything downstream of it from both topology and values.
-  """
   def remove_subgraph(%__MODULE__{} = store, root_id) do
     plan = Graph.subgraph_plan(store.graph, root_id)
 
@@ -115,15 +86,6 @@ defmodule Upkeep.DAG.Store do
     end)
   end
 
-  @doc """
-  Walk downstream of `changed_ids` in topological order, recomputing any
-  derived/component node whose deps changed. Returns `{store, %Diff{}}`.
-
-  Options:
-
-    * `:skip` — list of node ids to leave untouched. They appear in
-      `diff.skipped_node_ids` and as boundaries in the diff.
-  """
   def recompute(%__MODULE__{} = store, changed_ids, opts \\ []) do
     changed_ids = MapSet.new(changed_ids)
     skip_ids = opts |> Keyword.get(:skip, []) |> MapSet.new()

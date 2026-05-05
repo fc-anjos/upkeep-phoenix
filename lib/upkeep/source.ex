@@ -45,9 +45,14 @@ defmodule Upkeep.Source do
     Upkeep.Source.Spec.reacts_to_definition(schema, action, fun, __CALLER__)
   end
 
+  @doc false
   def read(value), do: Upkeep.Source.Loader.read(value)
 
+  @doc """
+  Return Upkeep's inferred invalidation coverage for a source and params.
+  """
   def coverage(source, params), do: Upkeep.Source.Loader.coverage(source, params)
 
+  @doc false
   def coverage(source, params, deps), do: Upkeep.Source.Loader.coverage(source, params, deps)
 end

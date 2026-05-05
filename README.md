@@ -133,6 +133,9 @@ to share the test connection after checking out or starting the sandbox owner:
 Upkeep.Test.allow_sandbox(MyApp.Repo)
 ```
 
+After `Upkeep.notify/1`, use `Upkeep.Test.drain/0` before asserting on
+graph-pushed values in synchronous tests.
+
 ## Inspector
 
 The optional inspector package renders a symbolic DAG, source coverage,

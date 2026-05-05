@@ -1,12 +1,29 @@
 defmodule Upkeep.Ecto.Source do
-  @moduledoc false
+  @moduledoc """
+  Ecto-backed source authoring for Upkeep.
+
+  Use this for sources whose value comes from an Ecto query. Upkeep analyzes the
+  query shape, tracks the read through `Upkeep.read/1`, and invalidates cached
+  reads when matching writes are notified.
+
+      defmodule MyApp.Sources.OpenIssues do
+        use Upkeep.Ecto.Source, repo: MyApp.Repo
+
+        import Ecto.Query
+
+        def query(%{project_id: project_id}) do
+          from issue in MyApp.Issue,
+            where: issue.project_id == ^project_id and issue.closed == false
+        end
+      end
+
+  Non-Ecto or opaque reads should use `Upkeep.Source` with `load/1` and
+  explicit invalidators.
+  """
 
   use Boundary,
     top_level?: true,
-    exports: [
-      QueryDeps,
-      RepoCaptureGuard
-    ],
+    exports: [],
     deps: [
       Ecto.Adapters.SQL,
       Ecto.Query,
@@ -27,6 +44,7 @@ defmodule Upkeep.Ecto.Source do
     end
   end
 
+  @doc false
   def read(%Ecto.Query{} = query) do
     case Upkeep.Source.Loader.read_context() do
       %{repo: repo, holder: holder, source: source, params: params} ->
@@ -44,7 +62,7 @@ defmodule Upkeep.Ecto.Source do
           fn ->
             node_id = {:read, repo, fingerprint}
 
-            Upkeep.Invalidation.ReadCache.fetch_or_load(
+            Upkeep.Invalidation.fetch_read(
               node_id,
               deps,
               fn -> repo.all(query) end,
@@ -63,16 +81,19 @@ defmodule Upkeep.Ecto.Source do
 
   def read(value), do: value
 
+  @doc false
   def verify_source!(source, params, opts \\ []) do
     Upkeep.Ecto.Source.RepoCaptureGuard.verify_source!(source, params, opts)
   end
 
+  @doc false
   def query_interest_keys(source, params) when is_atom(source) do
     source
     |> source_query(params)
     |> Upkeep.Ecto.Source.QueryDeps.interest_keys()
   end
 
+  @doc false
   def query_reacts_to?(source, event, params) when is_atom(source) and is_struct(event) do
     deps =
       source
