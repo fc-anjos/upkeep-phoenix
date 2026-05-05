@@ -1,11 +1,11 @@
-defmodule Upkeep.Runtime.Refresh do
+defmodule Upkeep.Internal.Runtime.Refresh do
   @moduledoc false
 
   alias Upkeep.Live.{Ids, Telemetry}
-  alias Upkeep.Runtime.DAGOperations
-  alias Upkeep.Runtime.Effects
-  alias Upkeep.Runtime.SourceLoads
-  alias Upkeep.Runtime.State
+  alias Upkeep.Internal.Runtime.DAGOperations
+  alias Upkeep.Internal.Runtime.Effects
+  alias Upkeep.Internal.Runtime.SourceLoads
+  alias Upkeep.Internal.Runtime.State
   alias Upkeep.Internal.Source.Runtime, as: Source
 
   def refresh(socket, assign_name, source, params) when is_atom(assign_name) do
@@ -53,7 +53,9 @@ defmodule Upkeep.Runtime.Refresh do
         end)
       end)
 
-    {socket, recompute_effects} = Upkeep.Runtime.recompute_derived(socket, changed_source_nodes)
+    {socket, recompute_effects} =
+      Upkeep.Internal.Runtime.recompute_derived(socket, changed_source_nodes)
+
     {:ok, socket, effects ++ recompute_effects}
   end
 

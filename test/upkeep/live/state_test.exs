@@ -1,7 +1,7 @@
-defmodule Upkeep.Runtime.StateTest do
+defmodule Upkeep.Internal.Runtime.StateTest do
   use ExUnit.Case, async: true
 
-  alias Upkeep.Runtime.State
+  alias Upkeep.Internal.Runtime.State
 
   test "stores Upkeep runtime as one socket-private value" do
     socket =

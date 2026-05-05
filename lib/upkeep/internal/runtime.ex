@@ -1,14 +1,14 @@
-defmodule Upkeep.Runtime do
+defmodule Upkeep.Internal.Runtime do
   @moduledoc false
 
   alias Upkeep.Internal.DAG.Store
   alias Upkeep.Live.Ids
-  alias Upkeep.Runtime.DAGOperations
-  alias Upkeep.Runtime.Mount
-  alias Upkeep.Runtime.Push
-  alias Upkeep.Runtime.Refresh
-  alias Upkeep.Runtime.State
-  alias Upkeep.Runtime.Watches
+  alias Upkeep.Internal.Runtime.DAGOperations
+  alias Upkeep.Internal.Runtime.Mount
+  alias Upkeep.Internal.Runtime.Push
+  alias Upkeep.Internal.Runtime.Refresh
+  alias Upkeep.Internal.Runtime.State
+  alias Upkeep.Internal.Runtime.Watches
 
   def sync_current_scope(socket) do
     case Map.fetch(socket.assigns, :current_scope) do

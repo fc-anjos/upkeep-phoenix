@@ -1,8 +1,8 @@
-defmodule Upkeep.Runtime.Effects do
+defmodule Upkeep.Internal.Runtime.Effects do
   @moduledoc false
 
   alias Upkeep.Live.Ids
-  alias Upkeep.Runtime.State
+  alias Upkeep.Internal.Runtime.State
 
   def maybe_register_source(true, source_id, interest_keys, producer) do
     [{:register_source, source_id, interest_keys, producer.source, producer.params}]

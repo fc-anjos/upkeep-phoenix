@@ -1,9 +1,9 @@
-defmodule Upkeep.Runtime.DAGOperations do
+defmodule Upkeep.Internal.Runtime.DAGOperations do
   @moduledoc false
 
   alias Upkeep.Internal.DAG.{Graph, Store}
   alias Upkeep.Live.{Components, Ids, Telemetry}
-  alias Upkeep.Runtime.State
+  alias Upkeep.Internal.Runtime.State
 
   def put_source(socket, source_id, value, deps, metadata \\ nil) do
     node_id = Ids.source_node_id(source_id)

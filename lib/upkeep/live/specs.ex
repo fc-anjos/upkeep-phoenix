@@ -2,12 +2,12 @@ defmodule Upkeep.Live.Specs do
   @moduledoc false
 
   alias Upkeep.Live.Ids
-  alias Upkeep.Runtime.DAGOperations
-  alias Upkeep.Runtime.NodeSpec
-  alias Upkeep.Runtime.Materializer
-  alias Upkeep.Runtime.Producer
-  alias Upkeep.Runtime.ScopeCapture
-  alias Upkeep.Runtime.State
+  alias Upkeep.Internal.Runtime.DAGOperations
+  alias Upkeep.Internal.Runtime.NodeSpec
+  alias Upkeep.Internal.Runtime.Materializer
+  alias Upkeep.Internal.Runtime.Producer
+  alias Upkeep.Internal.Runtime.ScopeCapture
+  alias Upkeep.Internal.Runtime.State
   alias Upkeep.Internal.Source.Runtime, as: Source
 
   def source(assign_name, source, params, component, source_location \\ nil)

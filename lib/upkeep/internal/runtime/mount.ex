@@ -1,4 +1,4 @@
-defmodule Upkeep.Runtime.Mount do
+defmodule Upkeep.Internal.Runtime.Mount do
   @moduledoc false
 
   alias Upkeep.Internal.DAG.Store
@@ -9,15 +9,15 @@ defmodule Upkeep.Runtime.Mount do
     Telemetry
   }
 
-  alias Upkeep.Runtime.DAGOperations
-  alias Upkeep.Runtime.Effects
-  alias Upkeep.Runtime.Execution.Shared
-  alias Upkeep.Runtime.Materializer
-  alias Upkeep.Runtime.NodeSpec
-  alias Upkeep.Runtime.Producer
-  alias Upkeep.Runtime.SourceLoads
-  alias Upkeep.Runtime.State
-  alias Upkeep.Runtime.Subscriptions
+  alias Upkeep.Internal.Runtime.DAGOperations
+  alias Upkeep.Internal.Runtime.Effects
+  alias Upkeep.Internal.Runtime.Execution.Shared
+  alias Upkeep.Internal.Runtime.Materializer
+  alias Upkeep.Internal.Runtime.NodeSpec
+  alias Upkeep.Internal.Runtime.Producer
+  alias Upkeep.Internal.Runtime.SourceLoads
+  alias Upkeep.Internal.Runtime.State
+  alias Upkeep.Internal.Runtime.Subscriptions
 
   def dispatch(socket, %NodeSpec{kind: :source, producer: %Producer.Source{} = producer} = spec) do
     %Materializer.Assign{assign_name: assign_name} = single_materializer(spec)

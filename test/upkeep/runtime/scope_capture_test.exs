@@ -1,7 +1,7 @@
-defmodule Upkeep.Runtime.ScopeCaptureTest do
+defmodule Upkeep.Internal.Runtime.ScopeCaptureTest do
   use ExUnit.Case, async: false
 
-  alias Upkeep.Runtime.ScopeCapture
+  alias Upkeep.Internal.Runtime.ScopeCapture
 
   test "raise policy raises implicit scope errors" do
     with_policy(:raise, fn ->

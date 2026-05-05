@@ -1,4 +1,4 @@
-defmodule Upkeep.Runtime.Subscriptions do
+defmodule Upkeep.Internal.Runtime.Subscriptions do
   @moduledoc false
 
   alias Upkeep.Internal.Coordinator.Graph

@@ -1,10 +1,10 @@
-defmodule Upkeep.Runtime.Push do
+defmodule Upkeep.Internal.Runtime.Push do
   @moduledoc false
 
   alias Upkeep.Live.Ids
-  alias Upkeep.Runtime.DAGOperations
-  alias Upkeep.Runtime.Effects
-  alias Upkeep.Runtime.State
+  alias Upkeep.Internal.Runtime.DAGOperations
+  alias Upkeep.Internal.Runtime.Effects
+  alias Upkeep.Internal.Runtime.State
 
   def apply_dag_values(socket, pairs) when is_list(pairs) do
     {socket, changed_nodes, shared_nodes, effects} =
@@ -30,7 +30,7 @@ defmodule Upkeep.Runtime.Push do
       end)
 
     {socket, recompute_effects} =
-      Upkeep.Runtime.recompute_derived(socket, changed_nodes, skip: shared_nodes)
+      Upkeep.Internal.Runtime.recompute_derived(socket, changed_nodes, skip: shared_nodes)
 
     {:ok, socket, effects ++ recompute_effects}
   end
@@ -38,7 +38,9 @@ defmodule Upkeep.Runtime.Push do
   def apply_dag_value(socket, source_id, value) do
     case put_pushed_value(socket, source_id, value) do
       {_kind, socket, local_node_id, true, assign_effects} ->
-        {socket, recompute_effects} = Upkeep.Runtime.recompute_derived(socket, [local_node_id])
+        {socket, recompute_effects} =
+          Upkeep.Internal.Runtime.recompute_derived(socket, [local_node_id])
+
         {:ok, socket, assign_effects ++ recompute_effects}
 
       {_kind, socket, _local_node_id, false, assign_effects} ->
