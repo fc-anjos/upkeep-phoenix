@@ -1,10 +1,10 @@
-defmodule Upkeep.Source.ReadCacheTest do
+defmodule Upkeep.Invalidation.ReadCacheTest do
   use Upkeep.TestSupport.DataCase, async: false
 
   import Ecto.Query
 
   alias Upkeep.Ecto.Source.QueryDeps
-  alias Upkeep.Source.ReadCache, as: ReadCache
+  alias Upkeep.Invalidation.ReadCache, as: ReadCache
   alias Upkeep.TestSupport.Repo
 
   defmodule Project do
@@ -229,7 +229,7 @@ defmodule Upkeep.Source.ReadCacheTest do
     assert is_pid(watcher)
 
     event = Upkeep.Change.updated(%Project{id: 1, name: "alpha2"})
-    send(watcher, {:upkeep_graph_notify, event})
+    send(watcher, {:upkeep_invalidation, :remote@nohost, event})
 
     # Wait for the cast to be processed.
     _ = :sys.get_state(watcher)
@@ -280,7 +280,9 @@ defmodule Upkeep.Source.ReadCacheTest do
       import Ecto.Query
 
       def load(params) do
-        Upkeep.read(from(p in Upkeep.Source.ReadCacheTest.Project, where: p.id == ^params.id))
+        Upkeep.read(
+          from(p in Upkeep.Invalidation.ReadCacheTest.Project, where: p.id == ^params.id)
+        )
       end
 
       def reacts_to?(_event, _params), do: false
@@ -292,13 +294,16 @@ defmodule Upkeep.Source.ReadCacheTest do
     {_value, _deps} = Upkeep.Source.Loader.load(HolderSource, %{id: 1})
     assert ReadCache.count() == 1
 
-    Upkeep.Source.ReadCache.release(Upkeep.Source.Identity.source_id(HolderSource, %{id: 1}))
+    Upkeep.Invalidation.ReadCache.release(
+      Upkeep.Source.Identity.source_id(HolderSource, %{id: 1})
+    )
+
     assert ReadCache.count() == 0
   end
 
   test "SourceInvalidator is a member of the cluster notification group" do
     members =
-      Group.members(Upkeep.Coordinator.Graph.group(), Upkeep.Coordinator.Graph.notification_key())
+      Group.members(Upkeep.Invalidation.Bus.group(), Upkeep.Invalidation.Bus.key())
 
     pids = Enum.map(members, fn {pid, _meta} -> pid end)
     assert Process.whereis(Upkeep.Invalidation.SourceInvalidator) in pids

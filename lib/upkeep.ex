@@ -76,8 +76,8 @@ defmodule Upkeep do
     children = [
       Upkeep.Observability,
       {Group, name: Upkeep.Group, log: false},
-      {Upkeep.Coordinator.Graph, []},
-      Upkeep.Invalidation.SourceInvalidator
+      {Upkeep.Invalidation, []},
+      {Upkeep.Coordinator.Graph, []}
     ]
 
     Supervisor.init(children, strategy: :one_for_one)

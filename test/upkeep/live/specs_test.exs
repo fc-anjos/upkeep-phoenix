@@ -13,7 +13,7 @@ defmodule Upkeep.Live.SpecsTest do
   defmodule ProjectIssues do
     use Upkeep.Source
 
-    query(fn _params -> [] end)
+    def load(_params), do: []
 
     invalidated_by(Issue, :updated, on: :project_id)
   end

@@ -16,7 +16,7 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
   @moduletag :multi_node
 
   alias Upkeep.Coordinator.Graph
-  alias Upkeep.Source.ReadCache, as: ReadCache
+  alias Upkeep.Invalidation.ReadCache, as: ReadCache
 
   defmodule FakeSchema, do: defstruct([:id])
 

@@ -1,4 +1,4 @@
-defmodule Upkeep.Source.ReadCache do
+defmodule Upkeep.Invalidation.ReadCache do
   @moduledoc false
 
   alias Upkeep.SingleFlight.Registry
@@ -131,7 +131,7 @@ defmodule Upkeep.Source.ReadCache do
   def count, do: :ets.info(@values, :size)
 
   @doc false
-  def coalescer_name, do: Upkeep.Source.ReadCache.Coalescer
+  def coalescer_name, do: Upkeep.Invalidation.ReadCache.Coalescer
 
   defp evict(node_id, deps) do
     :ets.delete(@values, node_id)

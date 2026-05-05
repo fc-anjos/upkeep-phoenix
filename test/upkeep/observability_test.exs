@@ -10,10 +10,10 @@ defmodule Upkeep.ObservabilityTest do
   defmodule ProjectIssues do
     use Upkeep.Source
 
-    query(fn s ->
+    def load(s) do
       [{_key, value}] = :ets.lookup(Upkeep.ObservabilityTest, {:issues, s.project_id})
       value
-    end)
+    end
 
     invalidated_by(Issue, :updated, on: :project_id)
   end

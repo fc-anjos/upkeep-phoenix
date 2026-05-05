@@ -12,7 +12,7 @@ defmodule Upkeep.RuntimeResultTest do
   defmodule ProjectIssues do
     use Upkeep.Source
 
-    query(fn _params -> [:issue] end)
+    def load(_params), do: [:issue]
 
     invalidated_by(Issue, :updated, on: :project_id)
   end

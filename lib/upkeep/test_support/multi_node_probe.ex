@@ -7,7 +7,7 @@ defmodule Upkeep.TestSupport.MultiNodeProbe do
   """
   def notification_group_node_view do
     Upkeep.Coordinator.Graph.group()
-    |> Group.members(Upkeep.Coordinator.Graph.notification_key())
+    |> Group.members(Upkeep.Invalidation.Bus.key())
     |> Enum.map(fn {pid, _meta} -> node(pid) end)
     |> Enum.uniq()
   end

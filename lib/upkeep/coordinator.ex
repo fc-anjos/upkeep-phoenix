@@ -7,6 +7,7 @@ defmodule Upkeep.Coordinator do
     deps: [
       Upkeep.Change,
       Upkeep.DAG,
+      Upkeep.Invalidation,
       Upkeep.Source,
       Upkeep.SingleFlight,
       Group

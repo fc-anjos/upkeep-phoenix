@@ -5,6 +5,7 @@ defmodule Upkeep.Coordinator.GraphTest do
 
   alias Upkeep.Coordinator.Graph
   alias Upkeep.Coordinator.Graph.Notifier
+  alias Upkeep.Invalidation.Bus
 
   defmodule Ev do
     defstruct [:id, :tenant_id]
@@ -13,7 +14,7 @@ defmodule Upkeep.Coordinator.GraphTest do
   defmodule NoRetrySource do
     use Upkeep.Source, retry: false
 
-    query(fn params ->
+    def load(params) do
       count =
         :ets.update_counter(params.table, {:loads, params.id}, {2, 1}, {{:loads, params.id}, 0})
 
@@ -21,7 +22,7 @@ defmodule Upkeep.Coordinator.GraphTest do
         1 -> :stable_value
         _ -> raise "no retry source failed"
       end
-    end)
+    end
 
     invalidated_by(Upkeep.Coordinator.GraphTest.Ev, on: [:id, :tenant_id])
   end
@@ -29,7 +30,7 @@ defmodule Upkeep.Coordinator.GraphTest do
   defmodule OneRetrySource do
     use Upkeep.Source, retry: [max_attempts: 1, base_delay_ms: 0, max_delay_ms: 0]
 
-    query(fn params ->
+    def load(params) do
       count =
         :ets.update_counter(params.table, {:loads, params.id}, {2, 1}, {{:loads, params.id}, 0})
 
@@ -37,7 +38,7 @@ defmodule Upkeep.Coordinator.GraphTest do
         1 -> :stable_value
         _ -> raise "one retry source failed"
       end
-    end)
+    end
 
     invalidated_by(Upkeep.Coordinator.GraphTest.Ev, on: [:id, :tenant_id])
   end
@@ -53,19 +54,19 @@ defmodule Upkeep.Coordinator.GraphTest do
   end
 
   describe "source nodes" do
-    test "notify delegates cluster fanout to the Group notification group" do
+    test "notify delegates cluster fanout to the invalidation bus" do
       event = %Ev{id: 200, tenant_id: 1}
 
-      assert Group.member_count(Graph.group(), Graph.notification_key()) >= 2
+      assert Group.member_count(Bus.group(), Bus.key()) >= 2
       assert Group.member_count(Graph.group(), "graph/shard/") >= Graph.shard_count()
 
-      :ok = Group.join(Graph.group(), Graph.notification_key(), %{role: :probe})
+      :ok = Group.join(Bus.group(), Bus.key(), %{role: :probe})
 
       Graph.notify(event)
 
-      assert_receive {:upkeep_graph_notify, _origin, ^event}, 1_000
+      assert_receive {:upkeep_invalidation, _origin, ^event}, 1_000
 
-      :ok = Group.leave(Graph.group(), Graph.notification_key())
+      :ok = Group.leave(Bus.group(), Bus.key())
     end
 
     test "load_fn runs once per coalesced event; subscribers receive {:dag_values, ...}" do
@@ -158,11 +159,11 @@ defmodule Upkeep.Coordinator.GraphTest do
       Graph.unregister(node_id)
     end
 
-    test "notifier ignores local Group echoes" do
+    test "notifier routes local invalidation bus events" do
       counter = :counters.new(1, [:atomics])
       event = %Ev{id: 203, tenant_id: 1}
       keys = [narrow_key(event)]
-      node_id = {:local_echo_ignored, System.unique_integer()}
+      node_id = {:local_bus_event_routed, System.unique_integer()}
 
       :ok =
         Graph.register_loader(node_id, keys, fn ->
@@ -170,16 +171,16 @@ defmodule Upkeep.Coordinator.GraphTest do
           {:loaded, keys}
         end)
 
-      send(Process.whereis(Notifier), {:upkeep_graph_notify, node(), event})
+      send(Process.whereis(Notifier), {:upkeep_invalidation, node(), event})
       :ok = Graph.drain()
 
-      assert :counters.get(counter, 1) == 0
-      refute_received {:dag_values, [{^node_id, _}]}
+      assert :counters.get(counter, 1) == 1
+      assert_receive {:dag_values, [{^node_id, :loaded}]}, 1_000
 
       Graph.unregister(node_id)
     end
 
-    test "notifier routes remote Group events" do
+    test "notifier routes remote invalidation bus events" do
       attach_telemetry([[:upkeep, :graph, :notifier, :flush]])
 
       counter = :counters.new(1, [:atomics])
@@ -193,7 +194,7 @@ defmodule Upkeep.Coordinator.GraphTest do
           {:loaded, keys}
         end)
 
-      send(Process.whereis(Notifier), {:upkeep_graph_notify, :remote@nohost, event})
+      send(Process.whereis(Notifier), {:upkeep_invalidation, :remote@nohost, event})
       :ok = Graph.drain()
 
       assert_receive {:telemetry, [:upkeep, :graph, :notifier, :flush], %{count: 1},

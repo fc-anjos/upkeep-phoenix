@@ -14,10 +14,10 @@ defmodule Upkeep.LiveRefreshTest do
   defmodule ProjectIssues do
     use Upkeep.Source
 
-    query(fn s ->
+    def load(s) do
       Upkeep.LiveRefreshTest.bump_load({:loads, :issues, s.project_id})
       Upkeep.LiveRefreshTest.table_value({:issues, s.project_id})
-    end)
+    end
 
     invalidated_by(Issue, :updated, on: :project_id)
   end
@@ -25,10 +25,10 @@ defmodule Upkeep.LiveRefreshTest do
   defmodule ProjectActivity do
     use Upkeep.Source
 
-    query(fn s ->
+    def load(s) do
       Upkeep.LiveRefreshTest.bump_load({:loads, :activity, s.project_id})
       Upkeep.LiveRefreshTest.table_value({:activity, s.project_id})
-    end)
+    end
 
     invalidated_by(Issue, :updated, on: :project_id)
     invalidated_by(Comment, :inserted, on: :project_id)
@@ -37,14 +37,14 @@ defmodule Upkeep.LiveRefreshTest do
   defmodule FailingIssues do
     use Upkeep.Source
 
-    query(fn s ->
+    def load(s) do
       Upkeep.LiveRefreshTest.bump_load({:loads, :failing, s.project_id})
 
       case Upkeep.LiveRefreshTest.table_value({:failing, s.project_id}) do
         :raise -> raise "source failed"
         value -> value
       end
-    end)
+    end
 
     invalidated_by(Issue, :updated, on: :project_id)
   end
@@ -52,10 +52,10 @@ defmodule Upkeep.LiveRefreshTest do
   defmodule IssueComments do
     use Upkeep.Source
 
-    query(fn s ->
+    def load(s) do
       Upkeep.LiveRefreshTest.bump_load({:loads, :comments, s.issue_id})
       Upkeep.LiveRefreshTest.table_value({:comments, s.issue_id})
-    end)
+    end
 
     invalidated_by(Comment, :inserted, on: :issue_id)
   end
@@ -63,10 +63,10 @@ defmodule Upkeep.LiveRefreshTest do
   defmodule ScopedIssues do
     use Upkeep.Source
 
-    query(fn s ->
+    def load(s) do
       Upkeep.LiveRefreshTest.bump_load({:loads, :scoped_issues, s.user_id})
       Upkeep.LiveRefreshTest.table_value({:scoped_issues, s.user_id})
-    end)
+    end
 
     invalidated_by(Issue, :updated, on: :issue_id, as: :user_id)
   end
@@ -74,10 +74,10 @@ defmodule Upkeep.LiveRefreshTest do
   defmodule ScopedActivity do
     use Upkeep.Source
 
-    query(fn s ->
+    def load(s) do
       Upkeep.LiveRefreshTest.bump_load({:loads, :scoped_activity, s.user_id})
       Upkeep.LiveRefreshTest.table_value({:scoped_activity, s.user_id})
-    end)
+    end
 
     invalidated_by(Comment, :inserted, on: :issue_id, as: :user_id)
   end
@@ -85,7 +85,7 @@ defmodule Upkeep.LiveRefreshTest do
   defmodule BlockingScopedIssues do
     use Upkeep.Source
 
-    query(fn s ->
+    def load(s) do
       send(s.test_pid, {:blocking_load_started, self()})
 
       receive do
@@ -96,7 +96,7 @@ defmodule Upkeep.LiveRefreshTest do
 
       Upkeep.LiveRefreshTest.bump_load({:loads, :scoped_issues, s.user_id})
       Upkeep.LiveRefreshTest.table_value({:scoped_issues, s.user_id})
-    end)
+    end
 
     invalidated_by(Issue, :updated, on: :issue_id, as: :user_id)
   end

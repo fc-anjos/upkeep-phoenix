@@ -14,10 +14,10 @@ defmodule Upkeep.SourceTest do
   defmodule BoardColumns do
     use Upkeep.Source
 
-    query(fn s ->
+    def load(s) do
       [{_key, value}] = :ets.lookup(Upkeep.SourceTest, {:board_columns, s.project_id})
       value
-    end)
+    end
 
     invalidated_by(Issue, :updated, on: :project_id)
     invalidated_by(Issue, :inserted, on: :project_id)
@@ -27,10 +27,10 @@ defmodule Upkeep.SourceTest do
   defmodule MyIssues do
     use Upkeep.Source
 
-    query(fn s ->
+    def load(s) do
       [{_key, value}] = :ets.lookup(Upkeep.SourceTest, {:my_issues, s.project_id, s.user_id})
       value
-    end)
+    end
 
     invalidated_by(Issue, :updated, on: [:project_id, :assignee_id], as: [:project_id, :user_id])
 
@@ -43,7 +43,7 @@ defmodule Upkeep.SourceTest do
   defmodule ColumnIssues do
     use Upkeep.Source
 
-    query(fn _s -> [] end)
+    def load(_params), do: []
 
     reacts_to(Issue, :updated, fn change, s ->
       Upkeep.Change.changed?(change, :column_id) and

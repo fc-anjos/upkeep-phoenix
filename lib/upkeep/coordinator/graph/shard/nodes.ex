@@ -3,7 +3,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
 
   alias Upkeep.Coordinator.Graph.Shard.{Loaders, Retries}
   alias Upkeep.Coordinator.Node
-  alias Upkeep.Source.ReadCache
+  alias Upkeep.Invalidation.ReadCache
   alias Upkeep.Coordinator.Subscriptions
   alias Upkeep.Coordinator.Topology
   alias Upkeep.DAG.Store

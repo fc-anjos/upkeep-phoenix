@@ -4,7 +4,6 @@ defmodule Upkeep.Coordinator.Graph.Notifier do
   use GenServer
 
   alias Upkeep.Coordinator.Shards
-  alias Upkeep.Coordinator.Subscriptions
   alias Upkeep.Coordinator.Topology
 
   @max_batch_messages 1_000
@@ -13,17 +12,13 @@ defmodule Upkeep.Coordinator.Graph.Notifier do
     GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
   end
 
-  def notify(event) when is_struct(event) do
-    GenServer.cast(__MODULE__, {:notify, event})
-  end
-
   def drain do
     GenServer.call(__MODULE__, :drain, 60_000)
   end
 
   @impl true
   def init(_) do
-    :ok = Subscriptions.join_notifications(:graph_notifier)
+    :ok = Upkeep.Invalidation.Bus.join(:graph_notifier)
     {:ok, new_state()}
   end
 
@@ -39,25 +34,11 @@ defmodule Upkeep.Coordinator.Graph.Notifier do
   end
 
   @impl true
-  def handle_cast({:notify, event}, state) do
-    state =
-      state
-      |> enqueue(event)
-      |> drain_and_flush()
-
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_info({:upkeep_graph_notify, origin, _event}, state) when origin == node() do
-    {:noreply, state}
-  end
-
-  def handle_info({:upkeep_graph_notify, _origin, event}, state) do
+  def handle_info({:upkeep_invalidation, _origin, event}, state) do
     {:noreply, state |> enqueue(event) |> drain_and_flush()}
   end
 
-  def handle_info({:upkeep_graph_notify, event}, state) do
+  def handle_info({:upkeep_invalidation, event}, state) do
     {:noreply, state |> enqueue(event) |> drain_and_flush()}
   end
 
@@ -87,20 +68,12 @@ defmodule Upkeep.Coordinator.Graph.Notifier do
 
   defp drain_mailbox(state, limit, count) do
     receive do
-      {:"$gen_cast", {:notify, event}} ->
+      {:upkeep_invalidation, _origin, event} ->
         state
         |> enqueue(event)
         |> drain_mailbox(limit, count + 1)
 
-      {:upkeep_graph_notify, origin, _event} when origin == node() ->
-        drain_mailbox(state, limit, count + 1)
-
-      {:upkeep_graph_notify, _origin, event} ->
-        state
-        |> enqueue(event)
-        |> drain_mailbox(limit, count + 1)
-
-      {:upkeep_graph_notify, event} ->
+      {:upkeep_invalidation, event} ->
         state
         |> enqueue(event)
         |> drain_mailbox(limit, count + 1)

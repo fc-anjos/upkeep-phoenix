@@ -13,6 +13,7 @@ defmodule Upkeep.Ecto.Source do
       Ecto.SubQuery,
       Logger,
       Upkeep.Change,
+      Upkeep.Invalidation,
       Upkeep.Source,
       {Mix, :compile}
     ],
@@ -43,7 +44,7 @@ defmodule Upkeep.Ecto.Source do
           fn ->
             node_id = {:read, repo, fingerprint}
 
-            Upkeep.Source.ReadCache.fetch_or_load(
+            Upkeep.Invalidation.ReadCache.fetch_or_load(
               node_id,
               deps,
               fn -> repo.all(query) end,

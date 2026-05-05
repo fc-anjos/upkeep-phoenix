@@ -22,7 +22,6 @@ defmodule Upkeep.Coordinator.Graph do
   end
 
   defdelegate group, to: Subscriptions
-  defdelegate notification_key, to: Subscriptions
 
   @doc """
   Register a source node. Caller pid joins as subscriber via `Group.join/4`.
@@ -100,8 +99,7 @@ defmodule Upkeep.Coordinator.Graph do
   defdelegate subscribed?(node_id, pid \\ nil), to: Subscriptions
 
   def notify(event) when is_struct(event) do
-    Notifier.notify(event)
-    Subscriptions.dispatch_notification(event)
+    Upkeep.Invalidation.dispatch(event)
   end
 
   @doc "Synchronously drain all shards."

@@ -102,12 +102,12 @@ defmodule Upkeep.Coordinator.Graph.Shard do
   def handle_info(:flush, state), do: {:noreply, Flush.flush(state)}
 
   @impl true
-  def handle_info({:upkeep_graph_notify, _origin, _event}, state) do
+  def handle_info({:upkeep_invalidation, _origin, _event}, state) do
     {:noreply, state}
   end
 
   @impl true
-  def handle_info({:upkeep_graph_notify, _event}, state), do: {:noreply, state}
+  def handle_info({:upkeep_invalidation, _event}, state), do: {:noreply, state}
 
   @impl true
   def handle_info({:retry_source, node_id, timer_ref}, state) do

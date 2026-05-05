@@ -5,7 +5,6 @@ defmodule Upkeep.Coordinator.Supervisor do
 
   alias Upkeep.Coordinator.Shards
   alias Upkeep.Coordinator.Topology
-  alias Upkeep.Source.ReadCache
 
   def start_link(opts \\ []) do
     Supervisor.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
@@ -17,12 +16,8 @@ defmodule Upkeep.Coordinator.Supervisor do
     Topology.put_shard_count(shards)
     Topology.init_tables()
 
-    Enum.each(ReadCache.table_specs(), fn {name, opts} -> ensure_table(name, opts) end)
-
     children =
       [
-        {Upkeep.SingleFlight.Registry,
-         name: Upkeep.Source.ReadCache.Coalescer, telemetry_prefix: [:upkeep, :read_nodes]},
         Upkeep.Coordinator.Graph.Notifier,
         {Task.Supervisor, name: Shards.task_sup()}
       ] ++ shard_child_specs(shards)
@@ -36,13 +31,6 @@ defmodule Upkeep.Coordinator.Supervisor do
         {Upkeep.Coordinator.Graph.Shard, name: Shards.name(idx), idx: idx},
         id: {Upkeep.Coordinator.Graph.Shard, idx}
       )
-    end
-  end
-
-  defp ensure_table(name, opts) do
-    case :ets.info(name) do
-      :undefined -> :ets.new(name, opts)
-      _ -> :ok
     end
   end
 end

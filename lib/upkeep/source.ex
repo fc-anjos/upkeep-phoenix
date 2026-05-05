@@ -15,12 +15,10 @@ defmodule Upkeep.Source do
       Identity,
       Keys,
       Loader,
-      Reactivity,
-      ReadCache
+      Reactivity
     ],
     deps: [
       Upkeep.Change,
-      Upkeep.SingleFlight,
       Logger
     ],
     type: :strict
@@ -29,10 +27,6 @@ defmodule Upkeep.Source do
     quote do
       use Upkeep.Source.Spec, unquote(opts)
     end
-  end
-
-  defmacro query(fun) do
-    Upkeep.Source.Spec.query_definition(fun)
   end
 
   defmacro invalidated_by(notification, opts) do

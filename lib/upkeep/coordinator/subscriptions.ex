@@ -2,11 +2,9 @@ defmodule Upkeep.Coordinator.Subscriptions do
   @moduledoc false
 
   @group Upkeep.Group
-  @notification_key "graph/notifications"
   @source_prefix "graph/source/"
 
   def group, do: @group
-  def notification_key, do: @notification_key
 
   def subscribe(node_id, meta \\ %{kind: :lv}) do
     case Group.join(@group, source_key(node_id), meta) do
@@ -32,17 +30,6 @@ defmodule Upkeep.Coordinator.Subscriptions do
   def subscribed?(node_id, pid \\ nil) do
     pid = pid || self()
     MapSet.member?(subscribers(node_id), pid)
-  end
-
-  def join_notifications(kind) when is_atom(kind) do
-    case Group.join(@group, @notification_key, %{kind: kind}) do
-      :ok -> :ok
-      :already_joined -> :ok
-    end
-  end
-
-  def dispatch_notification(event) do
-    Group.dispatch(@group, @notification_key, {:upkeep_graph_notify, node(), event})
   end
 
   def monitor_sources do

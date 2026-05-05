@@ -12,7 +12,7 @@ defmodule Upkeep.Source.Spec do
 
     quote bind_quoted: [repo: repo, retry: retry, query_adapter: query_adapter] do
       import Upkeep.Source,
-        only: [query: 1, invalidated_by: 2, invalidated_by: 3, reacts_to: 2, reacts_to: 3]
+        only: [invalidated_by: 2, invalidated_by: 3, reacts_to: 2, reacts_to: 3]
 
       @upkeep_repo repo
       @upkeep_retry retry
@@ -20,13 +20,6 @@ defmodule Upkeep.Source.Spec do
       Module.register_attribute(__MODULE__, :upkeep_invalidators, accumulate: true)
       Module.register_attribute(__MODULE__, :upkeep_reactors, accumulate: true)
       @before_compile Upkeep.Source.Spec
-    end
-  end
-
-  @doc false
-  def query_definition(fun) do
-    quote do
-      def load(params), do: unquote(fun).(params)
     end
   end
 
@@ -68,6 +61,12 @@ defmodule Upkeep.Source.Spec do
     defines_load? = Module.defines?(env.module, {:load, 1})
     defines_query? = Module.defines?(env.module, {:query, 1})
     defines_sharing_partition? = Module.defines?(env.module, {:__upkeep_sharing_partition__, 1})
+
+    if defines_query? and is_nil(query_adapter) do
+      raise ArgumentError,
+            "#{inspect(env.module)} defines query/1 but uses Upkeep.Source. " <>
+              "Use load/1 for generic sources or use Upkeep.Ecto.Source for Ecto-backed query sources."
+    end
 
     partition_fields =
       invalidators |> Enum.flat_map(fn {_notification, _on, as} -> as end) |> Enum.uniq()
@@ -140,14 +139,6 @@ defmodule Upkeep.Source.Spec do
               params
               |> __MODULE__.query()
               |> unquote(query_adapter).read()
-            end
-          end
-
-        defines_query? ->
-          quote do
-            def load(_params) do
-              raise ArgumentError,
-                    "#{inspect(__MODULE__)} defines query/1 but uses Upkeep.Source without a query adapter. Use Upkeep.Ecto.Source for Ecto-backed query sources."
             end
           end
 
