@@ -10,7 +10,7 @@ defmodule Upkeep.Live.Inspector.Components do
     <div
       id="upkeep-inspector"
       class={[
-        "grid h-screen min-h-[720px] grid-rows-[56px_minmax(0,1fr)] overflow-hidden bg-neutral-50 text-[13px] text-neutral-950 antialiased",
+        "grid h-screen min-h-[720px] grid-rows-[56px_minmax(0,1fr)] overflow-hidden bg-neutral-50 text-sm text-neutral-950 antialiased",
         "[font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe_UI',system-ui,sans-serif]",
         "max-[1100px]:h-auto max-[1100px]:min-h-screen max-[1100px]:overflow-visible"
       ]}
@@ -216,39 +216,14 @@ defmodule Upkeep.Live.Inspector.Components do
 
   defp header(assigns) do
     ~H"""
-    <header class="flex items-center gap-3.5 border-b border-neutral-200 bg-white px-5">
-      <div
-        class="flex h-[22px] w-[22px] items-center justify-center rounded-[5px] bg-[radial-gradient(circle_at_30%_30%,oklch(0.55_0.15_250),oklch(0.45_0.16_260))]"
-        aria-hidden="true"
-      >
-        <svg width="14" height="14" viewBox="0 0 14 14">
-          <circle cx="3" cy="3" r="1.5" fill="white" />
-          <circle cx="11" cy="3" r="1.5" fill="white" />
-          <circle cx="7" cy="11" r="1.5" fill="white" />
-          <line x1="3" y1="3" x2="7" y2="11" stroke="white" stroke-width="0.8" />
-          <line x1="11" y1="3" x2="7" y2="11" stroke="white" stroke-width="0.8" />
-        </svg>
-      </div>
-
+    <header class="flex items-center gap-3 border-b border-neutral-200 bg-white px-5">
       <div class="min-w-0">
-        <h1 class="m-0 text-[15px] font-semibold leading-tight text-neutral-950">
+        <h1 class="m-0 text-sm font-semibold leading-tight text-neutral-950">
           Upkeep Inspector
         </h1>
         <div class="mt-0.5 truncate text-xs text-neutral-600">
           {@document.live_view.view_label || "Phoenix LiveView runtime"} - {@document.summary.data_sentence}
         </div>
-      </div>
-
-      <div class="ml-auto flex items-center gap-1.5 max-[760px]:hidden">
-        <span class="inline-flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-2 py-1 font-mono text-[11px] leading-none text-neutral-600">
-          <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500"></span> real LiveView
-        </span>
-        <span class="rounded-full border border-neutral-200 bg-white px-2 py-1 font-mono text-[11px] leading-none text-neutral-600">
-          runtime snapshot
-        </span>
-        <span class="rounded-full border border-neutral-200 bg-white px-2 py-1 font-mono text-[11px] leading-none text-neutral-600">
-          telemetry-backed
-        </span>
       </div>
     </header>
     """
@@ -256,16 +231,14 @@ defmodule Upkeep.Live.Inspector.Components do
 
   defp tab_label_class(extra) do
     [
-      "pointer-events-none z-10 row-start-1 flex items-center justify-center px-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 transition-colors",
-      "max-[760px]:text-[10px]",
+      "pointer-events-none z-10 row-start-1 flex items-center justify-center px-2 text-xs font-semibold uppercase text-neutral-500",
       extra
     ]
   end
 
   defp tab_radio_class(extra) do
     [
-      "z-0 row-start-1 h-full w-full cursor-pointer appearance-none border-b border-r border-neutral-200 bg-neutral-100 transition-colors hover:bg-white",
-      "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-neutral-950",
+      "z-0 row-start-1 h-full w-full cursor-pointer appearance-none border-b border-r border-neutral-200 bg-neutral-100 hover:bg-white",
       extra
     ]
   end

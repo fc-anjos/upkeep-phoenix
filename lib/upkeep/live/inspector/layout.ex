@@ -4,6 +4,9 @@ defmodule Upkeep.Live.Inspector.Layout do
   alias Upkeep.Introspection
   alias Upkeep.Live.Inspector.Format
 
+  @accent "#2563eb"
+  @neutral_border "#d4d4d4"
+
   def build(dag, activity) do
     node_width = 176
     node_height = 64
@@ -67,11 +70,8 @@ defmodule Upkeep.Live.Inspector.Layout do
           %{
             path: edge_path(from, to),
             active?: active?,
-            marker: if(active?, do: "url(#upkeep-arrow-active)", else: "url(#upkeep-arrow)"),
-            stroke: if(active?, do: "oklch(0.55 0.15 250)", else: "#bdbdbd"),
-            width: if(active?, do: 1.6, else: 1.0),
-            opacity: if(active?, do: 0.95, else: 0.72),
-            dash: if(active?, do: "4 4", else: nil)
+            stroke: if(active?, do: @accent, else: "#bdbdbd"),
+            width: if(active?, do: 1.5, else: 1.0)
           }
         ]
       else
@@ -99,6 +99,7 @@ defmodule Upkeep.Live.Inspector.Layout do
   defp decorate_node(node, activity) do
     state = node_state(node.id, activity)
     scope = Map.get(activity.scopes, node.id, :unknown)
+    active? = Format.state_active?(state)
 
     node
     |> Map.put(:inspect_dom_id, "#{node.dom_id}-inspect")
@@ -108,10 +109,8 @@ defmodule Upkeep.Live.Inspector.Layout do
     |> Map.put(:scope, scope)
     |> Map.put(:state, state)
     |> Map.put(:state_label, Format.state_label(state))
-    |> Map.put(:fill, node_fill(state))
-    |> Map.put(:stroke, node_stroke(state))
-    |> Map.put(:pulse_class, pulse_class(state))
-    |> Map.put(:reason, reason(node, state))
+    |> Map.put(:fill, "#ffffff")
+    |> Map.put(:stroke, if(active?, do: @accent, else: @neutral_border))
     |> maybe_put_step(Map.get(activity.steps, node.id))
   end
 
@@ -138,38 +137,6 @@ defmodule Upkeep.Live.Inspector.Layout do
 
     "M #{x1},#{y1} C #{x1},#{y1 + dy * 0.5} #{x2},#{y2 - dy * 0.5} #{x2},#{y2}"
   end
-
-  defp reason(node, :changed_root), do: "#{node.detail} was reported as a changed source root."
-  defp reason(node, :changed), do: "#{node.detail} recomputed and the symbolic assign changed."
-
-  defp reason(node, :recompute),
-    do: "#{node.detail} recomputed because an upstream dependency moved."
-
-  defp reason(node, :skipped),
-    do: "#{node.detail} was reachable but skipped by the recompute plan."
-
-  defp reason(node, :cold),
-    do: "#{node.detail} has no captured recompute event in the recent telemetry window."
-
-  defp reason(node, :idle), do: "#{node.detail} was not touched by the latest captured recompute."
-
-  defp node_fill(:changed_root), do: "oklch(0.95 0.04 250)"
-  defp node_fill(:recompute), do: "oklch(0.96 0.05 70)"
-  defp node_fill(:changed), do: "oklch(0.95 0.05 145)"
-  defp node_fill(:skipped), do: "url(#upkeep-hatch)"
-  defp node_fill(:cold), do: "#ffffff"
-  defp node_fill(:idle), do: "#ffffff"
-
-  defp node_stroke(:changed_root), do: "oklch(0.55 0.15 250)"
-  defp node_stroke(:recompute), do: "oklch(0.68 0.15 70)"
-  defp node_stroke(:changed), do: "oklch(0.6 0.15 145)"
-  defp node_stroke(:skipped), do: "#bdbdbd"
-  defp node_stroke(:cold), do: "#d4d4d4"
-  defp node_stroke(:idle), do: "#cfcfcf"
-
-  defp pulse_class(:recompute), do: "animate-pulse"
-  defp pulse_class(:changed), do: "animate-pulse"
-  defp pulse_class(_state), do: nil
 
   defp kind_code(:source), do: "src"
   defp kind_code(:derived), do: "der"
