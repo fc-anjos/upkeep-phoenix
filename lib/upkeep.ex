@@ -27,7 +27,9 @@ defmodule Upkeep do
   - `inserted/2`, `updated/2`, `deleted/2`, `changed/3` — typed event helpers.
   - `read/1` — Ecto-backed read inside a source context.
   - `recent_events/1`, `clear_events/0` — observability buffer.
-  - `introspection_snapshot/2` — symbolic DAG/telemetry document for a LiveView socket.
+
+  Optional: add `:upkeep_inspector` to your deps for an in-app dashboard
+  that renders the runtime DAG, sources, and telemetry trail.
   """
 
   use Supervisor
@@ -40,7 +42,6 @@ defmodule Upkeep do
   def init(_opts) do
     children = [
       Upkeep.Observability,
-      Upkeep.Live.SourceRegistry,
       {Group, name: Upkeep.Group, log: false},
       {Upkeep.Coordinator.Graph, []}
     ]
@@ -58,5 +59,4 @@ defmodule Upkeep do
   defdelegate read(query), to: Upkeep.Source
   defdelegate recent_events(opts \\ []), to: Upkeep.Observability, as: :recent
   defdelegate clear_events(), to: Upkeep.Observability, as: :clear
-  defdelegate introspection_snapshot(socket, opts \\ []), to: Upkeep.Introspection, as: :snapshot
 end

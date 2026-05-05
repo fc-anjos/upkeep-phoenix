@@ -7,11 +7,9 @@ defmodule Upkeep.Live do
 
   @registered_event [:upkeep, :live, :registered]
 
-  defmacro __using__(opts \\ []) do
-    inspector = Keyword.get(opts, :inspector, true)
-
-    quote bind_quoted: [inspector: inspector] do
-      Phoenix.LiveView.on_mount({Upkeep.Live.ScopeHook, inspector: inspector})
+  defmacro __using__(_opts \\ []) do
+    quote do
+      Phoenix.LiveView.on_mount(Upkeep.Live.ScopeHook)
 
       import Upkeep.Live.Macros,
         only: [
@@ -102,15 +100,11 @@ defmodule Upkeep.Live do
     Snapshot.build(socket)
   end
 
-  def introspection_snapshot(socket, opts \\ []) do
-    Upkeep.Introspection.snapshot(socket, opts)
-  end
-
   def inspecting?(socket) do
     Map.get(socket.assigns, :upkeep_inspector?, false)
   end
 
-  def queue_matching(socket, event) when is_struct(event) do
+def queue_matching(socket, event) when is_struct(event) do
     with_current_scope(socket, &Upkeep.Runtime.queue_matching(&1, event))
   end
 
