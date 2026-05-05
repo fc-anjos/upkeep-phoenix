@@ -24,7 +24,7 @@ defmodule Upkeep.Ecto.RepoCapture do
         {capture?, opts} = Upkeep.Ecto.RepoCapture.pop_capture_opt(opts)
 
         if capture? do
-          Upkeep.Mutation.with_transaction_journal(fn -> super(fun_or_multi, opts) end)
+          Upkeep.Internal.Mutation.with_transaction_journal(fn -> super(fun_or_multi, opts) end)
         else
           super(fun_or_multi, opts)
         end

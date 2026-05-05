@@ -1,7 +1,7 @@
 defmodule Upkeep.Live.Snapshot do
   @moduledoc false
 
-  alias Upkeep.DAG.{Graph, Store}
+  alias Upkeep.Internal.DAG.{Graph, Store}
   alias Upkeep.Live.{Ids, Telemetry}
   alias Upkeep.Runtime.State
   alias Upkeep.Source.Runtime, as: Source

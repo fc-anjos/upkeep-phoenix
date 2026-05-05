@@ -1,7 +1,7 @@
 defmodule Upkeep.Runtime.State do
   @moduledoc false
 
-  alias Upkeep.DAG.Store
+  alias Upkeep.Internal.DAG.Store
 
   defstruct watches: %{},
             store: nil,

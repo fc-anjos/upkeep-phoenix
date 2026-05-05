@@ -45,12 +45,12 @@ defmodule Upkeep.Source.Runtime do
 
   def deps_interest_keys(deps) do
     deps
-    |> Enum.flat_map(&Upkeep.Ecto.QueryDeps.interest_keys/1)
+    |> Enum.flat_map(&Upkeep.Internal.Ecto.QueryDeps.interest_keys/1)
     |> Enum.uniq()
   end
 
   def deps_react_to?(deps, event) do
-    Enum.any?(deps, &Upkeep.Ecto.QueryDeps.matches_change?(&1, event))
+    Enum.any?(deps, &Upkeep.Internal.Ecto.QueryDeps.matches_change?(&1, event))
   end
 
   def coverage(source, params) when is_atom(source) and is_map(params) do
@@ -67,7 +67,7 @@ defmodule Upkeep.Source.Runtime do
 
   def coverage(source, params, deps) when is_atom(source) and is_map(params) and is_list(deps) do
     deps
-    |> Enum.map(&Upkeep.Ecto.QueryDeps.coverage/1)
+    |> Enum.map(&Upkeep.Internal.Ecto.QueryDeps.coverage/1)
     |> Enum.reduce(base_coverage(source, params), &Upkeep.Source.Coverage.merge/2)
     |> attach_unknown_if_empty()
   end
@@ -75,16 +75,16 @@ defmodule Upkeep.Source.Runtime do
   def query_interest_keys(source, params) when is_atom(source) do
     source
     |> source_query(params)
-    |> Upkeep.Ecto.QueryDeps.interest_keys()
+    |> Upkeep.Internal.Ecto.QueryDeps.interest_keys()
   end
 
   def query_reacts_to?(source, event, params) when is_atom(source) and is_struct(event) do
     deps =
       source
       |> source_query(params)
-      |> Upkeep.Ecto.QueryDeps.from_query()
+      |> Upkeep.Internal.Ecto.QueryDeps.from_query()
 
-    Upkeep.Ecto.QueryDeps.matches_change?(deps, event)
+    Upkeep.Internal.Ecto.QueryDeps.matches_change?(deps, event)
   end
 
   def source_id(source, params) when is_atom(source) and is_map(params), do: {source, params}
@@ -114,7 +114,7 @@ defmodule Upkeep.Source.Runtime do
         value
 
       :error ->
-        value = Upkeep.Coordinator.ReadNodes.fetch_or_load(repo, query, holder)
+        value = Upkeep.Internal.Coordinator.ReadNodes.fetch_or_load(repo, query, holder)
         ctx = Process.get(@context_key)
         Process.put(@context_key, Map.put(ctx, :reads, Map.put(cache, fingerprint, value)))
         value
@@ -154,7 +154,7 @@ defmodule Upkeep.Source.Runtime do
   defp track_query(query) do
     case Process.get(@context_key) do
       %{deps: deps} = context ->
-        deps = [Upkeep.Ecto.QueryDeps.from_query(query) | deps]
+        deps = [Upkeep.Internal.Ecto.QueryDeps.from_query(query) | deps]
         Process.put(@context_key, %{context | deps: deps})
 
       _ ->

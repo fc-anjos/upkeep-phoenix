@@ -1,4 +1,4 @@
-defmodule Upkeep.MutationTest do
+defmodule Upkeep.Internal.MutationTest do
   use Upkeep.DataCase, async: false
 
   alias Upkeep.Live
@@ -16,7 +16,7 @@ defmodule Upkeep.MutationTest do
     use Upkeep.Source
 
     query(fn s ->
-      [{_key, value}] = :ets.lookup(Upkeep.MutationTest, {:issues, s.project_id})
+      [{_key, value}] = :ets.lookup(Upkeep.Internal.MutationTest, {:issues, s.project_id})
       value
     end)
 
@@ -239,6 +239,6 @@ defmodule Upkeep.MutationTest do
   defp issue(project_id, issue_id), do: %Issue{project_id: project_id, issue_id: issue_id}
 
   defp drain_graph do
-    :ok = Upkeep.Coordinator.Graph.drain()
+    :ok = Upkeep.Internal.Coordinator.Graph.drain()
   end
 end

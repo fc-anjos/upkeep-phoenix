@@ -30,7 +30,7 @@ defmodule Upkeep.Test do
       Upkeep.Test.allow_sandbox()
   """
 
-  alias Upkeep.Coordinator.Graph
+  alias Upkeep.Internal.Coordinator.Graph
 
   @doc """
   Reset coordinator graph runtime state between tests.

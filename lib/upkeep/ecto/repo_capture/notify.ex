@@ -40,7 +40,7 @@ defmodule Upkeep.Ecto.RepoCapture.Notify do
       record: record,
       from: from
     )
-    |> Upkeep.Mutation.notify()
+    |> Upkeep.Internal.Mutation.notify()
   end
 
   defp before_record(%Ecto.Changeset{data: data}), do: data

@@ -1,7 +1,7 @@
 defmodule Upkeep.Live.Components do
   @moduledoc false
 
-  alias Upkeep.DAG.Store
+  alias Upkeep.Internal.DAG.Store
   alias Upkeep.Live.Ids
 
   def component_node?({:component, _component_id}), do: true

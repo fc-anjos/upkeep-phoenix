@@ -1,9 +1,9 @@
-defmodule Upkeep.Coordinator.ReadNodesTest do
+defmodule Upkeep.Internal.Coordinator.ReadNodesTest do
   use Upkeep.DataCase, async: false
 
   import Ecto.Query
 
-  alias Upkeep.Coordinator.ReadNodes
+  alias Upkeep.Internal.Coordinator.ReadNodes
   alias Upkeep.Repo
 
   defmodule Project do
@@ -111,7 +111,9 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
     ReadNodes.fetch_or_load(Repo, q)
     assert ReadNodes.count() == 1
 
-    Upkeep.Coordinator.Graph.notify(Upkeep.Change.inserted(%Project{id: 2, name: "beta"}))
+    Upkeep.Internal.Coordinator.Graph.notify(
+      Upkeep.Change.inserted(%Project{id: 2, name: "beta"})
+    )
 
     assert ReadNodes.count() == 0
   end
@@ -181,13 +183,17 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
           end
 
           try do
-            Upkeep.SingleFlight.Registry.coalesce(ReadNodes.coalescer_name(), bad_node, fn ->
-              if i == 1 do
-                raise "boom"
-              else
-                :unreachable
+            Upkeep.Internal.SingleFlight.Registry.coalesce(
+              ReadNodes.coalescer_name(),
+              bad_node,
+              fn ->
+                if i == 1 do
+                  raise "boom"
+                else
+                  :unreachable
+                end
               end
-            end)
+            )
 
             send(parent, {:done, i, :ok})
           rescue
@@ -209,7 +215,7 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
 
     # All callers got :error (loader raised, waiters re-raise the same).
     assert Enum.all?(results, &match?({:error, "boom"}, &1))
-    refute Upkeep.SingleFlight.Registry.pending?(ReadNodes.coalescer_name(), bad_node)
+    refute Upkeep.Internal.SingleFlight.Registry.pending?(ReadNodes.coalescer_name(), bad_node)
   end
 
   test "Watcher invalidates ReadNodes when it receives a dispatched notification" do
@@ -224,7 +230,7 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
     # the Watcher pid. This bypasses the inline invalidate inside
     # Graph.notify/1, isolating the Watcher's behavior — which is the
     # only mechanism remote nodes have to learn about evictions.
-    watcher = Process.whereis(Upkeep.Coordinator.ReadNodes.Watcher)
+    watcher = Process.whereis(Upkeep.Internal.Coordinator.ReadNodes.Watcher)
     assert is_pid(watcher)
 
     event = Upkeep.Change.updated(%Project{id: 1, name: "alpha2"})
@@ -280,7 +286,7 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
 
       def load(params) do
         Upkeep.read(
-          from(p in Upkeep.Coordinator.ReadNodesTest.Project, where: p.id == ^params.id)
+          from(p in Upkeep.Internal.Coordinator.ReadNodesTest.Project, where: p.id == ^params.id)
         )
       end
 
@@ -293,15 +299,18 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
     {_value, _deps} = Upkeep.Source.load(HolderSource, %{id: 1})
     assert ReadNodes.count() == 1
 
-    Upkeep.Coordinator.ReadNodes.release(Upkeep.Source.source_id(HolderSource, %{id: 1}))
+    Upkeep.Internal.Coordinator.ReadNodes.release(Upkeep.Source.source_id(HolderSource, %{id: 1}))
     assert ReadNodes.count() == 0
   end
 
   test "Watcher is a member of the cluster notification group" do
     members =
-      Group.members(Upkeep.Coordinator.Graph.group(), Upkeep.Coordinator.Graph.notification_key())
+      Group.members(
+        Upkeep.Internal.Coordinator.Graph.group(),
+        Upkeep.Internal.Coordinator.Graph.notification_key()
+      )
 
     pids = Enum.map(members, fn {pid, _meta} -> pid end)
-    assert Process.whereis(Upkeep.Coordinator.ReadNodes.Watcher) in pids
+    assert Process.whereis(Upkeep.Internal.Coordinator.ReadNodes.Watcher) in pids
   end
 end

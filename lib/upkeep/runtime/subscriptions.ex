@@ -1,7 +1,7 @@
 defmodule Upkeep.Runtime.Subscriptions do
   @moduledoc false
 
-  alias Upkeep.Coordinator.Graph
+  alias Upkeep.Internal.Coordinator.Graph
 
   def register(source_id, interest_keys, source, params) do
     :ok = Graph.register_source(source_id, interest_keys, source, params)

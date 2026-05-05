@@ -6,8 +6,8 @@ defmodule Upkeep.TestSupport.MultiNodeProbe do
   notification group from the caller's view.
   """
   def notification_group_node_view do
-    Upkeep.Coordinator.Graph.group()
-    |> Group.members(Upkeep.Coordinator.Graph.notification_key())
+    Upkeep.Internal.Coordinator.Graph.group()
+    |> Group.members(Upkeep.Internal.Coordinator.Graph.notification_key())
     |> Enum.map(fn {pid, _meta} -> node(pid) end)
     |> Enum.uniq()
   end
@@ -24,7 +24,7 @@ defmodule Upkeep.TestSupport.MultiNodeProbe do
     pid =
       spawn(fn ->
         :ok =
-          Upkeep.Coordinator.Graph.register_loader(node_id, [interest_key], fn ->
+          Upkeep.Internal.Coordinator.Graph.register_loader(node_id, [interest_key], fn ->
             {value, [interest_key]}
           end)
 

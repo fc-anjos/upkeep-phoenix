@@ -1,7 +1,7 @@
 defmodule Upkeep.Runtime.Mount do
   @moduledoc false
 
-  alias Upkeep.DAG.Store
+  alias Upkeep.Internal.DAG.Store
 
   alias Upkeep.Live.{
     Components,

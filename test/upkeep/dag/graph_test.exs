@@ -1,7 +1,7 @@
-defmodule Upkeep.DAG.GraphTest do
+defmodule Upkeep.Internal.DAG.GraphTest do
   use ExUnit.Case, async: true
 
-  alias Upkeep.DAG.Graph
+  alias Upkeep.Internal.DAG.Graph
 
   test "rejects cycles" do
     graph =
@@ -38,7 +38,7 @@ defmodule Upkeep.DAG.GraphTest do
 
     plan = Graph.subgraph_plan(graph, :issue_detail)
 
-    assert %Upkeep.DAG.Plan{} = plan
+    assert %Upkeep.Internal.DAG.Plan{} = plan
     assert plan.roots == [:issue_detail]
     assert plan.selected_node_ids == [:issue_detail, :comments, :comment_count]
 
@@ -72,7 +72,7 @@ defmodule Upkeep.DAG.GraphTest do
           {:exclude, :local_only_dep}
       end)
 
-    assert %Upkeep.DAG.Plan{} = plan
+    assert %Upkeep.Internal.DAG.Plan{} = plan
     assert plan.roots == [:dashboard]
     assert plan.selected_node_ids == [:activity, :project_name, :stats, :summary]
 
