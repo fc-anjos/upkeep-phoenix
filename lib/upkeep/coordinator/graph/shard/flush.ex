@@ -5,7 +5,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
   alias Upkeep.Coordinator.Graph.Index
   alias Upkeep.Coordinator.Graph.Shard.{Dispatch, Loaders, Retries}
   alias Upkeep.Coordinator.Node
-  alias Upkeep.DAG
+  alias Upkeep.DAG.Store
 
   @flush_interval_ms 1
   @flush_threshold 1_000
@@ -46,21 +46,22 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
 
     {sources_loaded, state} = load_sources(dirty_sources, state)
 
-    dag =
-      Enum.reduce(sources_loaded, state.dag, fn {id, value}, dag ->
-        {dag, _changed?} = DAG.put_source(dag, id, value, [])
-        dag
+    store =
+      Enum.reduce(sources_loaded, state.store, fn {id, value}, store ->
+        {store, _changed?} = Store.put_source(store, id, value, [])
+        store
       end)
 
-    {dag, derived_changed, _} = DAG.recompute(dag, Enum.map(sources_loaded, &elem(&1, 0)))
+    {store, diff} = Store.recompute(store, Enum.map(sources_loaded, &elem(&1, 0)))
 
-    derived_loaded = Enum.map(derived_changed, fn id -> {id, DAG.fetch!(dag, id)} end)
+    derived_loaded =
+      Enum.map(diff.changed_node_ids, fn id -> {id, Store.fetch!(store, id)} end)
 
     Dispatch.batch(state, sources_loaded ++ derived_loaded)
 
     %{
       state
-      | dag: dag,
+      | store: store,
         buffer_node_ids: MapSet.new(),
         buffer_size: 0,
         flush_scheduled?: false

@@ -26,7 +26,7 @@ defmodule Upkeep.Runtime.StateTest do
     assert State.watches(socket) == %{}
     assert State.assign_nodes(socket) == %{}
     assert State.pending_refreshes(socket) == MapSet.new()
-    assert %Upkeep.DAG{} = State.dag(socket)
+    assert %Upkeep.DAG.Store{} = State.store(socket)
   end
 
   defp new_socket, do: %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}

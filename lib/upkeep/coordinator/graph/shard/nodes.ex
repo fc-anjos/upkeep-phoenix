@@ -6,7 +6,8 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
   alias Upkeep.Coordinator.Graph.Shard.Retries
   alias Upkeep.Coordinator.Node
   alias Upkeep.Coordinator.ReadNodes
-  alias Upkeep.DAG
+  alias Upkeep.DAG.Graph, as: DAGGraph
+  alias Upkeep.DAG.Store
 
   def register_source(state, node_id, interest_keys, loader) do
     case Map.fetch(state.sources, node_id) do
@@ -16,7 +17,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
       :error ->
         encoded_key = Graph.source_key(node_id)
         Index.put_source(node_id, state.idx, interest_keys)
-        {dag, _changed?} = DAG.put_source(state.dag, node_id, nil, [])
+        {store, _changed?} = Store.put_source(state.store, node_id, nil, [])
 
         %{
           state
@@ -28,7 +29,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
                 registered_keys: interest_keys,
                 encoded_key: encoded_key
               }),
-            dag: dag
+            store: store
         }
     end
   end
@@ -39,7 +40,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
 
     %{
       state
-      | dag: DAG.put_derived(state.dag, node_id, dep_ids, compute_fn, initial_value: nil),
+      | store: Store.register_derived(state.store, node_id, dep_ids, compute_fn),
         sources:
           Map.put_new(state.sources, node_id, %Node{
             id: node_id,
@@ -56,14 +57,13 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
 
     state = Retries.clear(state, node_id)
 
-    %{
-      state
-      | sources: Map.delete(state.sources, node_id),
-        dag:
-          if(DAG.has_node?(state.dag, node_id),
-            do: DAG.remove_subgraph(state.dag, node_id),
-            else: state.dag
-          )
-    }
+    store =
+      if DAGGraph.has_node?(Store.graph(state.store), node_id) do
+        Store.remove_subgraph(state.store, node_id)
+      else
+        state.store
+      end
+
+    %{state | sources: Map.delete(state.sources, node_id), store: store}
   end
 end

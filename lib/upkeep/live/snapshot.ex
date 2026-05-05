@@ -1,12 +1,13 @@
 defmodule Upkeep.Live.Snapshot do
   @moduledoc false
 
+  alias Upkeep.DAG.{Graph, Store}
   alias Upkeep.Live.{Ids, Telemetry}
   alias Upkeep.Runtime.State
 
   def build(socket) do
     %{
-      dag: Upkeep.DAG.snapshot(State.dag(socket)),
+      dag: Graph.snapshot(Store.graph(State.store(socket))),
       assigns: assign_snapshot(socket),
       watches: watch_snapshot(socket),
       pending_refreshes: pending_refresh_snapshot(socket)

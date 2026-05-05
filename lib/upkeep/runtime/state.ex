@@ -1,8 +1,10 @@
 defmodule Upkeep.Runtime.State do
   @moduledoc false
 
+  alias Upkeep.DAG.Store
+
   defstruct watches: %{},
-            dag: nil,
+            store: nil,
             assign_nodes: %{},
             shared_derived_nodes: %{},
             derive_sharing: %{},
@@ -10,7 +12,7 @@ defmodule Upkeep.Runtime.State do
 
   def new do
     %__MODULE__{
-      dag: Upkeep.DAG.new(),
+      store: Store.new(),
       pending_refreshes: MapSet.new()
     }
   end
@@ -62,13 +64,13 @@ defmodule Upkeep.Runtime.State do
     fetch(socket).watches
   end
 
-  def put_dag(socket, dag) do
+  def put_store(socket, store) do
     runtime = fetch(socket)
-    put(socket, %{runtime | dag: dag})
+    put(socket, %{runtime | store: store})
   end
 
-  def dag(socket) do
-    fetch(socket).dag
+  def store(socket) do
+    fetch(socket).store
   end
 
   def put_assign_node(socket, assign_name, node_id) do

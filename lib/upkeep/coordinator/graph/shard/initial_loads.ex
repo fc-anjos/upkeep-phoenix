@@ -5,7 +5,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
   alias Upkeep.Coordinator.Graph.Index
   alias Upkeep.Coordinator.Graph.Shard.Loaders
   alias Upkeep.Coordinator.Node
-  alias Upkeep.DAG
+  alias Upkeep.DAG.Store
 
   def register_source_and_load(state, node_id, from) do
     case Map.fetch(state.initial_loads, node_id) do
@@ -93,7 +93,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
           Index.reconcile_source(node_id, state.idx, node.registered_keys, current_keys)
         end
 
-        {dag, _changed?} = DAG.put_source(state.dag, node_id, value, [])
+        {store, _changed?} = Store.put_source(state.store, node_id, value, [])
 
         sources =
           Map.put(
@@ -104,7 +104,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
 
         Enum.each(load.waiters, &GenServer.reply(&1, {:ok, value, tracked_deps}))
 
-        %{state | dag: dag, sources: sources}
+        %{state | store: store, sources: sources}
 
       _stale_reply ->
         state

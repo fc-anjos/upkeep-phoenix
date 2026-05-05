@@ -14,7 +14,7 @@ defmodule Upkeep.Coordinator.Graph do
        - dedups events,
        - runs `load_fn/0` once per dirty source node,
        - recomputes pure derived nodes whose deps changed via the
-         per-shard `Upkeep.DAG`,
+         per-shard `Upkeep.DAG.Store`,
        - dispatches values via `Group.dispatch/3`.
 
   ## Why Group

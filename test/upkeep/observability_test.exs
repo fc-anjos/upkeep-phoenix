@@ -112,6 +112,8 @@ defmodule Upkeep.ObservabilityTest do
     project_id = System.unique_integer([:positive])
     :ets.insert(table, {{:issues, project_id}, [:before]})
 
+    source_node_id = {:source, {ProjectIssues, %{project_id: project_id}}}
+
     %Phoenix.LiveView.Socket{
       endpoint: UpkeepWeb.Endpoint,
       view: UpkeepWeb.KanbanLive,
@@ -137,6 +139,16 @@ defmodule Upkeep.ObservabilityTest do
                event.metadata.assign_name == :local_count and
                event.metadata.result == :local and
                event.metadata.reason == :local_fun
+           end)
+
+    assert Enum.any?(events, fn event ->
+             event.event == [:upkeep, :derive, :sharing_plan] and
+               event.metadata.final_result == :local and
+               event.metadata.final_reason == :local_fun and
+               event.metadata.roots == [{:derived, :issue_count}] and
+               event.metadata.largest_shareable_subgraphs == [
+                 [source_node_id, {:derived, :issue_count}]
+               ]
            end)
   end
 

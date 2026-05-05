@@ -3,7 +3,7 @@ defmodule Upkeep.Coordinator.Graph.Shard do
   use GenServer
 
   alias Upkeep.Coordinator.Graph.Shard.{Flush, InitialLoads, Lifecycle, Nodes, Retries}
-  alias Upkeep.DAG
+  alias Upkeep.DAG.Store
 
   ## Public
 
@@ -23,7 +23,7 @@ defmodule Upkeep.Coordinator.Graph.Shard do
      %{
        idx: idx,
        generation: generation,
-       dag: DAG.new(),
+       store: Store.new(),
        sources: %{},
        initial_loads: %{},
        initial_load_refs: %{},
@@ -80,7 +80,7 @@ defmodule Upkeep.Coordinator.Graph.Shard do
       |> demonitor_initial_loads()
       |> Retries.cancel_all()
       |> Map.merge(%{
-        dag: DAG.new(),
+        store: Store.new(),
         sources: %{},
         initial_loads: %{},
         initial_load_refs: %{},

@@ -1,6 +1,8 @@
 defmodule Upkeep.Runtime do
   @moduledoc false
 
+  alias Upkeep.DAG.{Graph, Store}
+
   alias Upkeep.Live.{
     Components,
     Ids,
@@ -21,14 +23,14 @@ defmodule Upkeep.Runtime do
       {:ok, current_scope} ->
         node_id = Ids.scope_node_id(:current_scope)
 
-        {dag, changed?} =
+        {store, changed?} =
           socket
-          |> State.dag()
-          |> Upkeep.DAG.put_source(node_id, current_scope, [])
+          |> State.store()
+          |> Store.put_source(node_id, current_scope, [])
 
         socket =
           socket
-          |> State.put_dag(dag)
+          |> State.put_store(store)
           |> State.put_assign_node(:current_scope, node_id)
 
         if changed? do
@@ -116,16 +118,16 @@ defmodule Upkeep.Runtime do
     %Materializer.Component{component_id: component_id} = single_materializer(spec)
     compute = compute_fun(producer)
 
-    dag =
+    store =
       socket
-      |> State.dag()
-      |> Upkeep.DAG.put_component(spec.id, spec.deps, compute)
+      |> State.store()
+      |> Store.put_component(spec.id, spec.deps, compute)
 
-    value = Upkeep.DAG.fetch!(dag, spec.id)
-    dag = Components.put_assign_nodes(dag, component_id, value)
+    value = Store.fetch!(store, spec.id)
+    store = Components.put_assign_nodes(store, component_id, value)
 
     socket
-    |> State.put_dag(dag)
+    |> State.put_store(store)
     |> put_component_assign_nodes(component_id, value)
     |> then(fn socket -> {:ok, socket, component_assign_effects(value)} end)
   end
@@ -145,23 +147,27 @@ defmodule Upkeep.Runtime do
       )
 
     public_sharing_metadata = Map.delete(sharing_metadata, :compute_fn)
+    sharing_plan = Shared.sharing_plan(socket, spec.deps, public_sharing_metadata)
+    public_sharing_metadata = Map.put(public_sharing_metadata, :shareable_plan, sharing_plan)
 
-    dag =
+    store =
       socket
-      |> State.dag()
-      |> Upkeep.DAG.put_derived(spec.id, spec.deps, compute, initial_value: initial_value)
+      |> State.store()
+      |> Store.register_derived(spec.id, spec.deps, compute)
+      |> seed_initial_value(spec.id, initial_value)
 
-    value = Upkeep.DAG.fetch!(dag, spec.id)
+    value = Store.fetch!(store, spec.id)
 
     socket
-    |> State.put_dag(dag)
+    |> State.put_store(store)
     |> State.put_assign_node(assign_name, spec.id)
     |> State.put_derive_sharing(spec.id, public_sharing_metadata)
     |> put_shared_derived_node(spec.id, graph_node_id)
     |> then(fn socket ->
       effects =
         [
-          {:telemetry, [:derive, :sharing], %{count: 1}, public_sharing_metadata}
+          {:telemetry, [:derive, :sharing], %{count: 1}, public_sharing_metadata},
+          {:telemetry, [:derive, :sharing_plan], %{count: 1}, sharing_plan}
         ] ++
           register_shared_derived_effect(graph_node_id, sharing_metadata) ++
           [{:assign, assign_name, value}]
@@ -236,6 +242,11 @@ defmodule Upkeep.Runtime do
     State.put_shared_derived_node(socket, node_id, graph_node_id)
   end
 
+  defp seed_initial_value(store, id, value) do
+    {store, _changed?} = Store.seed(store, id, value)
+    store
+  end
+
   defp register_shared_derived_effect(nil, _sharing_metadata), do: []
 
   defp register_shared_derived_effect(graph_node_id, sharing_metadata) do
@@ -253,7 +264,8 @@ defmodule Upkeep.Runtime do
 
   def remove_component(socket, component_id) when not is_nil(component_id) do
     node_id = Ids.component_node_id(component_id)
-    removed_node_ids = [node_id | Upkeep.DAG.downstream_ids(State.dag(socket), node_id)]
+    remove_plan = Graph.subgraph_plan(Store.graph(State.store(socket)), node_id)
+    removed_node_ids = remove_plan.selected_node_ids
 
     {socket, effects} =
       socket
@@ -266,14 +278,14 @@ defmodule Upkeep.Runtime do
         {socket, effects ++ remove_effects}
       end)
 
-    dag =
+    store =
       socket
-      |> State.dag()
-      |> Upkeep.DAG.remove_subgraph(node_id)
+      |> State.store()
+      |> Store.remove_subgraph(node_id)
 
     removed_node_ids
     |> Enum.flat_map(&State.assign_names_for_node(socket, &1))
-    |> Enum.reduce(State.put_dag(socket, dag), &State.delete_assign_node(&2, &1))
+    |> Enum.reduce(State.put_store(socket, store), &State.delete_assign_node(&2, &1))
     |> then(fn socket -> {:ok, socket, effects} end)
   end
 

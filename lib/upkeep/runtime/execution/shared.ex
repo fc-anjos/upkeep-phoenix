@@ -2,6 +2,8 @@ defmodule Upkeep.Runtime.Execution.Shared do
   @moduledoc false
 
   alias Upkeep.Coordinator.Graph
+  alias Upkeep.DAG.Graph, as: DAGGraph
+  alias Upkeep.DAG.Store
   alias Upkeep.Runtime.State
   alias Upkeep.Runtime.Subscriptions
 
@@ -126,6 +128,25 @@ defmodule Upkeep.Runtime.Execution.Shared do
        })}
   end
 
+  def sharing_plan(socket, dep_node_ids, metadata)
+      when is_list(dep_node_ids) and is_map(metadata) do
+    plan =
+      socket
+      |> State.store()
+      |> Store.graph()
+      |> DAGGraph.applicable_subgraphs(dep_node_ids, &classify_shareable_node(socket, &1, &2))
+
+    %{
+      final_result: Map.get(metadata, :result),
+      final_reason: Map.get(metadata, :reason),
+      roots: plan.roots,
+      candidate_shareable_nodes: plan.selected_node_ids,
+      candidate_shareable_subgraphs: Enum.map(plan.subgraphs, & &1.node_ids),
+      largest_shareable_subgraphs: Enum.map(plan.largest_subgraphs, & &1.node_ids),
+      boundaries: plan.boundaries
+    }
+  end
+
   defp local_initial_value(socket, dep_node_ids, compute, metadata, reason, extra \\ []) do
     metadata =
       metadata
@@ -163,11 +184,38 @@ defmodule Upkeep.Runtime.Execution.Shared do
     end
   end
 
+  defp classify_shareable_node(_socket, {:source, {:scoped, _component, _source_id}}, _node) do
+    {:exclude, :component_scoped_dep}
+  end
+
+  defp classify_shareable_node(_socket, {:source, _source_id}, _node), do: :include
+
+  defp classify_shareable_node(socket, {:derived, _assign_name} = local_node_id, _node) do
+    case Map.fetch(State.shared_derived_nodes(socket), local_node_id) do
+      {:ok, _graph_node_id} -> :include
+      :error -> {:exclude, :local_only_dep}
+    end
+  end
+
+  defp classify_shareable_node(_socket, {:scope, :current_scope}, _node) do
+    {:exclude, :current_scope}
+  end
+
+  defp classify_shareable_node(_socket, {:component, _component_id}, _node) do
+    {:exclude, :component_boundary}
+  end
+
+  defp classify_shareable_node(_socket, {:component_assign, _component_id, _assign_name}, _node) do
+    {:exclude, :component_boundary}
+  end
+
+  defp classify_shareable_node(_socket, _node_id, _node), do: {:exclude, :unsupported_dep}
+
   defp graph_dep_values(socket, local_to_graph) do
-    dag = State.dag(socket)
+    store = State.store(socket)
 
     Map.new(local_to_graph, fn {local_node_id, graph_node_id} ->
-      {graph_node_id, Upkeep.DAG.fetch!(dag, local_node_id)}
+      {graph_node_id, Store.fetch!(store, local_node_id)}
     end)
   end
 
@@ -267,12 +315,10 @@ defmodule Upkeep.Runtime.Execution.Shared do
   defp scope_like_value(_value), do: nil
 
   defp compute_initial_value(socket, dep_node_ids, compute) do
-    socket
-    |> State.dag()
-    |> then(fn dag ->
-      dep_node_ids
-      |> Map.new(fn dep_node_id -> {dep_node_id, Upkeep.DAG.fetch!(dag, dep_node_id)} end)
-      |> compute.()
-    end)
+    store = State.store(socket)
+
+    dep_node_ids
+    |> Map.new(fn dep_node_id -> {dep_node_id, Store.fetch!(store, dep_node_id)} end)
+    |> compute.()
   end
 end

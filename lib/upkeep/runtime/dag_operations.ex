@@ -1,54 +1,49 @@
 defmodule Upkeep.Runtime.DAGOperations do
   @moduledoc false
 
+  alias Upkeep.DAG.{Graph, Store}
   alias Upkeep.Live.{Components, Ids, Telemetry}
   alias Upkeep.Runtime.State
 
   def put_source(socket, source_id, value, deps) do
-    {dag, _changed?} =
+    {store, _changed?} =
       socket
-      |> State.dag()
-      |> Upkeep.DAG.put_source(Ids.source_node_id(source_id), value, deps)
+      |> State.store()
+      |> Store.put_source(Ids.source_node_id(source_id), value, deps)
 
-    State.put_dag(socket, dag)
+    State.put_store(socket, store)
   end
 
   def put_value(socket, source_id, value, deps) do
-    {dag, changed?} =
+    {store, changed?} =
       socket
-      |> State.dag()
-      |> Upkeep.DAG.put_source(Ids.source_node_id(source_id), value, deps)
+      |> State.store()
+      |> Store.put_source(Ids.source_node_id(source_id), value, deps)
 
-    {State.put_dag(socket, dag), changed?}
+    {State.put_store(socket, store), changed?}
   end
 
   def put_derived_value(socket, node_id, value) do
-    {dag, changed?} =
+    {store, changed?} =
       socket
-      |> State.dag()
-      |> Upkeep.DAG.put_existing_value(node_id, value)
+      |> State.store()
+      |> Store.seed(node_id, value)
 
-    {State.put_dag(socket, dag), changed?}
+    {State.put_store(socket, store), changed?}
   end
 
   def remove_source(socket, source_id) do
     source_node_id = Ids.source_node_id(source_id)
-
-    removed_node_ids = [
-      source_node_id | Upkeep.DAG.downstream_ids(State.dag(socket), source_node_id)
-    ]
+    store = State.store(socket)
+    remove_plan = Graph.subgraph_plan(Store.graph(store), source_node_id)
+    removed_node_ids = remove_plan.selected_node_ids
 
     socket =
       removed_node_ids
       |> Enum.flat_map(&State.assign_names_for_node(socket, &1))
       |> Enum.reduce(socket, &State.delete_assign_node(&2, &1))
 
-    dag =
-      socket
-      |> State.dag()
-      |> Upkeep.DAG.remove_subgraph(source_node_id)
-
-    State.put_dag(socket, dag)
+    State.put_store(socket, Store.remove_subgraph(store, source_node_id))
   end
 
   def dependency_nodes(socket, deps) do
@@ -69,28 +64,29 @@ defmodule Upkeep.Runtime.DAGOperations do
       when is_function(remove_watch, 2) do
     skip_node_ids = Keyword.get(opts, :skip, [])
 
-    {dag, changed_derived_nodes, _recomputed_nodes} =
+    {store, diff} =
       Telemetry.span([:dag, :recompute], %{changed_source_nodes: changed_source_nodes}, fn ->
         socket
-        |> State.dag()
-        |> Upkeep.DAG.recompute(changed_source_nodes, skip: skip_node_ids)
-        |> then(fn {_dag, changed_derived_nodes, recomputed_nodes} = result ->
+        |> State.store()
+        |> Store.recompute(changed_source_nodes, skip: skip_node_ids)
+        |> then(fn {_store, diff} = result ->
           {result,
            %{
-             changed_derived_nodes: changed_derived_nodes,
-             recomputed_nodes: recomputed_nodes,
-             changed_count: length(changed_derived_nodes),
-             recomputed_count: length(recomputed_nodes),
-             skipped_nodes: skip_node_ids
+             affected_nodes: diff.selected_node_ids,
+             changed_derived_nodes: diff.changed_node_ids,
+             recomputed_nodes: diff.recomputed_node_ids,
+             changed_count: length(diff.changed_node_ids),
+             recomputed_count: length(diff.recomputed_node_ids),
+             skipped_nodes: diff.skipped_node_ids
            }}
         end)
       end)
 
     socket
-    |> State.put_dag(dag)
-    |> remove_changed_component_watches(changed_derived_nodes, remove_watch)
+    |> State.put_store(store)
+    |> remove_changed_component_watches(diff.changed_node_ids, remove_watch)
     |> then(fn {socket, remove_effects} ->
-      {socket, assign_effects} = assign_derived_nodes(socket, changed_derived_nodes)
+      {socket, assign_effects} = assign_derived_nodes(socket, diff.changed_node_ids)
       {socket, remove_effects ++ assign_effects}
     end)
   end
@@ -111,7 +107,7 @@ defmodule Upkeep.Runtime.DAGOperations do
 
   defp assign_derived_nodes(socket, node_ids) do
     Enum.reduce(node_ids, {socket, []}, fn node_id, {socket, effects} ->
-      value = Upkeep.DAG.fetch!(State.dag(socket), node_id)
+      value = Store.fetch!(State.store(socket), node_id)
       {socket, effects ++ assign_node_effects(socket, node_id, value)}
     end)
   end
