@@ -4,6 +4,7 @@ defmodule Upkeep.Coordinator.Graph.Shard do
 
   alias Upkeep.Coordinator.Graph.Shard.{Flush, InitialLoads, Lifecycle, Nodes, Retries}
   alias Upkeep.DAG.Store
+  alias Upkeep.DirtyBuffer
   alias Upkeep.LoadCoalescer
 
   ## Public
@@ -29,9 +30,7 @@ defmodule Upkeep.Coordinator.Graph.Shard do
        derived_loads: LoadCoalescer.new(),
        retry_attempts: %{},
        retry_timers: %{},
-       buffer_node_ids: MapSet.new(),
-       buffer_size: 0,
-       flush_scheduled?: false
+       buffer: DirtyBuffer.new(threshold: 1_000)
      }}
   end
 
@@ -83,9 +82,7 @@ defmodule Upkeep.Coordinator.Graph.Shard do
         derived_loads: LoadCoalescer.new(),
         retry_attempts: %{},
         retry_timers: %{},
-        buffer_node_ids: MapSet.new(),
-        buffer_size: 0,
-        flush_scheduled?: false
+        buffer: DirtyBuffer.new(threshold: 1_000)
       })
 
     {:reply, :ok, state}

@@ -6,9 +6,9 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
   alias Upkeep.Coordinator.Node
   alias Upkeep.Coordinator.Topology
   alias Upkeep.DAG.Store
+  alias Upkeep.DirtyBuffer
 
   @flush_interval_ms 1
-  @flush_threshold 1_000
 
   def enqueue(state, node_ids) do
     state = Retries.reset(state, node_ids)
@@ -20,30 +20,33 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
   end
 
   defp enqueue_dirty(state, node_ids) do
-    new_buffer = Enum.reduce(node_ids, state.buffer_node_ids, &MapSet.put(&2, &1))
-    state = %{state | buffer_node_ids: new_buffer, buffer_size: MapSet.size(new_buffer)}
+    case DirtyBuffer.enqueue(state.buffer, node_ids) do
+      {:flush_now, buffer} ->
+        flush(%{state | buffer: buffer})
 
-    cond do
-      state.buffer_size >= @flush_threshold ->
-        flush(state)
+      {:wait, buffer} ->
+        %{state | buffer: buffer}
 
-      state.flush_scheduled? ->
-        state
-
-      true ->
+      {:schedule, buffer} ->
         Process.send_after(self(), :flush, @flush_interval_ms)
-        %{state | flush_scheduled?: true}
+        %{state | buffer: buffer}
     end
   end
 
-  def flush(%{buffer_size: 0} = state), do: %{state | flush_scheduled?: false}
-
   def flush(state) do
-    dirty_sources =
-      state.buffer_node_ids
-      |> MapSet.to_list()
-      |> Enum.filter(&Store.has_node?(state.store, &1))
+    {dirty_ids, buffer} = DirtyBuffer.drain(state.buffer)
+    state = %{state | buffer: buffer}
 
+    case Enum.filter(dirty_ids, &Store.has_node?(state.store, &1)) do
+      [] ->
+        state
+
+      dirty_sources ->
+        run_flush(state, dirty_sources)
+    end
+  end
+
+  defp run_flush(state, dirty_sources) do
     {sources_loaded, state} = load_sources(dirty_sources, state)
 
     store =
@@ -59,13 +62,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
 
     Dispatch.batch(state, sources_loaded ++ derived_loaded)
 
-    %{
-      state
-      | store: store,
-        buffer_node_ids: MapSet.new(),
-        buffer_size: 0,
-        flush_scheduled?: false
-    }
+    %{state | store: store}
   end
 
   defp load_sources(node_ids, state) do
