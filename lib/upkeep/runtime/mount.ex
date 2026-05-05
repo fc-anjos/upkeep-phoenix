@@ -121,7 +121,8 @@ defmodule Upkeep.Runtime.Mount do
         spec.deps,
         producer.dep_pairs,
         producer.fun,
-        compute
+        compute,
+        spec.source_location
       )
 
     public_sharing_metadata = Map.delete(sharing_metadata, :compute_fn)

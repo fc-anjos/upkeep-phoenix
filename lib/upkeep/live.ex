@@ -42,7 +42,7 @@ defmodule Upkeep.Live do
     location = Keyword.get(opts, :source_location)
 
     with_current_scope(socket, fn socket ->
-      spec = Specs.source(assign_name, source, params, component)
+      spec = Specs.source(assign_name, source, params, component, location)
       announce_registration(spec, location)
       Upkeep.Runtime.mount(socket, spec)
     end)
@@ -53,7 +53,7 @@ defmodule Upkeep.Live do
     location = Keyword.get(opts, :source_location)
 
     with_current_scope(socket, fn socket ->
-      spec = Specs.component(socket, component_id, deps, fun)
+      spec = Specs.component(socket, component_id, deps, fun, location)
       announce_registration(spec, location)
       Upkeep.Runtime.mount(socket, spec)
     end)
@@ -68,7 +68,7 @@ defmodule Upkeep.Live do
     location = Keyword.get(opts, :source_location)
 
     with_current_scope(socket, fn socket ->
-      spec = Specs.derived(socket, assign_name, deps, fun)
+      spec = Specs.derived(socket, assign_name, deps, fun, location)
       announce_registration(spec, location)
       Upkeep.Runtime.mount(socket, spec)
     end)
