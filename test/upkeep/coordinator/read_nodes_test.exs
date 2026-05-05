@@ -275,7 +275,7 @@ defmodule Upkeep.Internal.Coordinator.ReadNodesTest do
   end
 
   test "removing a source node releases its read-nodes" do
-    # Use a custom source that goes through Upkeep.Source.load so the
+    # Use a custom source that goes through Upkeep.Source.Runtime.load so the
     # holder propagation is exercised end-to-end.
     Repo.insert!(%Project{id: 1, name: "alpha"})
 
@@ -296,11 +296,11 @@ defmodule Upkeep.Internal.Coordinator.ReadNodesTest do
       def __upkeep_sharing_partition__(params), do: params
     end
 
-    {_value, _deps} = Upkeep.Internal.Source.Runtime.load(HolderSource, %{id: 1})
+    {_value, _deps} = Upkeep.Source.Runtime.load(HolderSource, %{id: 1})
     assert ReadNodes.count() == 1
 
     Upkeep.Internal.Coordinator.ReadNodes.release(
-      Upkeep.Internal.Source.Runtime.source_id(HolderSource, %{id: 1})
+      Upkeep.Source.Runtime.source_id(HolderSource, %{id: 1})
     )
 
     assert ReadNodes.count() == 0

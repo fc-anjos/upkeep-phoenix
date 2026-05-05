@@ -64,9 +64,9 @@ defmodule Upkeep.Internal.Ecto.QueryDeps do
         notification = %{name: action, schema: schema}
 
         if values == :broad do
-          Upkeep.Internal.Source.Keys.notification_key(notification)
+          Upkeep.Source.Keys.notification_key(notification)
         else
-          Upkeep.Internal.Source.Keys.notification_key(notification, values)
+          Upkeep.Source.Keys.notification_key(notification, values)
         end
       end
     end)

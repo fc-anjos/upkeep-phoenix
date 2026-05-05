@@ -439,8 +439,7 @@ defmodule Upkeep.SourceEctoTest do
     Repo.insert!(issue(id: 2, project_id: 1, assignee_id: 10, title: "Other", position: 1))
     Repo.insert!(issue(id: 3, project_id: 1, assignee_id: 9, title: "First", position: 1))
 
-    {issues, _deps} =
-      Upkeep.Internal.Source.Runtime.load(ProjectIssues, %{project_id: 1, user_id: 9})
+    {issues, _deps} = Upkeep.Source.Runtime.load(ProjectIssues, %{project_id: 1, user_id: 9})
 
     assert Enum.map(issues, & &1.title) == ["First", "Mine"]
   end
@@ -479,7 +478,7 @@ defmodule Upkeep.SourceEctoTest do
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
     {{first, second}, _deps} =
-      Upkeep.Internal.Source.Runtime.load(RepeatingReadSource, %{project_id: 1})
+      Upkeep.Source.Runtime.load(RepeatingReadSource, %{project_id: 1})
 
     assert first == second
     # The two Upkeep.read calls share one underlying repo.all
@@ -492,21 +491,21 @@ defmodule Upkeep.SourceEctoTest do
     Repo.insert!(issue(id: 1, project_id: 1, column_id: 1, title: "Open", position: 1))
     Repo.insert!(issue(id: 2, project_id: 1, column_id: 1, status: "archived", title: "Archived"))
 
-    {board, deps} = Upkeep.Internal.Source.Runtime.load(BoardViewModel, %{project_id: 1})
+    {board, deps} = Upkeep.Source.Runtime.load(BoardViewModel, %{project_id: 1})
 
     assert [%{column: "Backlog", issues: [%Issue{title: "Open"}]}] = board
 
-    interest_keys = Upkeep.Internal.Source.Runtime.deps_interest_keys(deps)
+    interest_keys = Upkeep.Source.Runtime.deps_interest_keys(deps)
 
     assert {:upkeep_change, :inserted, Column, [project_id: 1]} in interest_keys
     assert {:upkeep_change, :updated, Issue, [project_id: 1, status: "open"]} in interest_keys
 
-    assert Upkeep.Internal.Source.Runtime.deps_react_to?(
+    assert Upkeep.Source.Runtime.deps_react_to?(
              deps,
              issue(project_id: 1, column_id: 1, status: "open") |> Upkeep.Change.inserted()
            )
 
-    refute Upkeep.Internal.Source.Runtime.deps_react_to?(
+    refute Upkeep.Source.Runtime.deps_react_to?(
              deps,
              issue(project_id: 1, column_id: 1, status: "archived") |> Upkeep.Change.inserted()
            )

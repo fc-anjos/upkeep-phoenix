@@ -1,7 +1,7 @@
 defmodule Upkeep.Live.Ids do
   @moduledoc false
 
-  alias Upkeep.Internal.Source.Runtime, as: Source
+  alias Upkeep.Source.Runtime, as: Source
 
   def source_node_id(source_id), do: {:source, source_id}
   def derived_node_id(assign_name), do: {:derived, assign_name}

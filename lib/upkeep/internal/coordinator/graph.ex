@@ -22,7 +22,7 @@ defmodule Upkeep.Internal.Coordinator.Graph do
   @doc """
   Register a source node. Caller pid joins as subscriber via `Group.join/4`.
 
-  The coordinator stores `{source, params}` and invokes `Upkeep.Source.load/2`
+  The coordinator stores `{source, params}` and invokes `Upkeep.Source.Runtime.load/2`
   during flush. Keeping source definitions as data makes shard state easier to
   inspect and avoids using anonymous closures as the production node contract.
   """

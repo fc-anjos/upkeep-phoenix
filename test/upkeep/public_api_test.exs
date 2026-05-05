@@ -28,10 +28,10 @@ defmodule Upkeep.PublicApiTest do
     Upkeep.Internal.Retry,
     Upkeep.Internal.SingleFlight,
     Upkeep.Internal.SingleFlight.Registry,
-    Upkeep.Internal.Source.Keys,
-    Upkeep.Internal.Source.RepoCaptureGuard,
-    Upkeep.Internal.Source.Runtime,
-    Upkeep.Internal.Source.Spec,
+    Upkeep.Source.Keys,
+    Upkeep.Source.RepoCaptureGuard,
+    Upkeep.Source.Runtime,
+    Upkeep.Source.Spec,
     Upkeep.TestSupport.MultiNodeProbe
   ]
 

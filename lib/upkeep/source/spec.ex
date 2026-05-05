@@ -1,4 +1,4 @@
-defmodule Upkeep.Internal.Source.Spec do
+defmodule Upkeep.Source.Spec do
   @moduledoc false
 
   defmacro __using__(opts) do
@@ -17,7 +17,7 @@ defmodule Upkeep.Internal.Source.Spec do
       @upkeep_retry retry
       Module.register_attribute(__MODULE__, :upkeep_invalidators, accumulate: true)
       Module.register_attribute(__MODULE__, :upkeep_reactors, accumulate: true)
-      @before_compile Upkeep.Internal.Source.Spec
+      @before_compile Upkeep.Source.Spec
     end
   end
 
@@ -67,15 +67,15 @@ defmodule Upkeep.Internal.Source.Spec do
     invalidator_checks =
       Enum.map(invalidators, fn {notification, on, as} ->
         quote do
-          Upkeep.Internal.Source.Keys.matches?(event, unquote(Macro.escape(notification))) and
-            Upkeep.Internal.Source.Keys.equal_fields?(event, params, unquote(on), unquote(as))
+          Upkeep.Source.Keys.matches?(event, unquote(Macro.escape(notification))) and
+            Upkeep.Source.Keys.equal_fields?(event, params, unquote(on), unquote(as))
         end
       end)
 
     reactor_checks =
       Enum.map(reactors, fn {notification, fun} ->
         quote do
-          Upkeep.Internal.Source.Keys.matches?(event, unquote(Macro.escape(notification))) and
+          Upkeep.Source.Keys.matches?(event, unquote(Macro.escape(notification))) and
             (Upkeep.Change.broad_update?(event) or unquote(fun).(event, params))
         end
       end)
@@ -83,7 +83,7 @@ defmodule Upkeep.Internal.Source.Spec do
     interest_keys =
       Enum.map(invalidators, fn {notification, on, as} ->
         quote do
-          Upkeep.Internal.Source.Keys.interest_key(
+          Upkeep.Source.Keys.interest_key(
             unquote(Macro.escape(notification)),
             unquote(on),
             unquote(as),
@@ -93,7 +93,7 @@ defmodule Upkeep.Internal.Source.Spec do
       end) ++
         Enum.map(reactors, fn {notification, _fun} ->
           quote do
-            Upkeep.Internal.Source.Keys.notification_key(unquote(Macro.escape(notification)))
+            Upkeep.Source.Keys.notification_key(unquote(Macro.escape(notification)))
           end
         end)
 
@@ -102,7 +102,7 @@ defmodule Upkeep.Internal.Source.Spec do
         [] ->
           if defines_query? do
             quote do
-              Upkeep.Internal.Source.Runtime.query_reacts_to?(__MODULE__, event, params)
+              Upkeep.Source.Runtime.query_reacts_to?(__MODULE__, event, params)
             end
           else
             false
@@ -112,7 +112,7 @@ defmodule Upkeep.Internal.Source.Spec do
           query_check =
             if defines_query? do
               quote do
-                Upkeep.Internal.Source.Runtime.query_reacts_to?(__MODULE__, event, params)
+                Upkeep.Source.Runtime.query_reacts_to?(__MODULE__, event, params)
               end
             else
               false
@@ -147,7 +147,7 @@ defmodule Upkeep.Internal.Source.Spec do
     query_interest_keys =
       if defines_query? do
         quote do
-          Upkeep.Internal.Source.Runtime.query_interest_keys(__MODULE__, params)
+          Upkeep.Source.Runtime.query_interest_keys(__MODULE__, params)
         end
       else
         []

@@ -23,7 +23,7 @@ defmodule Upkeep.Source do
       @upkeep_retry retry
       Module.register_attribute(__MODULE__, :upkeep_invalidators, accumulate: true)
       Module.register_attribute(__MODULE__, :upkeep_reactors, accumulate: true)
-      @before_compile Upkeep.Internal.Source.Spec
+      @before_compile Upkeep.Source.Spec
     end
   end
 
@@ -58,9 +58,9 @@ defmodule Upkeep.Source do
     end
   end
 
-  defdelegate read(query_or_value), to: Upkeep.Internal.Source.Runtime
-  defdelegate coverage(source, params), to: Upkeep.Internal.Source.Runtime
-  defdelegate coverage(source, params, deps), to: Upkeep.Internal.Source.Runtime
+  defdelegate read(query_or_value), to: Upkeep.Source.Runtime
+  defdelegate coverage(source, params), to: Upkeep.Source.Runtime
+  defdelegate coverage(source, params, deps), to: Upkeep.Source.Runtime
 
   defp build_invalidated_by(notification, opts) do
     on = Keyword.fetch!(opts, :on) |> List.wrap()

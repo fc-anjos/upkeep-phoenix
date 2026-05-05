@@ -1,4 +1,4 @@
-defmodule Upkeep.Internal.Source.RepoCaptureGuard do
+defmodule Upkeep.Source.RepoCaptureGuard do
   @moduledoc false
 
   @warn_dedup_key {Upkeep.Source, :repo_capture_warned}
