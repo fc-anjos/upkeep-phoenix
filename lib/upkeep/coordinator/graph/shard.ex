@@ -99,7 +99,7 @@ defmodule Upkeep.Coordinator.Graph.Shard do
 
   @impl true
   def handle_info({:upkeep_graph_notify, event}, state) do
-    node_ids = Upkeep.Coordinator.Graph.affected_source_node_ids(event, state.idx)
+    node_ids = Upkeep.Coordinator.Topology.affected_source_node_ids(event, state.idx)
 
     state =
       case node_ids do

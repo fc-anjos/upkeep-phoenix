@@ -2,9 +2,9 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
   @moduledoc false
 
   alias Upkeep.Coordinator.Graph
-  alias Upkeep.Coordinator.Graph.Index
   alias Upkeep.Coordinator.Graph.Shard.{Dispatch, Loaders, Retries}
   alias Upkeep.Coordinator.Node
+  alias Upkeep.Coordinator.Topology
   alias Upkeep.DAG.Store
 
   @flush_interval_ms 1
@@ -91,7 +91,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
         {_node_id, {:ok, {node_id, value, current_keys, tracked_deps, %Node{} = node}}},
         {results, state} ->
           if current_keys != node.registered_keys do
-            Index.reconcile_source(node_id, state.idx, node.registered_keys, current_keys)
+            Topology.reconcile_source(node_id, state.idx, node.registered_keys, current_keys)
           end
 
           state = Retries.clear(state, node_id)

@@ -2,9 +2,9 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
   @moduledoc false
 
   alias Upkeep.Coordinator.Graph
-  alias Upkeep.Coordinator.Graph.Index
   alias Upkeep.Coordinator.Graph.Shard.Loaders
   alias Upkeep.Coordinator.Node
+  alias Upkeep.Coordinator.Topology
   alias Upkeep.DAG.Store
 
   def register_source_and_load(state, node_id, from) do
@@ -90,7 +90,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
         {load, state} = pop_source(state, ref, node_id)
 
         if current_keys != node.registered_keys do
-          Index.reconcile_source(node_id, state.idx, node.registered_keys, current_keys)
+          Topology.reconcile_source(node_id, state.idx, node.registered_keys, current_keys)
         end
 
         {store, _changed?} = Store.put_source(state.store, node_id, value, [])

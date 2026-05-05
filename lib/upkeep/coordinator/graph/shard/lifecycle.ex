@@ -2,8 +2,8 @@ defmodule Upkeep.Coordinator.Graph.Shard.Lifecycle do
   @moduledoc false
 
   alias Upkeep.Coordinator.Graph
-  alias Upkeep.Coordinator.Graph.Index
   alias Upkeep.Coordinator.Graph.Shard.Nodes
+  alias Upkeep.Coordinator.Topology
 
   @generation_table :upkeep_graph_shard_generations
 
@@ -53,8 +53,8 @@ defmodule Upkeep.Coordinator.Graph.Shard.Lifecycle do
   defp decode_owned_source_key(key, idx) do
     node_id = Graph.decode_source_key(key)
 
-    case Index.lookup(node_id) do
-      {:ok, {_kind, ^idx, _keys}} -> node_id
+    case Topology.lookup(node_id) do
+      {:ok, %{shard_idx: ^idx}} -> node_id
       _ -> :other
     end
   rescue
@@ -63,10 +63,8 @@ defmodule Upkeep.Coordinator.Graph.Shard.Lifecycle do
 
   defp sweep_owned_ets(idx) do
     idx
-    |> Index.owned_nodes()
-    |> Enum.each(fn {node_id, _kind, ^idx, _keys} ->
-      Index.delete(node_id)
-    end)
+    |> Topology.owned_nodes()
+    |> Enum.each(&Topology.unregister/1)
   end
 
   defp bump_generation(idx) do

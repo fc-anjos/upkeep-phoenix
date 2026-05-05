@@ -2,10 +2,10 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
   @moduledoc false
 
   alias Upkeep.Coordinator.Graph
-  alias Upkeep.Coordinator.Graph.Index
   alias Upkeep.Coordinator.Graph.Shard.Retries
   alias Upkeep.Coordinator.Node
   alias Upkeep.Coordinator.ReadNodes
+  alias Upkeep.Coordinator.Topology
   alias Upkeep.DAG.Store
 
   def register_source(state, node_id, interest_keys, loader) do
@@ -13,7 +13,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
       state
     else
       encoded_key = Graph.source_key(node_id)
-      Index.put_source(node_id, state.idx, interest_keys)
+      Topology.register_source(node_id, state.idx, interest_keys)
 
       {store, _changed?} = Store.put_source(state.store, node_id, nil, [])
 
@@ -30,7 +30,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
 
   def register_derived(state, node_id, dep_ids, compute_fn) do
     encoded_key = Graph.source_key(node_id)
-    Index.put_derived(node_id, state.idx)
+    Topology.register_derived(node_id, state.idx, dep_ids)
 
     store =
       state.store
@@ -41,7 +41,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
   end
 
   def remove(state, node_id) do
-    Index.delete(node_id)
+    Topology.unregister(node_id)
     ReadNodes.release(node_id)
 
     state = Retries.clear(state, node_id)

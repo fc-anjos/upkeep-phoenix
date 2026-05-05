@@ -8,8 +8,8 @@ defmodule Upkeep.Coordinator.Graph do
   shard:
 
     1. Receives cluster-wide notifications via `Group.dispatch/3`, then looks
-       up affected local source nodes via an ETS index (no event_keys subset
-       enumeration at notify time).
+       up affected local source nodes via `Upkeep.Coordinator.Topology` (no
+       event_keys subset enumeration at notify time).
     2. Buffers, then on flush:
        - dedups events,
        - runs `load_fn/0` once per dirty source node,
@@ -42,16 +42,11 @@ defmodule Upkeep.Coordinator.Graph do
 
   use Supervisor
 
-  alias Upkeep.Coordinator.Graph.Index
   alias Upkeep.Coordinator.ReadNodes
-  alias Upkeep.Source
+  alias Upkeep.Coordinator.Topology
 
   @group Upkeep.Group
   @notification_key "graph/notifications"
-
-  ## ETS table names
-  @index_table :upkeep_graph_index
-  @nodes_table :upkeep_graph_nodes
 
   ## Public API
 
@@ -71,7 +66,7 @@ defmodule Upkeep.Coordinator.Graph do
   """
   def register_source(node_id, interest_keys, source, params)
       when is_list(interest_keys) and is_atom(source) and is_map(params) do
-    shard = shard_of(node_id)
+    shard = Topology.shard_of(node_id)
 
     :ok =
       GenServer.call(
@@ -92,7 +87,7 @@ defmodule Upkeep.Coordinator.Graph do
   """
   def register_source_and_load(node_id, interest_keys, source, params)
       when is_list(interest_keys) and is_atom(source) and is_map(params) do
-    shard = shard_of(node_id)
+    shard = Topology.shard_of(node_id)
 
     {:ok, value, deps} =
       GenServer.call(
@@ -113,7 +108,7 @@ defmodule Upkeep.Coordinator.Graph do
   """
   def register_loader(node_id, interest_keys, load_fn)
       when is_list(interest_keys) and is_function(load_fn, 0) do
-    shard = shard_of(node_id)
+    shard = Topology.shard_of(node_id)
 
     :ok =
       GenServer.call(
@@ -152,7 +147,7 @@ defmodule Upkeep.Coordinator.Graph do
   def register_derived_and_compute(node_id, dep_node_ids, dep_values, compute_fn, metadata \\ %{})
       when is_list(dep_node_ids) and is_map(dep_values) and is_function(compute_fn, 1) and
              is_map(metadata) do
-    target_shard = shard_of(node_id)
+    target_shard = Topology.shard_of(node_id)
 
     {:ok, value} =
       GenServer.call(
@@ -165,58 +160,35 @@ defmodule Upkeep.Coordinator.Graph do
   end
 
   defp derived_shard!(node_id, dep_node_ids) do
-    plan = dependency_shard_plan(dep_node_ids)
+    groups = Topology.dependency_shard_groups(dep_node_ids)
 
-    case Enum.map(plan, & &1.shard) do
-      [shard] ->
+    case groups do
+      [%{shard: shard}] ->
         shard
 
       [] ->
         raise ArgumentError,
               "register_derived/3 for #{inspect(node_id)} requires at least one dep"
 
-      multiple ->
+      [_ | _] = multi ->
+        shards = Enum.map(multi, & &1.shard)
+
         raise ArgumentError,
               "register_derived/3 for #{inspect(node_id)} has deps split across shards " <>
-                "#{inspect(multiple)}. #{dependency_plan_message(plan)} " <>
+                "#{inspect(shards)}. #{cross_shard_message(multi)} " <>
                 "cross-shard recompute is not implemented yet."
     end
   end
 
-  @doc false
-  def dependency_shard_plan(dep_node_ids) when is_list(dep_node_ids) do
-    dep_node_ids
-    |> Enum.group_by(&shard_of_node/1)
-    |> Enum.map(fn {shard, node_ids} ->
-      %{
-        shard: shard,
-        node_ids: node_ids,
-        count: length(node_ids),
-        node_partitions: Enum.map(node_ids, &{&1, node_partition(&1)})
-      }
-    end)
-    |> Enum.sort_by(&{-&1.count, &1.shard})
-  end
-
-  defp dependency_plan_message(plan) do
-    largest_count =
-      plan
-      |> Enum.map(& &1.count)
-      |> Enum.max(fn -> 0 end)
-
-    largest_groups = Enum.filter(plan, &(&1.count == largest_count))
+  defp cross_shard_message(groups) do
+    largest_count = groups |> Enum.map(& &1.count) |> Enum.max()
+    largest = Enum.filter(groups, &(&1.count == largest_count))
 
     "The largest colocated dependency group is " <>
-      format_dependency_groups(largest_groups) <>
+      Enum.map_join(largest, "; ", fn group ->
+        "shard #{group.shard} with #{group.count} dep(s): #{inspect(group.node_ids)}"
+      end) <>
       ". Reshape the derived node around the largest group, or keep this compute local. "
-  end
-
-  defp format_dependency_groups(groups) do
-    groups
-    |> Enum.map(fn group ->
-      "shard #{group.shard} with #{group.count} dep(s): #{inspect(group.node_ids)}"
-    end)
-    |> Enum.join("; ")
   end
 
   @doc """
@@ -250,30 +222,18 @@ defmodule Upkeep.Coordinator.Graph do
     Group.dispatch(@group, @notification_key, {:upkeep_graph_notify, event})
   end
 
-  @doc false
-  def affected_source_node_ids(event, shard_idx)
-      when is_struct(event) and is_integer(shard_idx) do
-    event
-    |> Source.event_keys()
-    |> Index.lookup_nodes()
-    |> Enum.filter(&(shard_of_node(&1) == shard_idx))
-  end
-
   @doc "Synchronously drain all shards."
   def drain do
-    shards = :persistent_term.get({__MODULE__, :shards})
-    for idx <- 0..(shards - 1), do: GenServer.call(shard_name(idx), :drain, 60_000)
+    for idx <- 0..(Topology.shard_count() - 1), do: GenServer.call(shard_name(idx), :drain, 60_000)
     :ok
   end
 
   @doc false
   def reset do
-    shards = :persistent_term.get({__MODULE__, :shards})
+    for idx <- 0..(Topology.shard_count() - 1),
+        do: GenServer.call(shard_name(idx), :reset, 60_000)
 
-    for idx <- 0..(shards - 1), do: GenServer.call(shard_name(idx), :reset, 60_000)
-
-    :ets.delete_all_objects(@index_table)
-    :ets.delete_all_objects(@nodes_table)
+    Topology.reset()
     ReadNodes.clear()
 
     :ok
@@ -282,45 +242,7 @@ defmodule Upkeep.Coordinator.Graph do
   def shard_name(idx), do: :"#{__MODULE__}.Shard.#{idx}"
   def task_sup, do: :"#{__MODULE__}.TaskSup"
 
-  def shard_count, do: :persistent_term.get({__MODULE__, :shards})
-
-  @doc false
-  def shared_partition_info(node_ids) do
-    dep_partitions = Enum.map(node_ids, &{&1, node_partition(&1)})
-
-    case dep_partitions |> Enum.map(&elem(&1, 1)) |> Enum.uniq() do
-      [partition] ->
-        {:ok, partition, dep_partitions}
-
-      [] ->
-        {:error, :empty_deps, dep_partitions}
-
-      _partitions ->
-        {:error, :cross_partition_dep, dep_partitions}
-    end
-  end
-
-  @doc false
-  def shared_partition(node_ids) do
-    case shared_partition_info(node_ids) do
-      {:ok, partition, _dep_partitions} -> {:ok, partition}
-      {:error, reason, _dep_partitions} -> {:error, reason}
-    end
-  end
-
-  @doc false
-  def node_partition({source, params}) when is_atom(source) and is_map(params) do
-    Source.sharing_partition(source, params)
-  end
-
-  def node_partition({:derived, _view, _assign_name, dep_node_ids, _fun}) do
-    case shared_partition(dep_node_ids) do
-      {:ok, partition} -> partition
-      {:error, reason} -> {:derived, reason, dep_node_ids}
-    end
-  end
-
-  def node_partition(node_id), do: {:node, node_id}
+  defdelegate shard_count, to: Topology
 
   @doc "Group key under which a node's subscribers join."
   def source_key(node_id) do
@@ -342,23 +264,8 @@ defmodule Upkeep.Coordinator.Graph do
   @impl true
   def init(opts) do
     shards = Keyword.get(opts, :shards, System.schedulers_online())
-    :persistent_term.put({__MODULE__, :shards}, shards)
-
-    ensure_table(@index_table, [
-      :bag,
-      :public,
-      :named_table,
-      read_concurrency: true,
-      write_concurrency: true
-    ])
-
-    ensure_table(@nodes_table, [
-      :set,
-      :public,
-      :named_table,
-      read_concurrency: true,
-      write_concurrency: true
-    ])
+    Topology.put_shard_count(shards)
+    Topology.init_tables()
 
     Enum.each(ReadNodes.table_specs(), fn {name, opts} -> ensure_table(name, opts) end)
 
@@ -384,31 +291,10 @@ defmodule Upkeep.Coordinator.Graph do
     end
   end
 
-  defp shard_of(node_id) do
-    shards = :persistent_term.get({__MODULE__, :shards})
-    :erlang.phash2(node_partition(node_id), shards)
-  end
-
-  # Sources hash to their shard; derived nodes have an explicit override
-  # stored in nodes_table so they can colocate with their deps.
-  defp shard_of_node(node_id) do
-    case Index.lookup(node_id) do
-      {:ok, {_kind, shard_idx, _keys}} -> shard_idx
-      _ -> shard_of(node_id)
-    end
-  end
-
   defp join_subscriber(node_id) do
     case Group.join(@group, source_key(node_id), %{kind: :lv}) do
       :ok -> :ok
       :already_joined -> :ok
     end
   end
-
-  ## Shared accessors used by Shard
-
-  @doc false
-  def index_table, do: @index_table
-  @doc false
-  def nodes_table, do: @nodes_table
 end
