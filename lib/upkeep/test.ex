@@ -11,6 +11,7 @@ defmodule Upkeep.Test do
       ExUnit,
       Upkeep.Coordinator,
       Upkeep.Ecto,
+      Upkeep.Invalidation,
       Upkeep.Source
     ]
 
@@ -25,6 +26,7 @@ defmodule Upkeep.Test do
   """
   def reset_graph do
     Graph.reset()
+    Upkeep.Invalidation.reset()
   end
 
   @doc """

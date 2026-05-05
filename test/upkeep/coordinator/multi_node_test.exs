@@ -37,12 +37,12 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
   end
 
   describe "cluster-wide ReadCache invalidation" do
-    test "Graph.notify on parent evicts ReadCache entries cached on peer", %{peer: peer} do
+    test "Invalidation.dispatch on parent evicts ReadCache entries cached on peer", %{peer: peer} do
       seed_peer_read_node(peer, FakeSchema, 1001)
 
       assert :erpc.call(node_of(peer), ReadCache, :count, []) == 1
 
-      Graph.notify(%Upkeep.Change{
+      Upkeep.Invalidation.dispatch(%Upkeep.Change{
         name: :updated,
         action: :updated,
         schema: FakeSchema,
@@ -55,12 +55,12 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
       )
     end
 
-    test "Graph.notify on peer evicts ReadCache entries cached on parent", %{peer: peer} do
+    test "Invalidation.dispatch on peer evicts ReadCache entries cached on parent", %{peer: peer} do
       ReadCache.clear()
       seed_local_read_node(FakeSchema, 2002)
       assert ReadCache.count() == 1
 
-      :erpc.call(node_of(peer), Graph, :notify, [
+      :erpc.call(node_of(peer), Upkeep.Invalidation, :dispatch, [
         %Upkeep.Change{
           name: :inserted,
           action: :inserted,

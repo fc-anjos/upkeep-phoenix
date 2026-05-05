@@ -1,10 +1,7 @@
-defmodule Upkeep.Coordinator.SourceInvalidator do
+defmodule Upkeep.Invalidation.SourceInvalidator do
   @moduledoc false
 
   use GenServer
-
-  alias Upkeep.Source.ReadCache
-  alias Upkeep.Coordinator.Subscriptions
 
   def start_link(_opts \\ []) do
     GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
@@ -12,7 +9,7 @@ defmodule Upkeep.Coordinator.SourceInvalidator do
 
   @impl true
   def init(_) do
-    :ok = Subscriptions.join_notifications(:read_node_watcher)
+    :ok = join_notifications()
     {:ok, %{}}
   end
 
@@ -22,14 +19,24 @@ defmodule Upkeep.Coordinator.SourceInvalidator do
   end
 
   def handle_info({:upkeep_graph_notify, _origin, event}, state) do
-    ReadCache.invalidate(event)
+    Upkeep.Source.ReadCache.invalidate(event)
     {:noreply, state}
   end
 
   def handle_info({:upkeep_graph_notify, event}, state) do
-    ReadCache.invalidate(event)
+    Upkeep.Source.ReadCache.invalidate(event)
     {:noreply, state}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
+
+  defp join_notifications do
+    group = Upkeep.Coordinator.Graph.group()
+    key = Upkeep.Coordinator.Graph.notification_key()
+
+    case Group.join(group, key, %{kind: :read_node_watcher}) do
+      :ok -> :ok
+      :already_joined -> :ok
+    end
+  end
 end

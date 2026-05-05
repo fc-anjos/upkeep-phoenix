@@ -96,7 +96,7 @@ defmodule Upkeep.Source.ReadCacheTest do
     assert :counters.get(counter, 1) == 1
     assert ReadCache.count() == 1
 
-    # Simulate a write event the way Graph.notify would
+    # Simulate a write event at the cache layer.
     event = Upkeep.Change.updated(%Project{id: 1, name: "alpha"})
     ReadCache.invalidate(event)
     assert ReadCache.count() == 0
@@ -105,14 +105,14 @@ defmodule Upkeep.Source.ReadCacheTest do
     assert :counters.get(counter, 1) == 2
   end
 
-  test "Graph.notify/1 evicts matching read-cache entries before dispatch" do
+  test "Invalidation.dispatch/1 evicts matching read-cache entries before graph dispatch" do
     Repo.insert!(%Project{id: 1, name: "alpha"})
 
     q = from(p in Project)
     fetch_query(q)
     assert ReadCache.count() == 1
 
-    Upkeep.Coordinator.Graph.notify(Upkeep.Change.inserted(%Project{id: 2, name: "beta"}))
+    Upkeep.Invalidation.dispatch(Upkeep.Change.inserted(%Project{id: 2, name: "beta"}))
 
     assert ReadCache.count() == 0
   end
@@ -223,9 +223,9 @@ defmodule Upkeep.Source.ReadCacheTest do
     # Simulate a dispatched notification arriving on a *remote* node by
     # sending the same message Group.dispatch would deliver, directly to
     # the SourceInvalidator pid. This bypasses the inline invalidate inside
-    # Graph.notify/1, isolating the invalidator behavior, which is the
+    # Invalidation.dispatch/1, isolating the invalidator behavior, which is the
     # only mechanism remote nodes have to learn about evictions.
-    watcher = Process.whereis(Upkeep.Coordinator.SourceInvalidator)
+    watcher = Process.whereis(Upkeep.Invalidation.SourceInvalidator)
     assert is_pid(watcher)
 
     event = Upkeep.Change.updated(%Project{id: 1, name: "alpha2"})
@@ -301,7 +301,7 @@ defmodule Upkeep.Source.ReadCacheTest do
       Group.members(Upkeep.Coordinator.Graph.group(), Upkeep.Coordinator.Graph.notification_key())
 
     pids = Enum.map(members, fn {pid, _meta} -> pid end)
-    assert Process.whereis(Upkeep.Coordinator.SourceInvalidator) in pids
+    assert Process.whereis(Upkeep.Invalidation.SourceInvalidator) in pids
   end
 
   defp fetch_query(query, holder \\ nil) do

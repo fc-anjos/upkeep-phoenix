@@ -5,7 +5,7 @@ defmodule Upkeep.Mutation do
     top_level?: true,
     deps: [
       Upkeep.Change,
-      Upkeep.Coordinator
+      Upkeep.Invalidation
     ]
 
   @journal_key {__MODULE__, :journal}
@@ -101,9 +101,7 @@ defmodule Upkeep.Mutation do
   def dispatch_journal([]), do: :ok
 
   def dispatch_journal(events) do
-    Enum.each(events, &Upkeep.Change.diagnose_broad_update/1)
-    Enum.each(events, &Upkeep.Coordinator.Graph.notify/1)
-    :ok
+    Upkeep.Invalidation.dispatch(events)
   end
 
   defp transaction_committed?({:ok, _result}), do: true

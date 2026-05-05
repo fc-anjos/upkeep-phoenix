@@ -3,9 +3,9 @@ defmodule Upkeep.Coordinator.Supervisor do
 
   use Supervisor
 
-  alias Upkeep.Source.ReadCache
   alias Upkeep.Coordinator.Shards
   alias Upkeep.Coordinator.Topology
+  alias Upkeep.Source.ReadCache
 
   def start_link(opts \\ []) do
     Supervisor.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
@@ -23,7 +23,6 @@ defmodule Upkeep.Coordinator.Supervisor do
       [
         {Upkeep.SingleFlight.Registry,
          name: Upkeep.Source.ReadCache.Coalescer, telemetry_prefix: [:upkeep, :read_nodes]},
-        Upkeep.Coordinator.SourceInvalidator,
         Upkeep.Coordinator.Graph.Notifier,
         {Task.Supervisor, name: Shards.task_sup()}
       ] ++ shard_child_specs(shards)

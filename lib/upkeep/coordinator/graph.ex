@@ -5,7 +5,6 @@ defmodule Upkeep.Coordinator.Graph do
   alias Upkeep.Coordinator.Shards
   alias Upkeep.Coordinator.Subscriptions
   alias Upkeep.Coordinator.Topology
-  alias Upkeep.Source.ReadCache
 
   ## Public API
 
@@ -101,7 +100,6 @@ defmodule Upkeep.Coordinator.Graph do
   defdelegate subscribed?(node_id, pid \\ nil), to: Subscriptions
 
   def notify(event) when is_struct(event) do
-    ReadCache.invalidate(event)
     Notifier.notify(event)
     Subscriptions.dispatch_notification(event)
   end
@@ -116,7 +114,6 @@ defmodule Upkeep.Coordinator.Graph do
   def reset do
     Shards.reset_all()
     Topology.reset()
-    ReadCache.clear()
 
     :ok
   end

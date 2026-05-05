@@ -59,6 +59,7 @@ defmodule Upkeep do
       Upkeep.DAG,
       Upkeep.Ecto,
       Upkeep.Ecto.Source,
+      Upkeep.Invalidation,
       Upkeep.Mutation,
       Upkeep.Source,
       {Mix, :compile}
@@ -75,7 +76,8 @@ defmodule Upkeep do
     children = [
       Upkeep.Observability,
       {Group, name: Upkeep.Group, log: false},
-      {Upkeep.Coordinator.Graph, []}
+      {Upkeep.Coordinator.Graph, []},
+      Upkeep.Invalidation.SourceInvalidator
     ]
 
     Supervisor.init(children, strategy: :one_for_one)
