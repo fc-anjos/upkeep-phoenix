@@ -58,7 +58,7 @@ defmodule Upkeep.Test do
       raise ExUnit.AssertionError,
         message:
           "expected #{inspect(source)} with params #{inspect(params)} to have a known " <>
-            "Upkeep invalidation surface, got unknown entries: #{inspect(coverage.unknown)}"
+            "Upkeep invalidation surface\n" <> Upkeep.Source.Coverage.explain(coverage)
     end
   end
 

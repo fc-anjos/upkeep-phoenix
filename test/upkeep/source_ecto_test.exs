@@ -650,6 +650,11 @@ defmodule Upkeep.SourceEctoTest do
     assert coverage.unknown == []
     assert %{schema: Issue, reason: :fragment} in coverage.broad
     assert %{schema: Issue, reason: :unsupported_or} in coverage.broad
+
+    diagnostics = Upkeep.Source.Coverage.diagnostics(coverage)
+
+    assert Enum.any?(diagnostics, &(&1.reason == :fragment and &1.action =~ "regular Ecto"))
+    assert Enum.any?(diagnostics, &(&1.reason == :unsupported_or and &1.action =~ "equality/in"))
   end
 
   test "joined queries infer dependencies for every schema with equality filters" do
@@ -946,6 +951,9 @@ defmodule Upkeep.SourceEctoTest do
 
     assert coverage.unknown == []
     assert %{schema: Issue, reason: :fragment} in coverage.broad
+
+    assert [%{schema: Issue, reason: :fragment, label: "fragment fallback"}] =
+             Upkeep.Source.Coverage.diagnostics(coverage)
   end
 
   test "fragment broad fallback is scoped to the schema referenced by the fragment" do

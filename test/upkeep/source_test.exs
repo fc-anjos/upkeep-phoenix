@@ -153,10 +153,46 @@ defmodule Upkeep.SourceTest do
     coverage = Upkeep.Source.coverage(HiddenLoad, %{})
 
     assert coverage.unknown == [%{reason: :no_invalidation_surface}]
+    assert Upkeep.Source.Coverage.summary(coverage) =~ "non-reactive"
 
-    assert_raise ExUnit.AssertionError, ~r/known Upkeep invalidation surface/, fn ->
-      Upkeep.Test.assert_source_reactive!(HiddenLoad, %{})
-    end
+    assert [
+             %{
+               reason: :no_invalidation_surface,
+               severity: :error,
+               action: action
+             }
+           ] = Upkeep.Source.Coverage.diagnostics(coverage)
+
+    assert action =~ "Upkeep.read/1"
+
+    error =
+      assert_raise ExUnit.AssertionError, fn ->
+        Upkeep.Test.assert_source_reactive!(HiddenLoad, %{})
+      end
+
+    assert error.message =~ "known Upkeep invalidation surface"
+    assert error.message =~ "no invalidation surface"
+    assert error.message =~ "Add invalidated_by/reacts_to declarations"
+  end
+
+  test "coverage explanations include captured source location when available" do
+    coverage = Upkeep.Source.coverage(HiddenLoad, %{})
+
+    location = %{
+      file_label: "test/live_view.ex",
+      line: 42,
+      snippet: "> 42  socket |> watch(:hidden, HiddenLoad, %{})"
+    }
+
+    explanation = Upkeep.Source.Coverage.explain(coverage, source_location: location)
+
+    assert explanation =~ "Declared at test/live_view.ex:42"
+    assert explanation =~ "watch(:hidden, HiddenLoad"
+
+    assert [%{location_label: "test/live_view.ex:42", source_excerpt: source_excerpt}] =
+             Upkeep.Source.Coverage.diagnostics(coverage, source_location: location)
+
+    assert source_excerpt =~ "watch(:hidden, HiddenLoad"
   end
 
   test "sources expose retry configuration" do

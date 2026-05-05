@@ -203,11 +203,7 @@ defmodule Upkeep.Source.Runtime do
 
         require Logger
 
-        Logger.warning(
-          "Upkeep source #{inspect(coverage.source)} with params #{inspect(coverage.params)} produced " <>
-            "no invalidation keys. It will not react to any event. Add an " <>
-            "invalidated_by/reacts_to declaration, or call Upkeep.read inside load/1."
-        )
+        Logger.warning(Upkeep.Source.Coverage.explain(coverage))
       end
     end
 
