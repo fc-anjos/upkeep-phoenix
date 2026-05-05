@@ -117,8 +117,8 @@ defmodule Upkeep.Live.InspectorTest do
     derived_node = Enum.find(document.dag.nodes, &(&1.kind == :derived))
 
     assert source_node.source_location.location_label =~ "inspector_test.exs:"
-    assert source_node.source_location.code =~ "|> watch(:issues, ProjectIssues"
-    assert derived_node.source_location.code =~ "|> derive(:issue_count, [:issues]"
+    assert source_node.source_location.code =~ "watch(:issues, ProjectIssues"
+    assert derived_node.source_location.code =~ "derive(:issue_count, [:issues]"
 
     html =
       socket.assigns

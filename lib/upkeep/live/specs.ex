@@ -10,7 +10,7 @@ defmodule Upkeep.Live.Specs do
   alias Upkeep.Runtime.State
   alias Upkeep.Source.Runtime, as: Source
 
-  def source(assign_name, source, params, component, source_location \\ nil)
+  def source(assign_name, source, params, component)
       when is_atom(assign_name) and is_map(params) do
     source_id = Ids.scoped_source_id(source, params, component)
     node_id = Ids.source_node_id(source_id)
@@ -29,20 +29,18 @@ defmodule Upkeep.Live.Specs do
       materializers: [
         %Materializer.Assign{assign_name: assign_name, node_id: node_id, kind: :source}
       ],
-      metadata:
-        %{
-          assign_name: assign_name,
-          source_id: source_id,
-          source: source,
-          params: params,
-          component: component,
-          sharing_partition: Source.sharing_partition(source, params)
-        }
-        |> put_source_location(source_location)
+      metadata: %{
+        assign_name: assign_name,
+        source_id: source_id,
+        source: source,
+        params: params,
+        component: component,
+        sharing_partition: Source.sharing_partition(source, params)
+      }
     }
   end
 
-  def component(socket, component_id, deps, fun, source_location \\ nil)
+  def component(socket, component_id, deps, fun)
       when not is_nil(component_id) and is_list(deps) and is_function(fun, 1) do
     {dep_node_ids, dep_pairs} = DAGOperations.dependency_nodes(socket, deps)
     node_id = Ids.component_node_id(component_id)
@@ -54,11 +52,11 @@ defmodule Upkeep.Live.Specs do
       producer: %Producer.Compute{deps: dep_node_ids, dep_pairs: dep_pairs, fun: fun},
       scope: :local,
       materializers: [%Materializer.Component{component_id: component_id, node_id: node_id}],
-      metadata: %{component_id: component_id} |> put_source_location(source_location)
+      metadata: %{component_id: component_id}
     }
   end
 
-  def derived(socket, assign_name, deps, fun, source_location \\ nil)
+  def derived(socket, assign_name, deps, fun)
       when is_atom(assign_name) and is_list(deps) and is_function(fun, 1) do
     identity = external_fun_identity(fun)
     deps = maybe_add_implicit_scope_dep(socket, deps, identity)
@@ -79,14 +77,8 @@ defmodule Upkeep.Live.Specs do
       materializers: [
         %Materializer.Assign{assign_name: assign_name, node_id: node_id, kind: :derived}
       ],
-      metadata: %{assign_name: assign_name} |> put_source_location(source_location)
+      metadata: %{assign_name: assign_name}
     }
-  end
-
-  defp put_source_location(metadata, nil), do: metadata
-
-  defp put_source_location(metadata, source_location) when is_map(source_location) do
-    Map.put(metadata, :source_location, source_location)
   end
 
   defp external_fun_identity(fun) do

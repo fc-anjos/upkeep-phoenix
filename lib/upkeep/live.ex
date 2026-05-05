@@ -5,6 +5,8 @@ defmodule Upkeep.Live do
 
   alias Upkeep.Live.{RuntimeResult, Snapshot, Specs}
 
+  @registered_event [:upkeep, :live, :registered]
+
   defmacro __using__(opts \\ []) do
     inspector = Keyword.get(opts, :inspector, true)
 
@@ -39,25 +41,23 @@ defmodule Upkeep.Live do
   def watch(socket, assign_name, source, params, opts \\ []) when is_atom(assign_name) do
     params = normalize_params(params)
     component = Keyword.get(opts, :under)
-    source_location = Keyword.get(opts, :source_location)
+    location = Keyword.get(opts, :source_location)
 
     with_current_scope(socket, fn socket ->
-      Upkeep.Runtime.mount(
-        socket,
-        Specs.source(assign_name, source, params, component, source_location)
-      )
+      spec = Specs.source(assign_name, source, params, component)
+      announce_registration(spec, location)
+      Upkeep.Runtime.mount(socket, spec)
     end)
   end
 
   def component(socket, component_id, deps, fun, opts \\ [])
       when not is_nil(component_id) and is_list(deps) and is_function(fun, 1) do
-    source_location = Keyword.get(opts, :source_location)
+    location = Keyword.get(opts, :source_location)
 
     with_current_scope(socket, fn socket ->
-      Upkeep.Runtime.mount(
-        socket,
-        Specs.component(socket, component_id, deps, fun, source_location)
-      )
+      spec = Specs.component(socket, component_id, deps, fun)
+      announce_registration(spec, location)
+      Upkeep.Runtime.mount(socket, spec)
     end)
   end
 
@@ -67,10 +67,12 @@ defmodule Upkeep.Live do
 
   def derive(socket, assign_name, deps, fun, opts \\ [])
       when is_atom(assign_name) and is_list(deps) and is_function(fun, 1) do
-    source_location = Keyword.get(opts, :source_location)
+    location = Keyword.get(opts, :source_location)
 
     with_current_scope(socket, fn socket ->
-      Upkeep.Runtime.mount(socket, Specs.derived(socket, assign_name, deps, fun, source_location))
+      spec = Specs.derived(socket, assign_name, deps, fun)
+      announce_registration(spec, location)
+      Upkeep.Runtime.mount(socket, spec)
     end)
   end
 
@@ -132,6 +134,16 @@ defmodule Upkeep.Live do
   """
   def apply_dag_value(socket, source_id, value) do
     with_current_scope(socket, &Upkeep.Runtime.apply_dag_value(&1, source_id, value))
+  end
+
+  defp announce_registration(spec, location) do
+    :telemetry.execute(@registered_event, %{}, %{
+      node_id: spec.id,
+      kind: spec.kind,
+      source_location: location
+    })
+
+    :ok
   end
 
   defp with_current_scope(socket, fun) do

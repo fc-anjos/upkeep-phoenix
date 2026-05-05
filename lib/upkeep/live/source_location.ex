@@ -3,6 +3,9 @@ defmodule Upkeep.Live.SourceLocation do
 
   @context_radius 2
 
+  @doc """
+  Compile-time capture from a `Macro.Env`. Used by `Upkeep.Live.Macros`.
+  """
   def capture(%Macro.Env{} = caller, kind, call_name, args) when is_atom(call_name) do
     if capture?() do
       %{
@@ -20,7 +23,7 @@ defmodule Upkeep.Live.SourceLocation do
     end
   end
 
-  defp capture? do
+  def capture? do
     Application.get_env(:upkeep, :capture_source_locations, default_capture?())
   end
 
@@ -43,6 +46,8 @@ defmodule Upkeep.Live.SourceLocation do
     module
     |> Module.split()
     |> Enum.join(".")
+  rescue
+    ArgumentError -> Atom.to_string(module)
   end
 
   defp function_label(nil), do: nil

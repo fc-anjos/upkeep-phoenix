@@ -377,7 +377,7 @@ defmodule Upkeep.Live.Inspector.Panels do
         <.section_heading title="Captured Source" hint={"#{Enum.count(@layout.nodes, &Map.get(&1, :source_location))} of #{length(@layout.nodes)} nodes"}>
           <%= if not Enum.any?(@layout.nodes, &Map.get(&1, :source_location)) do %>
             <p class="m-0 text-sm text-neutral-500">
-              No callsites captured. Use the macro DSL (<code class="font-mono text-xs">import Upkeep.Live.Macros</code>) to record file:line for each node.
+              No callsites captured. Source capture is disabled (<code class="font-mono text-xs">config :upkeep, capture_source_locations: true</code> in dev/test).
             </p>
           <% else %>
             <ul class="m-0 list-none space-y-3 p-0">
@@ -391,6 +391,25 @@ defmodule Upkeep.Live.Inspector.Panels do
                 <pre class="m-0 max-h-48 overflow-auto bg-neutral-950 px-3 py-2 font-mono text-xs leading-5 text-neutral-100"><code>{node.source_location.code}</code></pre>
               </li>
             </ul>
+          <% end %>
+
+          <%= if Enum.any?(@layout.nodes, &Map.get(&1, :registered_without_source)) do %>
+            <div class="mt-4 border-t border-neutral-200 pt-3">
+              <h4 class="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-700">
+                Registered without callsite
+              </h4>
+              <p class="m-0 mb-2 text-xs text-neutral-600">
+                These nodes were registered by calling <code class="font-mono">Upkeep.Live.watch/derive/component</code> directly. Use the macro forms (<code class="font-mono">use Upkeep.Live</code>, then <code class="font-mono">watch/derive/component</code>) to capture file:line.
+              </p>
+              <ul class="m-0 list-none space-y-0.5 p-0 font-mono text-xs">
+                <li :for={node <- @layout.nodes} :if={Map.get(node, :registered_without_source)}>
+                  <a href={"##{node.inspect_dom_id}"} class="text-neutral-950 no-underline hover:underline">
+                    {node.detail}
+                  </a>
+                  <span class="ml-2 text-neutral-500">{node.kind_label}</span>
+                </li>
+              </ul>
+            </div>
           <% end %>
         </.section_heading>
 

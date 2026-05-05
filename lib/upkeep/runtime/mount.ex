@@ -77,7 +77,6 @@ defmodule Upkeep.Runtime.Mount do
             [
               {:telemetry, [:source, :watch], %{count: 1},
                spec.metadata
-               |> Map.drop([:source_location])
                |> Map.put(:node_id, spec.id)
                |> Map.put(:kind, :new)
                |> Map.put(:registered?, registered?)

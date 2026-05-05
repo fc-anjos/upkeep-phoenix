@@ -40,6 +40,7 @@ defmodule Upkeep do
   def init(_opts) do
     children = [
       Upkeep.Observability,
+      Upkeep.Live.SourceRegistry,
       {Group, name: Upkeep.Group, log: false},
       {Upkeep.Coordinator.Graph, []}
     ]

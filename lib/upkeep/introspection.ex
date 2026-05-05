@@ -98,10 +98,14 @@ defmodule Upkeep.Introspection do
             DeveloperView.node_explanation(node, assign_names, watch, sharing, assigns_by_node),
           optimization: DeveloperView.node_optimization(node, watch, sharing),
           source_location:
-            node
-            |> Map.get(:metadata, %{})
-            |> Map.get(:source_location)
-            |> decorate_source_location()
+            node_id
+            |> Upkeep.Live.SourceRegistry.lookup()
+            |> decorate_source_location(),
+          registered_without_source:
+            case Upkeep.Live.SourceRegistry.fetch(node_id) do
+              {:ok, nil} -> true
+              _ -> false
+            end
         }
       end)
 
