@@ -4,6 +4,7 @@ defmodule Upkeep.Coordinator.Graph.Shard do
 
   alias Upkeep.Coordinator.Graph.Shard.{Flush, InitialLoads, Lifecycle, Nodes, Retries}
   alias Upkeep.DAG.Store
+  alias Upkeep.LoadCoalescer
 
   ## Public
 
@@ -24,10 +25,8 @@ defmodule Upkeep.Coordinator.Graph.Shard do
        idx: idx,
        generation: generation,
        store: Store.new(),
-       initial_loads: %{},
-       initial_load_refs: %{},
-       initial_derived_loads: %{},
-       initial_derived_load_refs: %{},
+       source_loads: LoadCoalescer.new(),
+       derived_loads: LoadCoalescer.new(),
        retry_attempts: %{},
        retry_timers: %{},
        buffer_node_ids: MapSet.new(),
@@ -80,10 +79,8 @@ defmodule Upkeep.Coordinator.Graph.Shard do
       |> Retries.cancel_all()
       |> Map.merge(%{
         store: Store.new(),
-        initial_loads: %{},
-        initial_load_refs: %{},
-        initial_derived_loads: %{},
-        initial_derived_load_refs: %{},
+        source_loads: LoadCoalescer.new(),
+        derived_loads: LoadCoalescer.new(),
         retry_attempts: %{},
         retry_timers: %{},
         buffer_node_ids: MapSet.new(),
@@ -161,11 +158,8 @@ defmodule Upkeep.Coordinator.Graph.Shard do
   end
 
   defp demonitor_initial_loads(state) do
-    state.initial_load_refs
-    |> Map.keys()
-    |> Enum.concat(Map.keys(state.initial_derived_load_refs))
-    |> Enum.each(&Process.demonitor(&1, [:flush]))
-
+    LoadCoalescer.demonitor_all(state.source_loads)
+    LoadCoalescer.demonitor_all(state.derived_loads)
     state
   end
 end

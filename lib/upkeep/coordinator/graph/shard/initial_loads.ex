@@ -6,20 +6,17 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
   alias Upkeep.Coordinator.Node
   alias Upkeep.Coordinator.Topology
   alias Upkeep.DAG.Store
+  alias Upkeep.LoadCoalescer
 
   def register_source_and_load(state, node_id, from) do
-    case Map.fetch(state.initial_loads, node_id) do
-      {:ok, load} ->
-        node = Store.fetch_metadata!(state.store, node_id)
+    node = Store.fetch_metadata!(state.store, node_id)
 
+    case LoadCoalescer.join(state.source_loads, node_id, from) do
+      {:joined, _load, source_loads} ->
         emit_source(:hit, state.idx, node_id, node.loader)
+        {:noreply, %{state | source_loads: source_loads}}
 
-        state = put_in(state.initial_loads[node_id].waiters, [from | load.waiters])
-        {:noreply, state}
-
-      :error ->
-        node = Store.fetch_metadata!(state.store, node_id)
-
+      :no_load ->
         emit_source(:miss, state.idx, node_id, node.loader)
 
         task =
@@ -28,34 +25,18 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
             {node_id, value, current_keys, tracked_deps, node}
           end)
 
-        state = %{
-          state
-          | initial_loads:
-              Map.put(state.initial_loads, node_id, %{ref: task.ref, waiters: [from], node: node}),
-            initial_load_refs: Map.put(state.initial_load_refs, task.ref, node_id)
-        }
-
-        {:noreply, state}
+        source_loads = LoadCoalescer.start(state.source_loads, node_id, task.ref, from, node)
+        {:noreply, %{state | source_loads: source_loads}}
     end
   end
 
-  def register_derived_and_compute(
-        state,
-        node_id,
-        dep_ids,
-        dep_values,
-        compute_fn,
-        metadata,
-        from
-      ) do
-    case Map.fetch(state.initial_derived_loads, node_id) do
-      {:ok, load} ->
+  def register_derived_and_compute(state, node_id, dep_ids, dep_values, compute_fn, metadata, from) do
+    case LoadCoalescer.join(state.derived_loads, node_id, from) do
+      {:joined, _load, derived_loads} ->
         emit_derived(:hit, state.idx, node_id, dep_ids, metadata)
+        {:noreply, %{state | derived_loads: derived_loads}}
 
-        state = put_in(state.initial_derived_loads[node_id].waiters, [from | load.waiters])
-        {:noreply, state}
-
-      :error ->
+      :no_load ->
         emit_derived(:miss, state.idx, node_id, dep_ids, metadata)
 
         task =
@@ -63,31 +44,15 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
             {node_id, compute_fn.(dep_values)}
           end)
 
-        state = %{
-          state
-          | initial_derived_loads:
-              Map.put(state.initial_derived_loads, node_id, %{ref: task.ref, waiters: [from]}),
-            initial_derived_load_refs: Map.put(state.initial_derived_load_refs, task.ref, node_id)
-        }
-
-        {:noreply, state}
+        derived_loads = LoadCoalescer.start(state.derived_loads, node_id, task.ref, from)
+        {:noreply, %{state | derived_loads: derived_loads}}
     end
   end
 
-  def handle_source_result(
-        state,
-        ref,
-        node_id,
-        value,
-        current_keys,
-        tracked_deps,
-        %Node{} = node
-      ) do
-    case Map.fetch(state.initial_load_refs, ref) do
-      {:ok, ^node_id} ->
+  def handle_source_result(state, ref, node_id, value, current_keys, tracked_deps, %Node{} = node) do
+    case LoadCoalescer.pop(state.source_loads, ref) do
+      {:ok, ^node_id, load, source_loads} ->
         Process.demonitor(ref, [:flush])
-
-        {load, state} = pop_source(state, ref, node_id)
 
         if current_keys != node.registered_keys do
           Topology.reconcile_source(node_id, state.idx, node.registered_keys, current_keys)
@@ -102,79 +67,50 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
             %Node{node | registered_keys: current_keys, tracked_deps: tracked_deps, loaded?: true}
           )
 
-        Enum.each(load.waiters, &GenServer.reply(&1, {:ok, value, tracked_deps}))
+        LoadCoalescer.reply_all(load, {:ok, value, tracked_deps})
 
-        %{state | store: store}
+        %{state | store: store, source_loads: source_loads}
 
-      _stale_reply ->
+      _ ->
         state
     end
   end
 
-  def handle_derived_result(state, ref, node_id, value) do
-    case Map.fetch(state.initial_derived_load_refs, ref) do
-      {:ok, ^node_id} ->
+  def handle_derived_result(state, ref, _node_id, value) do
+    case LoadCoalescer.pop(state.derived_loads, ref) do
+      {:ok, _key, load, derived_loads} ->
         Process.demonitor(ref, [:flush])
+        LoadCoalescer.reply_all(load, {:ok, value})
+        %{state | derived_loads: derived_loads}
 
-        {load, state} = pop_derived(state, ref, node_id)
-
-        Enum.each(load.waiters, &GenServer.reply(&1, {:ok, value}))
-
-        state
-
-      _stale_reply ->
+      :stale ->
         state
     end
   end
 
   def handle_down(state, ref, reason) do
-    case Map.fetch(state.initial_load_refs, ref) do
-      {:ok, node_id} ->
-        {load, state} = pop_source(state, ref, node_id)
-        emit_exception([:upkeep, :graph, :source_load, :exception], state, node_id, load, reason)
-        Enum.each(load.waiters, &GenServer.reply(&1, {:error, reason}))
-        state
+    case LoadCoalescer.pop(state.source_loads, ref) do
+      {:ok, node_id, load, source_loads} ->
+        emit_source_exception(state, node_id, load.extra, reason)
+        LoadCoalescer.reply_all(load, {:error, reason})
+        %{state | source_loads: source_loads}
 
-      :error ->
-        handle_derived_down(state, ref, reason)
+      :stale ->
+        case LoadCoalescer.pop(state.derived_loads, ref) do
+          {:ok, _key, load, derived_loads} ->
+            :telemetry.execute(
+              [:upkeep, :graph, :derived_initial, :exception],
+              %{count: 1},
+              %{shard: state.idx, reason: reason}
+            )
+
+            LoadCoalescer.reply_all(load, {:error, reason})
+            %{state | derived_loads: derived_loads}
+
+          :stale ->
+            state
+        end
     end
-  end
-
-  defp handle_derived_down(state, ref, reason) do
-    case Map.fetch(state.initial_derived_load_refs, ref) do
-      {:ok, node_id} ->
-        {load, state} = pop_derived(state, ref, node_id)
-        emit_exception([:upkeep, :graph, :derived_initial, :exception], state.idx, reason)
-        Enum.each(load.waiters, &GenServer.reply(&1, {:error, reason}))
-        state
-
-      :error ->
-        state
-    end
-  end
-
-  defp pop_source(state, ref, node_id) do
-    load = Map.fetch!(state.initial_loads, node_id)
-
-    state = %{
-      state
-      | initial_loads: Map.delete(state.initial_loads, node_id),
-        initial_load_refs: Map.delete(state.initial_load_refs, ref)
-    }
-
-    {load, state}
-  end
-
-  defp pop_derived(state, ref, node_id) do
-    load = Map.fetch!(state.initial_derived_loads, node_id)
-
-    state = %{
-      state
-      | initial_derived_loads: Map.delete(state.initial_derived_loads, node_id),
-        initial_derived_load_refs: Map.delete(state.initial_derived_load_refs, ref)
-    }
-
-    {load, state}
   end
 
   defp emit_source(result, shard, node_id, loader) do
@@ -196,7 +132,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
     )
   end
 
-  defp emit_exception(event, state, node_id, %{node: %Node{} = node}, reason) do
+  defp emit_source_exception(state, node_id, %Node{} = node, reason) do
     metadata =
       node.loader
       |> Loaders.exception_metadata(reason)
@@ -204,11 +140,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
       |> Map.put(:node_id, node_id)
       |> Map.put(:subscriber_count, subscriber_count(node))
 
-    :telemetry.execute(event, %{count: 1}, metadata)
-  end
-
-  defp emit_exception(event, shard, reason) do
-    :telemetry.execute(event, %{count: 1}, %{shard: shard, reason: reason})
+    :telemetry.execute([:upkeep, :graph, :source_load, :exception], %{count: 1}, metadata)
   end
 
   defp subscriber_count(%Node{encoded_key: encoded_key}) do
