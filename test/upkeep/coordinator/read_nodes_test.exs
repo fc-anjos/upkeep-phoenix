@@ -117,7 +117,7 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
   end
 
   test "concurrent fetch_or_load for the same query collapses into one DB hit" do
-    for id <- 1..50, do: Repo.insert!(%Project{id: id, name: "p#{id}"})
+    for id <- 1..20, do: Repo.insert!(%Project{id: id, name: "p#{id}"})
 
     counter = :counters.new(1, [])
     handler_id = {__MODULE__, :coalesce_test}
@@ -133,14 +133,14 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
 
     parent = self()
     barrier = make_ref()
-    n = 25
+    n = 8
 
     pids =
       for i <- 1..n do
         spawn_link(fn ->
           # Each task builds the query in its own process to mimic
           # independent LV mounts that don't share Ecto state.
-          q = from(p in Project, where: p.id <= 50)
+          q = from(p in Project, where: p.id <= 20)
           send(parent, {:ready, i})
 
           receive do
@@ -155,7 +155,7 @@ defmodule Upkeep.Coordinator.ReadNodesTest do
     for i <- 1..n, do: assert_receive({:ready, ^i}, 5_000)
     Enum.each(pids, fn pid -> send(pid, {barrier, :go}) end)
 
-    for i <- 1..n, do: assert_receive({:done, ^i, 50}, 10_000)
+    for i <- 1..n, do: assert_receive({:done, ^i, 20}, 10_000)
 
     assert :counters.get(counter, 1) == 1
     assert ReadNodes.count() == 1

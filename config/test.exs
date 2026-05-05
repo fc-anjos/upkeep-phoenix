@@ -2,7 +2,8 @@ import Config
 
 config :upkeep,
   ecto_repos: [Upkeep.Repo],
-  repo: Upkeep.Repo
+  repo: Upkeep.Repo,
+  graph_retry: [base_delay_ms: 0, max_delay_ms: 0]
 
 config :upkeep, Upkeep.Repo,
   database: Path.expand("../upkeep_test.db", __DIR__),

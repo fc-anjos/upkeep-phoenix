@@ -2,6 +2,7 @@ defmodule Upkeep.BenchmarkGateTest do
   use ExUnit.Case, async: false
 
   @moduletag timeout: 120_000
+  @moduletag :benchmark
   @bench_watches 100
 
   test "initial source sharing benchmark fires and passes its gate" do

@@ -17,6 +17,10 @@ defmodule Upkeep.ChangeEqualityTest do
     defstruct [:id, :tenant_id, :name]
   end
 
+  defmodule OtherRow do
+    defstruct [:id, :tenant_id, :name]
+  end
+
   defp row(attrs), do: struct(Row, attrs)
 
   describe "distinguishes semantically distinct mutations" do
@@ -40,10 +44,6 @@ defmodule Upkeep.ChangeEqualityTest do
     end
 
     test "different schemas are not equal even when fields match" do
-      defmodule OtherRow do
-        defstruct [:id, :tenant_id, :name]
-      end
-
       a = row(id: 1, name: "a")
       b = struct(OtherRow, id: 1, name: "a")
       refute Change.updated(a) == Change.updated(b)

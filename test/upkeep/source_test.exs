@@ -160,6 +160,7 @@ defmodule Upkeep.SourceTest do
     change = updated_issue(project_id: 123)
 
     assert :ok = Upkeep.notify(change)
+    :ok = Upkeep.Coordinator.Graph.drain()
 
     source_id = {BoardColumns, %{project_id: 123}}
     assert_receive {:dag_values, [{^source_id, [:todo, :doing]}]}
@@ -176,8 +177,9 @@ defmodule Upkeep.SourceTest do
     change = updated_issue(project_id: 456)
 
     assert :ok = Upkeep.notify(change)
+    :ok = Upkeep.Coordinator.Graph.drain()
 
-    refute_receive {:dag_values, [{_, _}]}
+    refute_received {:dag_values, [{_, _}]}
   end
 
   test "coordinator sends one event when a process watches overlapping source keys" do
@@ -202,7 +204,7 @@ defmodule Upkeep.SourceTest do
       {{MyIssues, %{project_id: project_id, user_id: user_id}}, [:mine]}
     ])
 
-    refute_receive {:dag_values, _}
+    refute_received {:dag_values, _}
   end
 
   defp assert_dag_values(expected, received \\ []) do

@@ -71,7 +71,7 @@ defmodule Upkeep.MutationTest do
 
     assert {:error, :cancelled} = result
     drain_graph()
-    refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 778}}, _}]}
+    refute_received {:dag_values, [{{ProjectIssues, %{project_id: 778}}, _}]}
   end
 
   test "mutate discards notifications when the mutation raises" do
@@ -85,7 +85,7 @@ defmodule Upkeep.MutationTest do
     end
 
     drain_graph()
-    refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 779}}, _}]}
+    refute_received {:dag_values, [{{ProjectIssues, %{project_id: 779}}, _}]}
   end
 
   test "mutate preserves notification order after commit" do
@@ -102,7 +102,7 @@ defmodule Upkeep.MutationTest do
     drain_graph()
 
     assert_receive {:dag_values, [{{ProjectIssues, %{project_id: 780}}, [:before]}]}
-    refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 780}}, _}]}
+    refute_received {:dag_values, [{{ProjectIssues, %{project_id: 780}}, _}]}
   end
 
   test "nested mutate joins the outer journal and flushes once" do
@@ -155,7 +155,7 @@ defmodule Upkeep.MutationTest do
     assert {:error, :move, :cancelled, %{}} = Upkeep.mutate(multi)
     drain_graph()
 
-    refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 778}}, _}]}
+    refute_received {:dag_values, [{{ProjectIssues, %{project_id: 778}}, _}]}
   end
 
   test "Ecto.Multi preserves notification order after commit" do
@@ -176,7 +176,7 @@ defmodule Upkeep.MutationTest do
     drain_graph()
 
     assert_receive {:dag_values, [{{ProjectIssues, %{project_id: 779}}, [:before]}]}
-    refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 779}}, _}]}
+    refute_received {:dag_values, [{{ProjectIssues, %{project_id: 779}}, _}]}
   end
 
   test "nested Ecto.Multi rollback rolls back the outer mutation and discards all events" do
@@ -200,7 +200,7 @@ defmodule Upkeep.MutationTest do
     assert {:error, :rollback} = result
     drain_graph()
 
-    refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 780}}, _}]}
+    refute_received {:dag_values, [{{ProjectIssues, %{project_id: 780}}, _}]}
   end
 
   defp watch_project(project_id) do

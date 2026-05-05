@@ -29,7 +29,7 @@ defmodule Upkeep.Coordinator.Graph.Shard do
        store: Store.new(),
        source_loads: SingleFlight.new(),
        derived_loads: SingleFlight.new(),
-       retries: Retry.new(),
+       retries: Retry.new(retry_opts()),
        buffer: DirtyBuffer.new(threshold: 1_000)
      }}
   end
@@ -80,7 +80,7 @@ defmodule Upkeep.Coordinator.Graph.Shard do
         store: Store.new(),
         source_loads: SingleFlight.new(),
         derived_loads: SingleFlight.new(),
-        retries: Retry.new(),
+        retries: Retry.new(retry_opts()),
         buffer: DirtyBuffer.new(threshold: 1_000)
       })
 
@@ -163,5 +163,9 @@ defmodule Upkeep.Coordinator.Graph.Shard do
     SingleFlight.demonitor_all(state.source_loads)
     SingleFlight.demonitor_all(state.derived_loads)
     state
+  end
+
+  defp retry_opts do
+    Application.get_env(:upkeep, :graph_retry, [])
   end
 end

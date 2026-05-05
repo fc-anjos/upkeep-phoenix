@@ -54,7 +54,7 @@ defmodule Upkeep.MixProject do
 
   defp aliases do
     [
-      test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],
+      "test.setup": ["ecto.create --quiet", "ecto.migrate --quiet"],
       precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]
     ]
   end

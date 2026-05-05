@@ -224,9 +224,12 @@ defmodule Upkeep.LiveRefreshTest do
        %{
          table: table
        } do
+    attach_telemetry([[:upkeep, :graph, :initial_load, :hit]])
+
     test_pid = self()
     user_id = System.unique_integer([:positive])
     put_scoped_user(table, user_id, [:user_issue])
+    source_id = {BlockingScopedIssues, %{test_pid: test_pid, user_id: user_id}}
 
     task_a =
       Task.async(fn ->
@@ -242,7 +245,9 @@ defmodule Upkeep.LiveRefreshTest do
         |> Live.watch(:issues, BlockingScopedIssues, user_id: user_id, test_pid: test_pid)
       end)
 
-    refute_receive {:blocking_load_started, _second_loader_pid}, 50
+    assert_receive {:telemetry, [:upkeep, :graph, :initial_load, :hit], %{count: 1},
+                    %{node_id: ^source_id}}
+
     send(loader_pid, :continue)
 
     socket_a = Task.await(task_a)
@@ -300,13 +305,7 @@ defmodule Upkeep.LiveRefreshTest do
         |> Live.watch(:issues, BlockingScopedIssues, user_id: user_id, test_pid: test_pid)
       end)
 
-    refute_receive {:blocking_load_started, _second_loader_pid}, 50
-    send(loader_pid, :continue)
-
-    Task.await(task_a)
-    Task.await(task_b)
-
-    assert_receive {:telemetry, [:upkeep, :graph, :initial_load, :miss], %{count: 1},
+    assert_receive {:telemetry, [:upkeep, :graph, :initial_load, :hit], %{count: 1},
                     %{
                       node_id: ^source_id,
                       source: BlockingScopedIssues,
@@ -314,7 +313,12 @@ defmodule Upkeep.LiveRefreshTest do
                       sharing_partition: %{user_id: ^user_id}
                     }}
 
-    assert_receive {:telemetry, [:upkeep, :graph, :initial_load, :hit], %{count: 1},
+    send(loader_pid, :continue)
+
+    Task.await(task_a)
+    Task.await(task_b)
+
+    assert_receive {:telemetry, [:upkeep, :graph, :initial_load, :miss], %{count: 1},
                     %{
                       node_id: ^source_id,
                       source: BlockingScopedIssues,
@@ -359,17 +363,7 @@ defmodule Upkeep.LiveRefreshTest do
         |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
       end)
 
-    refute_receive {:derived_compute_started, _second_loader_pid, ^user_id}, 50
-    send(loader_pid, :continue)
-
-    socket_a = Task.await(task_a)
-    socket_b = Task.await(task_b)
-
-    assert socket_a.assigns.issue_count == 1
-    assert socket_b.assigns.issue_count == 1
-    assert load_count(:shared_issue_count, user_id) == 1
-
-    assert_receive {:telemetry, [:upkeep, :graph, :derived_initial, :miss], %{count: 1},
+    assert_receive {:telemetry, [:upkeep, :graph, :derived_initial, :hit], %{count: 1},
                     %{
                       node_id: ^graph_node_id,
                       assign_name: :issue_count,
@@ -380,7 +374,16 @@ defmodule Upkeep.LiveRefreshTest do
                       fun: {__MODULE__, :shared_issue_count, 1}
                     }}
 
-    assert_receive {:telemetry, [:upkeep, :graph, :derived_initial, :hit], %{count: 1},
+    send(loader_pid, :continue)
+
+    socket_a = Task.await(task_a)
+    socket_b = Task.await(task_b)
+
+    assert socket_a.assigns.issue_count == 1
+    assert socket_b.assigns.issue_count == 1
+    assert load_count(:shared_issue_count, user_id) == 1
+
+    assert_receive {:telemetry, [:upkeep, :graph, :derived_initial, :miss], %{count: 1},
                     %{
                       node_id: ^graph_node_id,
                       assign_name: :issue_count,
@@ -665,6 +668,8 @@ defmodule Upkeep.LiveRefreshTest do
   end
 
   test "concurrent connected derives share a chain of initial computes", %{table: table} do
+    attach_telemetry([[:upkeep, :graph, :derived_initial, :hit]])
+
     test_pid = self()
     user_id = System.unique_integer([:positive])
     put_scoped_user(table, user_id, [{user_id, :user_issue}])
@@ -690,11 +695,16 @@ defmodule Upkeep.LiveRefreshTest do
         |> Live.derive(:issue_label, [:issue_stats], &__MODULE__.shared_issue_label/1)
       end)
 
-    refute_receive {:derived_compute_started, _second_count_pid, ^user_id}, 50
+    assert_receive {:telemetry, [:upkeep, :graph, :derived_initial, :hit], %{count: 1},
+                    %{assign_name: :issue_stats}}
+
     send(count_pid, :continue)
 
     assert_receive {:derived_label_started, label_pid, ^user_id}
-    refute_receive {:derived_label_started, _second_label_pid, ^user_id}, 50
+
+    assert_receive {:telemetry, [:upkeep, :graph, :derived_initial, :hit], %{count: 1},
+                    %{assign_name: :issue_label}}
+
     send(label_pid, :continue)
 
     socket_a = Task.await(task_a)
@@ -741,6 +751,8 @@ defmodule Upkeep.LiveRefreshTest do
   end
 
   test "concurrent connected derives share a multi-source initial compute", %{table: table} do
+    attach_telemetry([[:upkeep, :graph, :derived_initial, :hit]])
+
     test_pid = self()
     user_id = System.unique_integer([:positive])
     put_scoped_user(table, user_id, [{user_id, :user_issue}])
@@ -774,7 +786,9 @@ defmodule Upkeep.LiveRefreshTest do
         )
       end)
 
-    refute_receive {:dashboard_model_started, _second_loader_pid, ^user_id}, 50
+    assert_receive {:telemetry, [:upkeep, :graph, :derived_initial, :hit], %{count: 1},
+                    %{assign_name: :dashboard_model}}
+
     send(loader_pid, :continue)
 
     socket_a = Task.await(task_a)
@@ -1135,7 +1149,8 @@ defmodule Upkeep.LiveRefreshTest do
 
     change = updated_issue(1, 1)
     assert :ok = Upkeep.notify(change)
-    refute_receive {:dag_values, [{_, _}]}
+    :ok = Upkeep.Coordinator.Graph.drain()
+    refute_received {:dag_values, [{_, _}]}
 
     socket =
       socket

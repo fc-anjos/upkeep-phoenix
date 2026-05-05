@@ -121,7 +121,8 @@ defmodule Upkeep.RepoCaptureTest do
                Repo.rollback(:cancelled)
              end)
 
-    refute_receive {:dag_values, [{_, _}]}
+    :ok = Upkeep.Coordinator.Graph.drain()
+    refute_received {:dag_values, [{_, _}]}
     refute Repo.get(Issue, 1)
   end
 
@@ -146,7 +147,8 @@ defmodule Upkeep.RepoCaptureTest do
                Repo.rollback(:cancelled)
              end)
 
-    refute_receive {:dag_values, [{_, _}]}
+    :ok = Upkeep.Coordinator.Graph.drain()
+    refute_received {:dag_values, [{_, _}]}
     refute Repo.get(Issue, 1)
   end
 
@@ -191,7 +193,7 @@ defmodule Upkeep.RepoCaptureTest do
              end)
 
     socket = assert_project_issues(socket, 9, ["Mine"])
-    refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 1, user_id: 10}}, _}]}
+    refute_received {:dag_values, [{{ProjectIssues, %{project_id: 1, user_id: 10}}, _}]}
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Mine"]
   end
 
@@ -259,7 +261,7 @@ defmodule Upkeep.RepoCaptureTest do
              end)
 
     socket = assert_project_issues(socket, 9, ["Imported"])
-    refute_receive {:dag_values, [{{ProjectIssues, %{project_id: 1, user_id: 10}}, _}]}
+    refute_received {:dag_values, [{{ProjectIssues, %{project_id: 1, user_id: 10}}, _}]}
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Imported"]
   end
 
@@ -415,7 +417,8 @@ defmodule Upkeep.RepoCaptureTest do
                Repo.rollback(:cancelled)
              end)
 
-    refute_receive {:dag_values, [{_, _}]}
+    :ok = Upkeep.Coordinator.Graph.drain()
+    refute_received {:dag_values, [{_, _}]}
     assert %Issue{assignee_id: 10} = Repo.get!(Issue, 1)
   end
 
@@ -433,20 +436,14 @@ defmodule Upkeep.RepoCaptureTest do
     assert_project_issues(9, ["Multi"])
   end
 
-  test "bulk capture can be disabled" do
+  test "repo and bulk capture can be disabled" do
     watch_project(user_id: 9)
 
     Repo.insert_all(Issue, [issue_attrs(id: 1, assignee_id: 9)], upkeep: false)
+    Repo.insert!(issue(id: 2, assignee_id: 9), upkeep: false)
 
-    refute_receive {:dag_values, [{_, _}]}
-  end
-
-  test "repo capture can be disabled for setup writes" do
-    watch_project(user_id: 9)
-
-    Repo.insert!(issue(id: 1, assignee_id: 9), upkeep: false)
-
-    refute_receive {:dag_values, [{_, _}]}
+    :ok = Upkeep.Coordinator.Graph.drain()
+    refute_received {:dag_values, [{_, _}]}
   end
 
   defp watch_project(opts) do

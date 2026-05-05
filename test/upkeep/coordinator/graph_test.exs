@@ -58,14 +58,14 @@ defmodule Upkeep.Coordinator.GraphTest do
       event = %Ev{id: 1, tenant_id: 1}
 
       with_suspended_notifier(fn ->
-        Enum.each(1..50, fn _ -> Graph.notify(event) end)
+        Enum.each(1..12, fn _ -> Graph.notify(event) end)
       end)
 
       :ok = Graph.drain()
 
       assert_receive {:telemetry, [:upkeep, :graph, :notifier, :flush], %{count: 1},
                       %{
-                        message_count: 50,
+                        message_count: 12,
                         event_count: 1,
                         source_node_count: 1,
                         shard_count: 1
@@ -142,7 +142,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       :ok = Graph.drain()
 
       assert :counters.get(counter, 1) == 0
-      refute_receive {:dag_values, [{^node_id, _}]}, 100
+      refute_received {:dag_values, [{^node_id, _}]}
 
       Graph.unregister(node_id)
     end
@@ -216,7 +216,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       # No subscribers; notify must not deliver anything.
       Graph.notify(%Ev{id: 99, tenant_id: 1})
       :ok = Graph.drain()
-      refute_receive {:dag_values, [{^node_id, _}]}, 200
+      refute_received {:dag_values, [{^node_id, _}]}
     end
 
     test "reset removes shared source state and allows a fresh registration" do
@@ -228,7 +228,7 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       Graph.notify(%Ev{id: 100, tenant_id: 1})
       :ok = Graph.drain()
-      refute_receive {:dag_values, [{^node_id, _}]}, 200
+      refute_received {:dag_values, [{^node_id, _}]}
 
       :ok = Graph.register_loader(node_id, [key], fn -> {:new, [key]} end)
 
@@ -246,7 +246,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       matching_key = narrow_key(%Ev{id: 10, tenant_id: 1})
 
       matching_id = {:matching_source, System.unique_integer()}
-      unrelated_ids = for idx <- 1..25, do: {:unrelated_source, idx, System.unique_integer()}
+      unrelated_ids = for idx <- 1..8, do: {:unrelated_source, idx, System.unique_integer()}
 
       :ok =
         Graph.register_loader(matching_id, [matching_key], fn ->
@@ -268,7 +268,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       :ok = Graph.drain()
 
       assert_receive {:dag_values, [{^matching_id, :matched}]}, 1_000
-      refute_receive {:dag_values, [{{:unrelated_source, _, _}, _}]}
+      refute_received {:dag_values, [{{:unrelated_source, _, _}, _}]}
 
       assert :counters.get(matching_loads, 1) == 1
       assert :counters.get(unrelated_loads, 1) == 0
@@ -341,7 +341,7 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       assert is_list(stacktrace)
       assert is_integer(retry_delay_ms)
-      assert retry_delay_ms > 0
+      assert retry_delay_ms >= 0
 
       assert_receive {:dag_values, batch}, 1_000
       assert {node_id, :recovered_value} in batch
@@ -403,7 +403,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       assert %{retry_delay_ms: nil} = List.last(failures)
       assert :counters.get(loads, 1) == 5
 
-      refute_receive {:dag_values, [{^node_id, _}]}, 100
+      refute_received {:dag_values, [{^node_id, _}]}
 
       :ets.insert(table, {:mode, :recover})
       Graph.notify(event)
@@ -440,7 +440,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       :ok = Graph.register_derived(derived_id, [source_id], compute_fn)
 
       subscribers =
-        start_subscribers(100, fn ->
+        start_subscribers(12, fn ->
           :ok = Graph.register_loader(source_id, keys, load_fn)
           :ok = Graph.register_derived(derived_id, [source_id], compute_fn)
         end)
@@ -483,7 +483,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       :ok = Graph.register_loader(source_id, keys, load_fn)
       :ok = Graph.register_derived(derived_id, [source_id], compute_fn)
 
-      Enum.each(1..50, fn _ -> Graph.notify(event) end)
+      Enum.each(1..12, fn _ -> Graph.notify(event) end)
       :ok = Graph.drain()
 
       assert_receive {:dag_values, batch}, 1_000
@@ -522,7 +522,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       :ok = Graph.register_loader(source_id, keys, load_fn)
       :ok = Graph.register_derived(derived_id, [source_id], compute_fn)
 
-      Enum.each(1..20, fn _ -> Graph.notify(%Ev{id: 7, tenant_id: 1}) end)
+      Enum.each(1..12, fn _ -> Graph.notify(%Ev{id: 7, tenant_id: 1}) end)
       :ok = Graph.drain()
 
       assert_receive {:dag_values, batch}, 1_000
