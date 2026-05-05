@@ -78,11 +78,17 @@ defmodule Upkeep.MixProject do
         "README.md",
         "docs/getting-started.md",
         "docs/public-api.md",
+        "docs/release-policy.md",
         "docs/known-gaps.md",
         "docs/query-coverage-known-gaps.md"
       ],
       groups_for_extras: [
-        Guides: ["README.md", "docs/getting-started.md", "docs/public-api.md"],
+        Guides: [
+          "README.md",
+          "docs/getting-started.md",
+          "docs/public-api.md",
+          "docs/release-policy.md"
+        ],
         Reference: ["docs/known-gaps.md", "docs/query-coverage-known-gaps.md"]
       ]
     ]
