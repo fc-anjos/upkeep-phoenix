@@ -30,7 +30,7 @@ defmodule Upkeep.ObservabilityTest do
     Upkeep.clear_events()
 
     on_exit(fn ->
-      Upkeep.Internal.Coordinator.Graph.drain()
+      Upkeep.Coordinator.Graph.drain()
       Upkeep.clear_events()
 
       if :ets.info(__MODULE__) != :undefined do
@@ -97,7 +97,7 @@ defmodule Upkeep.ObservabilityTest do
              |> Upkeep.Change.updated()
              |> Upkeep.notify()
 
-    :ok = Upkeep.Internal.Coordinator.Graph.drain()
+    :ok = Upkeep.Coordinator.Graph.drain()
 
     assert_receive {:dag_values, [{{ProjectIssues, %{project_id: ^project_id}}, [:after]}]}
 

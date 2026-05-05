@@ -1,10 +1,10 @@
-defmodule Upkeep.Internal.Coordinator.GraphTest do
+defmodule Upkeep.Coordinator.GraphTest do
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog
 
-  alias Upkeep.Internal.Coordinator.Graph
-  alias Upkeep.Internal.Coordinator.Graph.Notifier
+  alias Upkeep.Coordinator.Graph
+  alias Upkeep.Coordinator.Graph.Notifier
 
   defmodule Ev do
     defstruct [:id, :tenant_id]
@@ -23,7 +23,7 @@ defmodule Upkeep.Internal.Coordinator.GraphTest do
       end
     end)
 
-    invalidated_by(Upkeep.Internal.Coordinator.GraphTest.Ev, on: [:id, :tenant_id])
+    invalidated_by(Upkeep.Coordinator.GraphTest.Ev, on: [:id, :tenant_id])
   end
 
   defmodule OneRetrySource do
@@ -39,7 +39,7 @@ defmodule Upkeep.Internal.Coordinator.GraphTest do
       end
     end)
 
-    invalidated_by(Upkeep.Internal.Coordinator.GraphTest.Ev, on: [:id, :tenant_id])
+    invalidated_by(Upkeep.Coordinator.GraphTest.Ev, on: [:id, :tenant_id])
   end
 
   setup tags do

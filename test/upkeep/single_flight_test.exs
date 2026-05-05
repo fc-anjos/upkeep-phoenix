@@ -1,7 +1,7 @@
-defmodule Upkeep.Internal.SingleFlightTest do
+defmodule Upkeep.SingleFlightTest do
   use ExUnit.Case, async: true
 
-  alias Upkeep.Internal.SingleFlight
+  alias Upkeep.SingleFlight
 
   test "join returns :no_load when nothing is in flight" do
     assert SingleFlight.join(SingleFlight.new(), :k, {self(), make_ref()}) == :no_load

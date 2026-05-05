@@ -1,9 +1,9 @@
 defmodule Upkeep.Runtime.Execution.Shared do
   @moduledoc false
 
-  alias Upkeep.Internal.Coordinator.Topology
-  alias Upkeep.Internal.DAG.Graph, as: DAGGraph
-  alias Upkeep.Internal.DAG.Store
+  alias Upkeep.Coordinator.Topology
+  alias Upkeep.DAG.Graph, as: DAGGraph
+  alias Upkeep.DAG.Store
   alias Upkeep.Runtime.ScopeCapture
   alias Upkeep.Runtime.State
   alias Upkeep.Runtime.Subscriptions

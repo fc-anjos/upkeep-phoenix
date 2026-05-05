@@ -1,4 +1,4 @@
-defmodule Upkeep.Internal.Coordinator.MultiNodeTest do
+defmodule Upkeep.Coordinator.MultiNodeTest do
   @moduledoc """
   Real cluster validation for the read-node coordinator.
 
@@ -15,8 +15,8 @@ defmodule Upkeep.Internal.Coordinator.MultiNodeTest do
 
   @moduletag :multi_node
 
-  alias Upkeep.Internal.Coordinator.Graph
-  alias Upkeep.Internal.Coordinator.ReadNodes
+  alias Upkeep.Coordinator.Graph
+  alias Upkeep.Coordinator.ReadNodes
 
   defmodule FakeSchema, do: defstruct([:id])
 
@@ -111,7 +111,7 @@ defmodule Upkeep.Internal.Coordinator.MultiNodeTest do
   # wait via `Group.dispatch` of the settled value.
 
   defp seed_local_read_node(schema, fingerprint) do
-    deps = %Upkeep.Internal.Ecto.QueryDeps{schemas: MapSet.new([schema])}
+    deps = %Upkeep.Ecto.QueryDeps{schemas: MapSet.new([schema])}
     node_id = {:read, :synthetic_repo, fingerprint}
     :ets.insert(ReadNodes.values_table(), {node_id, []})
 
@@ -124,7 +124,7 @@ defmodule Upkeep.Internal.Coordinator.MultiNodeTest do
 
   defp seed_peer_read_node(peer, schema, fingerprint) do
     peer_node = node_of(peer)
-    deps = %Upkeep.Internal.Ecto.QueryDeps{schemas: MapSet.new([schema])}
+    deps = %Upkeep.Ecto.QueryDeps{schemas: MapSet.new([schema])}
     node_id = {:read, :synthetic_repo, fingerprint}
 
     :erpc.call(peer_node, :ets, :insert, [ReadNodes.values_table(), {node_id, []}])

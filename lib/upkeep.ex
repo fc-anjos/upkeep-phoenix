@@ -58,19 +58,19 @@ defmodule Upkeep do
     children = [
       Upkeep.Observability,
       {Group, name: Upkeep.Group, log: false},
-      {Upkeep.Internal.Coordinator.Graph, []}
+      {Upkeep.Coordinator.Graph, []}
     ]
 
     Supervisor.init(children, strategy: :one_for_one)
   end
 
-  defdelegate mutate(fun), to: Upkeep.Internal.Mutation
-  defdelegate mutate(repo, fun), to: Upkeep.Internal.Mutation
-  defdelegate notify(event), to: Upkeep.Internal.Mutation
-  defdelegate changed(name, payload, opts \\ []), to: Upkeep.Internal.Mutation
-  defdelegate inserted(record, opts \\ []), to: Upkeep.Internal.Mutation
-  defdelegate updated(record, opts \\ []), to: Upkeep.Internal.Mutation
-  defdelegate deleted(record, opts \\ []), to: Upkeep.Internal.Mutation
+  defdelegate mutate(fun), to: Upkeep.Mutation
+  defdelegate mutate(repo, fun), to: Upkeep.Mutation
+  defdelegate notify(event), to: Upkeep.Mutation
+  defdelegate changed(name, payload, opts \\ []), to: Upkeep.Mutation
+  defdelegate inserted(record, opts \\ []), to: Upkeep.Mutation
+  defdelegate updated(record, opts \\ []), to: Upkeep.Mutation
+  defdelegate deleted(record, opts \\ []), to: Upkeep.Mutation
   defdelegate read(query), to: Upkeep.Source
   defdelegate recent_events(opts \\ []), to: Upkeep.Observability, as: :recent
   defdelegate clear_events(), to: Upkeep.Observability, as: :clear

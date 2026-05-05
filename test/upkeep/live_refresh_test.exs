@@ -997,7 +997,7 @@ defmodule Upkeep.LiveRefreshTest do
              |> Upkeep.Change.updated()
              |> Upkeep.notify()
 
-    assert :ok = Upkeep.Internal.Coordinator.Graph.drain()
+    assert :ok = Upkeep.Coordinator.Graph.drain()
 
     graph_node_id =
       {:derived, UpkeepWeb.KanbanLive, :issue_count, [source_id],
@@ -1149,7 +1149,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     change = updated_issue(1, 1)
     assert :ok = Upkeep.notify(change)
-    :ok = Upkeep.Internal.Coordinator.Graph.drain()
+    :ok = Upkeep.Coordinator.Graph.drain()
     refute_received {:dag_values, [{_, _}]}
 
     socket =
@@ -1424,7 +1424,7 @@ defmodule Upkeep.LiveRefreshTest do
     change = inserted_comment(1, 1)
     source_id = {IssueComments, %{issue_id: 1}}
     assert :ok = Upkeep.notify(change)
-    assert :ok = Upkeep.Internal.Coordinator.Graph.drain()
+    assert :ok = Upkeep.Coordinator.Graph.drain()
     assert_receive {:dag_values, [{^source_id, [:comment_a, :comment_c]}]}
 
     socket = Live.apply_dag_value(socket, source_id, [:comment_a, :comment_c])
@@ -1766,7 +1766,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     subscribed? =
       Enum.any?(source_ids, fn source_id ->
-        Upkeep.Internal.Coordinator.Graph.subscribed?(source_id, self())
+        Upkeep.Coordinator.Graph.subscribed?(source_id, self())
       end)
 
     if subscribed?, do: 1, else: 0

@@ -1,7 +1,7 @@
 defmodule Upkeep.Runtime do
   @moduledoc false
 
-  alias Upkeep.Internal.DAG.Store
+  alias Upkeep.DAG.Store
   alias Upkeep.Live.Ids
   alias Upkeep.Runtime.DAGOperations
   alias Upkeep.Runtime.Mount

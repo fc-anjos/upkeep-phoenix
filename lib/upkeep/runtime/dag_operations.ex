@@ -1,7 +1,7 @@
 defmodule Upkeep.Runtime.DAGOperations do
   @moduledoc false
 
-  alias Upkeep.Internal.DAG.{Graph, Store}
+  alias Upkeep.DAG.{Graph, Store}
   alias Upkeep.Live.{Components, Ids, Telemetry}
   alias Upkeep.Runtime.State
 

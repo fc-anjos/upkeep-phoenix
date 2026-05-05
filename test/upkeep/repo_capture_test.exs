@@ -225,7 +225,7 @@ defmodule Upkeep.RepoCaptureTest do
                Repo.rollback(:cancelled)
              end)
 
-    :ok = Upkeep.Internal.Coordinator.Graph.drain()
+    :ok = Upkeep.Coordinator.Graph.drain()
     refute_received {:dag_values, [{_, _}]}
     refute Repo.get(Issue, 1)
   end
@@ -251,7 +251,7 @@ defmodule Upkeep.RepoCaptureTest do
                Repo.rollback(:cancelled)
              end)
 
-    :ok = Upkeep.Internal.Coordinator.Graph.drain()
+    :ok = Upkeep.Coordinator.Graph.drain()
     refute_received {:dag_values, [{_, _}]}
     refute Repo.get(Issue, 1)
   end
@@ -521,7 +521,7 @@ defmodule Upkeep.RepoCaptureTest do
                Repo.rollback(:cancelled)
              end)
 
-    :ok = Upkeep.Internal.Coordinator.Graph.drain()
+    :ok = Upkeep.Coordinator.Graph.drain()
     refute_received {:dag_values, [{_, _}]}
     assert %Issue{assignee_id: 10} = Repo.get!(Issue, 1)
   end
@@ -546,7 +546,7 @@ defmodule Upkeep.RepoCaptureTest do
     Repo.insert_all(Issue, [issue_attrs(id: 1, assignee_id: 9)], upkeep: false)
     Repo.insert!(issue(id: 2, assignee_id: 9), upkeep: false)
 
-    :ok = Upkeep.Internal.Coordinator.Graph.drain()
+    :ok = Upkeep.Coordinator.Graph.drain()
     refute_received {:dag_values, [{_, _}]}
   end
 

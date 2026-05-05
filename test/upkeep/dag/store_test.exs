@@ -1,7 +1,7 @@
-defmodule Upkeep.Internal.DAG.StoreTest do
+defmodule Upkeep.DAG.StoreTest do
   use ExUnit.Case, async: true
 
-  alias Upkeep.Internal.DAG.{Diff, Store}
+  alias Upkeep.DAG.{Diff, Store}
 
   test "recomputes changed source descendants in topological order" do
     store =
