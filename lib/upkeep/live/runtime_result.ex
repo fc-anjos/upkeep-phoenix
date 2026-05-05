@@ -4,7 +4,7 @@ defmodule Upkeep.Live.RuntimeResult do
   import Phoenix.Component, only: [assign: 3]
 
   alias Upkeep.Live.Telemetry
-  alias Upkeep.Internal.Runtime.Subscriptions
+  alias Upkeep.Runtime.Subscriptions
 
   def to_socket({:ok, socket, effects}) when is_list(effects) do
     Enum.reduce(effects, socket, &apply_one/2)

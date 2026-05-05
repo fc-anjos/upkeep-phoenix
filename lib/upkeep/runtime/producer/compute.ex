@@ -1,4 +1,4 @@
-defmodule Upkeep.Internal.Runtime.Producer.Compute do
+defmodule Upkeep.Runtime.Producer.Compute do
   @moduledoc false
 
   @enforce_keys [:deps, :dep_pairs, :fun]

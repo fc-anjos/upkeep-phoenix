@@ -1,4 +1,4 @@
-defmodule Upkeep.Internal.Runtime.NodeSpec do
+defmodule Upkeep.Runtime.NodeSpec do
   @moduledoc false
 
   @enforce_keys [:id, :kind, :deps, :producer, :scope, :materializers, :metadata]

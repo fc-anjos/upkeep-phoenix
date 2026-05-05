@@ -1,4 +1,4 @@
-defmodule Upkeep.Internal.Runtime.ScopeCapture do
+defmodule Upkeep.Runtime.ScopeCapture do
   @moduledoc false
 
   alias Upkeep.Live.Ids

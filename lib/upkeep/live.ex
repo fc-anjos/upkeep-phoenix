@@ -48,7 +48,7 @@ defmodule Upkeep.Live do
 
       spec = Specs.source(assign_name, source, params, component, location)
       announce_registration(spec, location)
-      Upkeep.Internal.Runtime.mount(socket, spec)
+      Upkeep.Runtime.mount(socket, spec)
     end)
   end
 
@@ -59,12 +59,12 @@ defmodule Upkeep.Live do
     with_current_scope(socket, fn socket ->
       spec = Specs.component(socket, component_id, deps, fun, location)
       announce_registration(spec, location)
-      Upkeep.Internal.Runtime.mount(socket, spec)
+      Upkeep.Runtime.mount(socket, spec)
     end)
   end
 
   def remove_component(socket, component_id) when not is_nil(component_id) do
-    with_current_scope(socket, &Upkeep.Internal.Runtime.remove_component(&1, component_id))
+    with_current_scope(socket, &Upkeep.Runtime.remove_component(&1, component_id))
   end
 
   def derive(socket, assign_name, deps, fun, opts \\ [])
@@ -74,30 +74,30 @@ defmodule Upkeep.Live do
     with_current_scope(socket, fn socket ->
       spec = Specs.derived(socket, assign_name, deps, fun, location)
       announce_registration(spec, location)
-      Upkeep.Internal.Runtime.mount(socket, spec)
+      Upkeep.Runtime.mount(socket, spec)
     end)
   end
 
   def unwatch(socket, assign_name) when is_atom(assign_name) do
-    with_current_scope(socket, &Upkeep.Internal.Runtime.unwatch_assign(&1, assign_name))
+    with_current_scope(socket, &Upkeep.Runtime.unwatch_assign(&1, assign_name))
   end
 
   def unwatch(socket, source, params) when is_atom(source) do
     with_current_scope(
       socket,
-      &Upkeep.Internal.Runtime.unwatch_source(&1, source, normalize_params(params))
+      &Upkeep.Runtime.unwatch_source(&1, source, normalize_params(params))
     )
   end
 
   def refresh(socket, assign_name, source, params) when is_atom(assign_name) do
     with_current_scope(
       socket,
-      &Upkeep.Internal.Runtime.refresh(&1, assign_name, source, normalize_params(params))
+      &Upkeep.Runtime.refresh(&1, assign_name, source, normalize_params(params))
     )
   end
 
   def refresh_matching(socket, event) when is_struct(event) do
-    with_current_scope(socket, &Upkeep.Internal.Runtime.refresh_matching(&1, event))
+    with_current_scope(socket, &Upkeep.Runtime.refresh_matching(&1, event))
   end
 
   def graph_snapshot(socket) do
@@ -109,11 +109,11 @@ defmodule Upkeep.Live do
   end
 
   def queue_matching(socket, event) when is_struct(event) do
-    with_current_scope(socket, &Upkeep.Internal.Runtime.queue_matching(&1, event))
+    with_current_scope(socket, &Upkeep.Runtime.queue_matching(&1, event))
   end
 
   def flush_refreshes(socket) do
-    with_current_scope(socket, &Upkeep.Internal.Runtime.flush_refreshes/1)
+    with_current_scope(socket, &Upkeep.Runtime.flush_refreshes/1)
   end
 
   def notify(event) when is_struct(event), do: Upkeep.notify(event)
@@ -123,7 +123,7 @@ defmodule Upkeep.Live do
   Reduces subscriber-side wakeups to one handle_info per shard flush.
   """
   def apply_dag_values(socket, pairs) when is_list(pairs) do
-    with_current_scope(socket, &Upkeep.Internal.Runtime.apply_dag_values(&1, pairs))
+    with_current_scope(socket, &Upkeep.Runtime.apply_dag_values(&1, pairs))
   end
 
   @doc """
@@ -131,7 +131,7 @@ defmodule Upkeep.Live do
   the source.load step — the coordinator already ran it once for everyone.
   """
   def apply_dag_value(socket, source_id, value) do
-    with_current_scope(socket, &Upkeep.Internal.Runtime.apply_dag_value(&1, source_id, value))
+    with_current_scope(socket, &Upkeep.Runtime.apply_dag_value(&1, source_id, value))
   end
 
   defp announce_registration(spec, location) do
@@ -145,7 +145,7 @@ defmodule Upkeep.Live do
   end
 
   defp with_current_scope(socket, fun) do
-    {:ok, socket, scope_effects} = Upkeep.Internal.Runtime.sync_current_scope(socket)
+    {:ok, socket, scope_effects} = Upkeep.Runtime.sync_current_scope(socket)
     {:ok, socket, effects} = fun.(socket)
     RuntimeResult.to_socket({:ok, socket, scope_effects ++ effects})
   end

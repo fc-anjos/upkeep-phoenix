@@ -1,4 +1,4 @@
-defmodule Upkeep.Internal.Runtime.State do
+defmodule Upkeep.Runtime.State do
   @moduledoc false
 
   alias Upkeep.Internal.DAG.Store

@@ -3,8 +3,8 @@ defmodule Upkeep.Live.SpecsTest do
 
   alias Upkeep.Live
   alias Upkeep.Live.Specs
-  alias Upkeep.Internal.Runtime.Materializer
-  alias Upkeep.Internal.Runtime.Producer
+  alias Upkeep.Runtime.Materializer
+  alias Upkeep.Runtime.Producer
 
   defmodule Issue do
     defstruct [:project_id]

@@ -1,10 +1,10 @@
-defmodule Upkeep.Internal.Runtime.Watches do
+defmodule Upkeep.Runtime.Watches do
   @moduledoc false
 
   alias Upkeep.Internal.DAG.{Graph, Store}
   alias Upkeep.Live.{Ids, Telemetry}
-  alias Upkeep.Internal.Runtime.DAGOperations
-  alias Upkeep.Internal.Runtime.State
+  alias Upkeep.Runtime.DAGOperations
+  alias Upkeep.Runtime.State
 
   def remove_component(socket, component_id) when not is_nil(component_id) do
     node_id = Ids.component_node_id(component_id)

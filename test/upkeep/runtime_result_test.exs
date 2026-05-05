@@ -1,9 +1,9 @@
-defmodule Upkeep.Internal.RuntimeResultTest do
+defmodule Upkeep.RuntimeResultTest do
   use ExUnit.Case, async: true
 
   alias Upkeep.Live
   alias Upkeep.Live.Specs
-  alias Upkeep.Internal.Runtime
+  alias Upkeep.Runtime
 
   defmodule Issue do
     defstruct [:project_id]

@@ -1,8 +1,8 @@
-defmodule Upkeep.Internal.Runtime.SourceLoads do
+defmodule Upkeep.Runtime.SourceLoads do
   @moduledoc false
 
   alias Upkeep.Live.Telemetry
-  alias Upkeep.Internal.Runtime.Subscriptions
+  alias Upkeep.Runtime.Subscriptions
   alias Upkeep.Internal.Source.Runtime, as: Source
 
   def load(watch, reason) do

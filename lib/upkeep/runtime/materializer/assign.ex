@@ -1,4 +1,4 @@
-defmodule Upkeep.Internal.Runtime.Materializer.Assign do
+defmodule Upkeep.Runtime.Materializer.Assign do
   @moduledoc false
 
   @enforce_keys [:assign_name, :node_id, :kind]

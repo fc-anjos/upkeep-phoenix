@@ -1,12 +1,12 @@
-defmodule Upkeep.Internal.Runtime.Execution.Shared do
+defmodule Upkeep.Runtime.Execution.Shared do
   @moduledoc false
 
   alias Upkeep.Internal.Coordinator.Topology
   alias Upkeep.Internal.DAG.Graph, as: DAGGraph
   alias Upkeep.Internal.DAG.Store
-  alias Upkeep.Internal.Runtime.ScopeCapture
-  alias Upkeep.Internal.Runtime.State
-  alias Upkeep.Internal.Runtime.Subscriptions
+  alias Upkeep.Runtime.ScopeCapture
+  alias Upkeep.Runtime.State
+  alias Upkeep.Runtime.Subscriptions
 
   def initial_value(
         socket,

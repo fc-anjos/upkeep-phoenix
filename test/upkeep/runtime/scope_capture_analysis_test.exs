@@ -1,7 +1,7 @@
-defmodule Upkeep.Internal.Runtime.ScopeCaptureAnalysisTest do
+defmodule Upkeep.Runtime.ScopeCaptureAnalysisTest do
   use ExUnit.Case, async: true
 
-  alias Upkeep.Internal.Runtime.ScopeCapture
+  alias Upkeep.Runtime.ScopeCapture
 
   test "analyze identifies external functions" do
     assert ScopeCapture.analyze(&:erlang.phash2/1) == {:external, {:erlang, :phash2, 1}}
