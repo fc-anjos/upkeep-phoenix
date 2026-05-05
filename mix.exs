@@ -74,7 +74,17 @@ defmodule Upkeep.MixProject do
   defp docs do
     [
       main: "Upkeep",
-      extras: ["README.md"]
+      extras: [
+        "README.md",
+        "docs/getting-started.md",
+        "docs/public-api.md",
+        "docs/known-gaps.md",
+        "docs/query-coverage-known-gaps.md"
+      ],
+      groups_for_extras: [
+        Guides: ["README.md", "docs/getting-started.md", "docs/public-api.md"],
+        Reference: ["docs/known-gaps.md", "docs/query-coverage-known-gaps.md"]
+      ]
     ]
   end
 end

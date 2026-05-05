@@ -4,6 +4,9 @@ defmodule Upkeep.Change do
 
   A change can be a record-aware convenience notification such as `:updated`, or
   an application-named semantic notification such as `:issue_moved`.
+
+  `updated(record, from: old_record)` is field-aware. `updated(record)` without
+  old state is treated as a broad `:updated` invalidation for correctness.
   """
 
   defstruct [:name, :action, :schema, :record, :from, :payload, meta: %{}]

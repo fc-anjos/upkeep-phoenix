@@ -4,17 +4,28 @@ defmodule Upkeep do
 
   ## Installation
 
-  Add to your application's supervision tree:
+  Configure the repo Upkeep should use for source reads and mutations:
+
+      config :upkeep, repo: MyApp.Repo
+
+  The repo should use `Upkeep.Ecto.Repo` so committed writes can refresh
+  watched sources:
+
+      defmodule MyApp.Repo do
+        use Upkeep.Ecto.Repo,
+          otp_app: :my_app,
+          adapter: Ecto.Adapters.Postgres
+      end
+
+  Add Upkeep to your application's supervision tree:
 
       children = [
-        # ...your repo, pubsub, etc...
+        MyApp.Repo,
         {Upkeep, []}
       ]
 
-  Configure your repo so `Upkeep.mutate/1` and `Upkeep.Test.allow_sandbox/0`
-  can find it without an explicit argument:
-
-      config :upkeep, repo: MyApp.Repo
+  See the package guide for complete setup, source authoring, LiveView usage,
+  tests, and inspector installation.
 
   Library users that prefer explicit args can still call
   `Upkeep.mutate(MyApp.Repo, fn -> ... end)` and
@@ -27,6 +38,10 @@ defmodule Upkeep do
   - `inserted/2`, `updated/2`, `deleted/2`, `changed/3` — typed event helpers.
   - `read/1` — Ecto-backed read inside a source context.
   - `recent_events/1`, `clear_events/0` — observability buffer.
+
+  `updated(record, from: old_record)` is field-aware. `updated(record)`
+  without old state refreshes matching `:updated` sources broadly for
+  correctness and emits a diagnostic.
 
   Optional: add `:upkeep_inspector` to your deps for an in-app dashboard
   that renders the runtime DAG, sources, and telemetry trail.

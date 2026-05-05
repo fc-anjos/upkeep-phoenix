@@ -5,6 +5,9 @@ defmodule Upkeep.Observability do
   This is intentionally not a durable audit log. It keeps a bounded buffer of
   recent Upkeep runtime events so tooling can answer basic "why did this update?"
   questions without every caller attaching telemetry handlers by hand.
+
+  Event names are diagnostic contracts for this release slice; metadata fields
+  may evolve until a later stability decision marks them stable.
   """
 
   use GenServer
