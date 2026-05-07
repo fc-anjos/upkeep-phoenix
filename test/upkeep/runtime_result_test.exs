@@ -5,6 +5,8 @@ defmodule Upkeep.RuntimeResultTest do
   alias Upkeep.Live.Specs
   alias Upkeep.Runtime
 
+  import Upkeep.TestSupport, only: [attach_telemetry: 1]
+
   defmodule Issue do
     defstruct [:project_id]
   end
@@ -56,22 +58,6 @@ defmodule Upkeep.RuntimeResultTest do
     assert assign_count >= 1
     assert telemetry_count >= 1
     assert register_source_count >= 1
-  end
-
-  defp attach_telemetry(events) do
-    handler_id = {__MODULE__, self(), System.unique_integer([:positive])}
-
-    :ok =
-      :telemetry.attach_many(
-        handler_id,
-        events,
-        fn event, measurements, metadata, pid ->
-          send(pid, {:telemetry, event, measurements, metadata})
-        end,
-        self()
-      )
-
-    on_exit(fn -> :telemetry.detach(handler_id) end)
   end
 
   defp find_effect(effects, kind) do

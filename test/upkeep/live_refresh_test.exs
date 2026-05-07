@@ -3,6 +3,8 @@ defmodule Upkeep.LiveRefreshTest do
 
   alias Upkeep.Live
 
+  import Upkeep.TestSupport, only: [attach_telemetry: 1]
+
   defmodule Issue do
     defstruct [:project_id, :issue_id]
   end
@@ -1796,23 +1798,6 @@ defmodule Upkeep.LiveRefreshTest do
       end)
 
     if subscribed?, do: 1, else: 0
-  end
-
-  defp attach_telemetry(events) do
-    test_pid = self()
-    handler_id = {__MODULE__, test_pid, make_ref()}
-
-    :ok =
-      :telemetry.attach_many(
-        handler_id,
-        events,
-        fn event, measurements, metadata, _config ->
-          send(test_pid, {:telemetry, event, measurements, metadata})
-        end,
-        nil
-      )
-
-    on_exit(fn -> :telemetry.detach(handler_id) end)
   end
 
   defp flush_telemetry_messages do
