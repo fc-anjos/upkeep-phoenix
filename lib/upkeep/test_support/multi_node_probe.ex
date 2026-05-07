@@ -7,12 +7,18 @@ defmodule Upkeep.TestSupport.MultiNodeProbe do
     |> Enum.uniq()
   end
 
-  def start_graph_subscriber(parent, node_id, interest_key, value) do
+  def start_graph_subscriber(parent, node_id, event_name, value) do
+    surface =
+      Upkeep.ReactiveSurface.manual([{:upkeep_change, event_name, nil}], fn
+        %Upkeep.Change{name: ^event_name} -> true
+        _event -> false
+      end)
+
     pid =
       spawn(fn ->
         :ok =
-          Upkeep.Coordinator.Graph.register_loader(node_id, [interest_key], fn ->
-            {value, [interest_key]}
+          Upkeep.Coordinator.Graph.register_loader(node_id, surface, fn ->
+            {value, surface}
           end)
 
         send(parent, {:peer_graph_subscriber_registered, node(), self(), node_id})

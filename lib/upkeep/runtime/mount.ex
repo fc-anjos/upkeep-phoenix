@@ -72,6 +72,7 @@ defmodule Upkeep.Runtime.Mount do
             registered? and not shared_initial_load?,
             source_id,
             interest_keys,
+            tracked_deps,
             producer
           ) ++
             [

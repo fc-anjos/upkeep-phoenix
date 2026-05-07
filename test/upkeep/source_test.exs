@@ -2,6 +2,7 @@ defmodule Upkeep.SourceTest do
   use ExUnit.Case, async: false
 
   alias Upkeep.Live
+  alias Upkeep.ReactiveSurface
 
   defmodule Issue do
     defstruct [:id, :project_id, :assignee_id, :column_id]
@@ -100,6 +101,37 @@ defmodule Upkeep.SourceTest do
              {:upkeep_change, :updated, Issue, [assignee_id: 9, project_id: 123]},
              {:upkeep_change, :issue_assigned, :_}
            ]
+  end
+
+  test "change event keys stay bounded by action and schema" do
+    change =
+      updated_issue(
+        project_id: 123,
+        assignee_id: 10,
+        column_id: 2,
+        from: %Issue{id: 1, project_id: 123, assignee_id: 9, column_id: 1}
+      )
+
+    assert Upkeep.Source.Keys.event_keys(change) == [
+             {:upkeep_change, :updated, Issue},
+             {:upkeep_change, :updated, :_}
+           ]
+  end
+
+  test "reactive surfaces index coarsely and match through exact source data" do
+    params = %{project_id: 123}
+
+    surface =
+      ReactiveSurface.source(BoardColumns, params, BoardColumns.__upkeep_interest_keys__(params))
+
+    assert ReactiveSurface.index_keys(surface) == [
+             {:upkeep_change, :issue_moved, :_},
+             {:upkeep_change, :inserted, Issue},
+             {:upkeep_change, :updated, Issue}
+           ]
+
+    assert ReactiveSurface.matches?(surface, inserted_issue(project_id: 123))
+    refute ReactiveSurface.matches?(surface, inserted_issue(project_id: 456))
   end
 
   test "declarative invalidators and custom reactors decide whether a source reacts" do

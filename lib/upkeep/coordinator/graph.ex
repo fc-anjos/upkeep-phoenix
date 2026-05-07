@@ -23,9 +23,9 @@ defmodule Upkeep.Coordinator.Graph do
 
   defdelegate group, to: Subscriptions
 
-  def register_source(node_id, interest_keys, source, params)
-      when is_list(interest_keys) and is_atom(source) and is_map(params) do
-    :ok = Shards.register_source(node_id, interest_keys, source, params)
+  def register_source(node_id, interest_keys, source, params, deps \\ [])
+      when is_list(interest_keys) and is_atom(source) and is_map(params) and is_list(deps) do
+    :ok = Shards.register_source(node_id, interest_keys, source, params, deps)
     Subscriptions.subscribe(node_id)
   end
 
@@ -36,9 +36,9 @@ defmodule Upkeep.Coordinator.Graph do
     {:ok, value, deps}
   end
 
-  def register_loader(node_id, interest_keys, load_fn)
-      when is_list(interest_keys) and is_function(load_fn, 0) do
-    :ok = Shards.register_loader(node_id, interest_keys, load_fn)
+  def register_loader(node_id, %Upkeep.ReactiveSurface{} = surface, load_fn)
+      when is_function(load_fn, 0) do
+    :ok = Shards.register_loader(node_id, surface, load_fn)
     Subscriptions.subscribe(node_id)
   end
 

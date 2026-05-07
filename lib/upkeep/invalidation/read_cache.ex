@@ -2,7 +2,6 @@ defmodule Upkeep.Invalidation.ReadCache do
   @moduledoc false
 
   alias Upkeep.SingleFlight.Registry
-  alias Upkeep.Source.Dependency
 
   @values :upkeep_read_node_values
   @index :upkeep_read_node_index
@@ -37,9 +36,10 @@ defmodule Upkeep.Invalidation.ReadCache do
               [] ->
                 value = load.()
                 :ets.insert(@values, {node_id, value})
+                surface = Upkeep.ReactiveSurface.deps(List.wrap(deps))
 
-                Enum.each(Dependency.coarse_keys(deps), fn key ->
-                  :ets.insert(@index, {key, {node_id, deps}})
+                Enum.each(Upkeep.ReactiveSurface.index_keys(surface), fn key ->
+                  :ets.insert(@index, {key, {node_id, surface}})
                 end)
 
                 value
@@ -83,12 +83,12 @@ defmodule Upkeep.Invalidation.ReadCache do
 
   def invalidate(%{action: _, schema: _} = event) do
     event
-    |> candidate_keys()
+    |> Upkeep.ReactiveSurface.candidate_keys()
     |> Enum.flat_map(&:ets.lookup(@index, &1))
-    |> Enum.uniq_by(fn {_key, {node_id, _deps}} -> node_id end)
-    |> Enum.reduce(0, fn {_key, {node_id, deps}}, acc ->
-      if Dependency.matches_change?(deps, event) do
-        evict(node_id, deps)
+    |> Enum.uniq_by(fn {_key, {node_id, _surface}} -> node_id end)
+    |> Enum.reduce(0, fn {_key, {node_id, surface}}, acc ->
+      if Upkeep.ReactiveSurface.matches?(surface, event) do
+        evict(node_id, surface)
         acc + 1
       else
         acc
@@ -108,10 +108,10 @@ defmodule Upkeep.Invalidation.ReadCache do
   def count, do: :ets.info(@values, :size)
   def coalescer_name, do: Upkeep.Invalidation.ReadCache.Coalescer
 
-  defp evict(node_id, deps) do
+  defp evict(node_id, surface) do
     :ets.delete(@values, node_id)
 
-    Enum.each(Dependency.coarse_keys(deps), fn key ->
+    Enum.each(Upkeep.ReactiveSurface.index_keys(surface), fn key ->
       :ets.match_delete(@index, {key, {node_id, :_}})
     end)
 
@@ -119,10 +119,4 @@ defmodule Upkeep.Invalidation.ReadCache do
     # gone; let the next fetch_or_load re-establish them.
     :ets.match_delete(@refs, {:_, node_id})
   end
-
-  defp candidate_keys(%{action: action, schema: schema}) when not is_nil(schema) do
-    [{action, schema}]
-  end
-
-  defp candidate_keys(_event), do: []
 end

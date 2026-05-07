@@ -8,23 +8,26 @@ defmodule Upkeep.Coordinator.Shards do
   def task_sup, do: @task_sup
   def name(idx), do: :"Elixir.Upkeep.Coordinator.Graph.Shard.#{idx}"
 
-  def register_source(node_id, interest_keys, source, params)
-      when is_list(interest_keys) and is_atom(source) and is_map(params) do
-    call_owner(node_id, {:register_source, node_id, interest_keys, {:source, source, params}})
+  def register_source(node_id, interest_keys, source, params, deps)
+      when is_list(interest_keys) and is_atom(source) and is_map(params) and is_list(deps) do
+    surface = Upkeep.ReactiveSurface.source(source, params, interest_keys, deps)
+    call_owner(node_id, {:register_source, node_id, surface, {:source, source, params}})
   end
 
   def register_source_and_load(node_id, interest_keys, source, params)
       when is_list(interest_keys) and is_atom(source) and is_map(params) do
+    surface = Upkeep.ReactiveSurface.source(source, params, interest_keys, [])
+
     call_owner(
       node_id,
-      {:register_source_and_load, node_id, interest_keys, {:source, source, params}},
+      {:register_source_and_load, node_id, surface, {:source, source, params}},
       30_000
     )
   end
 
-  def register_loader(node_id, interest_keys, load_fn)
-      when is_list(interest_keys) and is_function(load_fn, 0) do
-    call_owner(node_id, {:register_source, node_id, interest_keys, {:fun, load_fn}})
+  def register_loader(node_id, %Upkeep.ReactiveSurface{} = surface, load_fn)
+      when is_function(load_fn, 0) do
+    call_owner(node_id, {:register_source, node_id, surface, {:fun, load_fn}})
   end
 
   def register_derived(node_id, dep_node_ids, compute_fn)

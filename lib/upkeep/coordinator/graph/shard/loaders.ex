@@ -13,7 +13,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Loaders do
     )
 
     started_at = System.monotonic_time()
-    {value, current_keys, tracked_deps} = run_with_deps(loader)
+    {value, current_keys, tracked_deps, reactive_surface} = run_with_deps(loader)
     duration = System.monotonic_time() - started_at
 
     :telemetry.execute(
@@ -24,18 +24,23 @@ defmodule Upkeep.Coordinator.Graph.Shard.Loaders do
       |> Map.put(:tracked_deps, length(tracked_deps))
     )
 
-    {value, current_keys, tracked_deps}
+    {value, current_keys, tracked_deps, reactive_surface}
   end
 
   def run_with_deps({:source, source, params}) do
     {value, deps} = Source.load(source, params)
     dep_keys = SourceReactivity.deps_interest_keys(deps)
-    {value, Enum.uniq(source.__upkeep_interest_keys__(params) ++ dep_keys), deps}
+    current_keys = Enum.uniq(source.__upkeep_interest_keys__(params) ++ dep_keys)
+
+    reactive_surface =
+      Upkeep.ReactiveSurface.from_source_loader({:source, source, params}, current_keys, deps)
+
+    {value, current_keys, deps, reactive_surface}
   end
 
   def run_with_deps({:fun, load_fn}) do
-    {value, current_keys} = load_fn.()
-    {value, current_keys, []}
+    {value, reactive_surface} = load_fn.()
+    {value, Upkeep.ReactiveSurface.index_keys(reactive_surface), [], reactive_surface}
   end
 
   def metadata({:source, source, params}) do

@@ -61,6 +61,7 @@ defmodule Upkeep do
       Upkeep.Ecto.Source,
       Upkeep.Invalidation,
       Upkeep.Mutation,
+      Upkeep.ReactiveSurface,
       Upkeep.Source,
       {Mix, :compile}
     ]

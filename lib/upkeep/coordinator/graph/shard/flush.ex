@@ -75,10 +75,10 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
           node = Store.fetch_metadata!(state.store, node_id)
           metadata = source_load_metadata(node, state, node_id)
 
-          {value, current_keys, tracked_deps} =
+          {value, current_keys, tracked_deps, reactive_surface} =
             Loaders.run_with_deps(node.loader, metadata)
 
-          {node_id, value, current_keys, tracked_deps, node}
+          {node_id, value, current_keys, tracked_deps, reactive_surface, node}
         end,
         ordered: true,
         timeout: 30_000,
@@ -89,10 +89,11 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
       node_ids
       |> Stream.zip(stream)
       |> Enum.reduce({[], state}, fn
-        {_node_id, {:ok, {node_id, value, current_keys, tracked_deps, %Node{} = node}}},
+        {_node_id,
+         {:ok, {node_id, value, current_keys, tracked_deps, reactive_surface, %Node{} = node}}},
         {results, state} ->
-          if current_keys != node.registered_keys do
-            Topology.reconcile_source(node_id, state.idx, node.registered_keys, current_keys)
+          if reactive_surface != node.reactive_surface do
+            Topology.reconcile_source(node_id, state.idx, node.reactive_surface, reactive_surface)
           end
 
           state = Retries.clear(state, node_id)
@@ -101,6 +102,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
             Store.put_metadata(state.store, node_id, %Node{
               node
               | registered_keys: current_keys,
+                reactive_surface: reactive_surface,
                 tracked_deps: tracked_deps,
                 loaded?: true
             })

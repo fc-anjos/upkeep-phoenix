@@ -19,8 +19,11 @@ defmodule Upkeep.Live.RuntimeResult do
     socket
   end
 
-  defp apply_one({:register_source, source_id, interest_keys, source, params}, socket) do
-    Subscriptions.register(source_id, interest_keys, source, params)
+  defp apply_one(
+         {:register_source, source_id, interest_keys, tracked_deps, source, params},
+         socket
+       ) do
+    Subscriptions.register(source_id, interest_keys, source, params, tracked_deps)
     socket
   end
 

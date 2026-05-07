@@ -5,6 +5,7 @@ defmodule Upkeep.Coordinator.Node do
     :loader,
     :encoded_key,
     registered_keys: [],
+    reactive_surface: nil,
     tracked_deps: [],
     loaded?: false,
     retry: :default

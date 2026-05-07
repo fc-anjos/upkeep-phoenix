@@ -1,8 +1,8 @@
 defmodule Upkeep.Coordinator.Topology do
   @moduledoc false
 
+  alias Upkeep.ReactiveSurface
   alias Upkeep.Source.Identity, as: SourceIdentity
-  alias Upkeep.Source.Reactivity, as: SourceReactivity
 
   @nodes_table :upkeep_topology_nodes
   @index_table :upkeep_topology_index
@@ -35,9 +35,11 @@ defmodule Upkeep.Coordinator.Topology do
 
   ## Mutations
 
-  def register_source(node_id, shard_idx, interest_keys) do
-    :ets.insert(@nodes_table, {node_id, :source, shard_idx, interest_keys, []})
-    Enum.each(interest_keys, &:ets.insert(@index_table, {&1, node_id}))
+  def register_source(node_id, shard_idx, %ReactiveSurface{} = surface) do
+    index_keys = ReactiveSurface.index_keys(surface)
+
+    :ets.insert(@nodes_table, {node_id, :source, shard_idx, surface, []})
+    Enum.each(index_keys, &:ets.insert(@index_table, {&1, node_id}))
     :ok
   end
 
@@ -46,9 +48,9 @@ defmodule Upkeep.Coordinator.Topology do
     :ok
   end
 
-  def reconcile_source(node_id, shard_idx, old_keys, new_keys) do
-    old_set = MapSet.new(old_keys)
-    new_set = MapSet.new(new_keys)
+  def reconcile_source(node_id, shard_idx, old_surface, new_surface) do
+    old_set = old_surface |> ReactiveSurface.index_keys() |> MapSet.new()
+    new_set = new_surface |> ReactiveSurface.index_keys() |> MapSet.new()
 
     Enum.each(MapSet.difference(old_set, new_set), fn key ->
       :ets.delete_object(@index_table, {key, node_id})
@@ -58,14 +60,21 @@ defmodule Upkeep.Coordinator.Topology do
       :ets.insert(@index_table, {key, node_id})
     end)
 
-    :ets.insert(@nodes_table, {node_id, :source, shard_idx, new_keys, []})
+    :ets.insert(@nodes_table, {node_id, :source, shard_idx, new_surface, []})
     :ok
   end
 
   def unregister(node_id) do
     case lookup(node_id) do
-      {:ok, %{interest_keys: keys}} ->
-        Enum.each(keys, &:ets.delete_object(@index_table, {&1, node_id}))
+      {:ok, %{kind: :source, surface: surface}} ->
+        surface
+        |> ReactiveSurface.index_keys()
+        |> Enum.each(&:ets.delete_object(@index_table, {&1, node_id}))
+
+        :ets.delete(@nodes_table, node_id)
+        :ok
+
+      {:ok, %{kind: :derived}} ->
         :ets.delete(@nodes_table, node_id)
         :ok
 
@@ -78,6 +87,16 @@ defmodule Upkeep.Coordinator.Topology do
 
   def lookup(node_id) do
     case :ets.lookup(@nodes_table, node_id) do
+      [{^node_id, :source, shard_idx, %ReactiveSurface{} = surface, deps}] ->
+        {:ok,
+         %{
+           kind: :source,
+           shard_idx: shard_idx,
+           surface: surface,
+           interest_keys: ReactiveSurface.index_keys(surface),
+           deps: deps
+         }}
+
       [{^node_id, kind, shard_idx, interest_keys, deps}] ->
         {:ok, %{kind: kind, shard_idx: shard_idx, interest_keys: interest_keys, deps: deps}}
 
@@ -87,20 +106,12 @@ defmodule Upkeep.Coordinator.Topology do
   end
 
   def affected_source_node_ids(event) when is_struct(event) do
-    affected =
-      event
-      |> SourceReactivity.event_keys()
-      |> Enum.flat_map(&:ets.lookup(@index_table, &1))
-      |> Enum.map(fn {_key, node_id} -> node_id end)
-
-    affected =
-      if Upkeep.Change.broad_update?(event) do
-        affected ++ broad_update_source_node_ids(event)
-      else
-        affected
-      end
-
-    Enum.uniq(affected)
+    event
+    |> ReactiveSurface.candidate_keys()
+    |> Enum.flat_map(&:ets.lookup(@index_table, &1))
+    |> Enum.map(fn {_key, node_id} -> node_id end)
+    |> Enum.uniq()
+    |> Enum.filter(&source_node_matches?(&1, event))
   end
 
   def affected_source_node_ids(event, shard_idx)
@@ -181,33 +192,10 @@ defmodule Upkeep.Coordinator.Topology do
     end
   end
 
-  defp broad_update_source_node_ids(%Upkeep.Change{} = change) do
-    @nodes_table
-    |> :ets.tab2list()
-    |> Enum.flat_map(fn
-      {node_id, :source, _shard_idx, interest_keys, _deps} ->
-        if Enum.any?(interest_keys, &updated_interest_key?(&1, change.schema)) do
-          [node_id]
-        else
-          []
-        end
-
-      _other ->
-        []
-    end)
+  defp source_node_matches?(node_id, event) do
+    case lookup(node_id) do
+      {:ok, %{kind: :source, surface: surface}} -> ReactiveSurface.matches?(surface, event)
+      _ -> false
+    end
   end
-
-  defp updated_interest_key?({:upkeep_change, :updated, key_schema}, schema) do
-    change_schema_matches?(schema, key_schema)
-  end
-
-  defp updated_interest_key?({:upkeep_change, :updated, key_schema, _values}, schema) do
-    change_schema_matches?(schema, key_schema)
-  end
-
-  defp updated_interest_key?(_key, _schema), do: false
-
-  defp change_schema_matches?(_schema, :_), do: true
-  defp change_schema_matches?(schema, schema), do: true
-  defp change_schema_matches?(_schema, _key_schema), do: false
 end

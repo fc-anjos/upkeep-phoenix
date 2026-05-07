@@ -80,14 +80,14 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
       peer_node: peer_node
     } do
       node_id = {:peer_graph_source, System.unique_integer([:positive])}
-      interest_key = {:upkeep_change, :multi_node_graph_dispatch, nil}
+      event_name = :multi_node_graph_dispatch
       value = {:loaded_on_peer, peer_node}
 
       {:ok, subscriber} =
         :erpc.call(peer_node, Upkeep.TestSupport.MultiNodeProbe, :start_graph_subscriber, [
           self(),
           node_id,
-          interest_key,
+          event_name,
           value
         ])
 

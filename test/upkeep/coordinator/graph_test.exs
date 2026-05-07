@@ -6,6 +6,7 @@ defmodule Upkeep.Coordinator.GraphTest do
   alias Upkeep.Coordinator.Graph
   alias Upkeep.Coordinator.Graph.Notifier
   alias Upkeep.Invalidation.Bus
+  alias Upkeep.ReactiveSurface
 
   defmodule Ev do
     defstruct [:id, :tenant_id]
@@ -49,8 +50,18 @@ defmodule Upkeep.Coordinator.GraphTest do
     :ok
   end
 
-  defp narrow_key(%Ev{id: id, tenant_id: tid}) do
-    {:upkeep_event, Ev, Enum.sort([{:id, id}, {:tenant_id, tid}])}
+  defp event_surface(%Ev{} = event), do: event_surface([event])
+
+  defp event_surface(events) when is_list(events) do
+    matching_events =
+      events
+      |> Enum.map(fn %Ev{id: id, tenant_id: tenant_id} -> {id, tenant_id} end)
+      |> MapSet.new()
+
+    ReactiveSurface.manual([{:upkeep_event, Ev}], fn
+      %Ev{id: id, tenant_id: tenant_id} -> MapSet.member?(matching_events, {id, tenant_id})
+      _event -> false
+    end)
   end
 
   defp notify(event), do: Upkeep.Invalidation.dispatch(event)
@@ -80,15 +91,15 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       counter = :counters.new(1, [:atomics])
 
-      keys = [narrow_key(%Ev{id: 1, tenant_id: 1})]
+      surface = event_surface(%Ev{id: 1, tenant_id: 1})
 
       load_fn = fn ->
         :counters.add(counter, 1, 1)
-        {:loaded_value, keys}
+        {:loaded_value, surface}
       end
 
       node_id = {:test_source, System.unique_integer()}
-      :ok = Graph.register_loader(node_id, keys, load_fn)
+      :ok = Graph.register_loader(node_id, surface, load_fn)
 
       event = %Ev{id: 1, tenant_id: 1}
 
@@ -131,13 +142,13 @@ defmodule Upkeep.Coordinator.GraphTest do
       counter = :counters.new(1, [:atomics])
       event_a = %Ev{id: 201, tenant_id: 1}
       event_b = %Ev{id: 202, tenant_id: 1}
-      keys = [narrow_key(event_a), narrow_key(event_b)]
+      surface = event_surface([event_a, event_b])
       node_id = {:same_source_notifier_batch, System.unique_integer()}
 
       :ok =
-        Graph.register_loader(node_id, keys, fn ->
+        Graph.register_loader(node_id, surface, fn ->
           :counters.add(counter, 1, 1)
-          {:loaded, keys}
+          {:loaded, surface}
         end)
 
       with_suspended_notifier(fn ->
@@ -164,13 +175,13 @@ defmodule Upkeep.Coordinator.GraphTest do
     test "notifier routes local invalidation bus events" do
       counter = :counters.new(1, [:atomics])
       event = %Ev{id: 203, tenant_id: 1}
-      keys = [narrow_key(event)]
+      surface = event_surface(event)
       node_id = {:local_bus_event_routed, System.unique_integer()}
 
       :ok =
-        Graph.register_loader(node_id, keys, fn ->
+        Graph.register_loader(node_id, surface, fn ->
           :counters.add(counter, 1, 1)
-          {:loaded, keys}
+          {:loaded, surface}
         end)
 
       send(Process.whereis(Notifier), {:upkeep_invalidation, node(), event})
@@ -187,13 +198,13 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       counter = :counters.new(1, [:atomics])
       event = %Ev{id: 204, tenant_id: 1}
-      keys = [narrow_key(event)]
+      surface = event_surface(event)
       node_id = {:remote_event_routed, System.unique_integer()}
 
       :ok =
-        Graph.register_loader(node_id, keys, fn ->
+        Graph.register_loader(node_id, surface, fn ->
           :counters.add(counter, 1, 1)
-          {:loaded, keys}
+          {:loaded, surface}
         end)
 
       send(Process.whereis(Notifier), {:upkeep_invalidation, :remote@nohost, event})
@@ -214,19 +225,19 @@ defmodule Upkeep.Coordinator.GraphTest do
     end
 
     test "load_fn returning new keys reconciles the index" do
-      key_a = narrow_key(%Ev{id: 1, tenant_id: 1})
-      key_b = narrow_key(%Ev{id: 1, tenant_id: 2})
+      surface_a = event_surface(%Ev{id: 1, tenant_id: 1})
+      surface_b = event_surface(%Ev{id: 1, tenant_id: 2})
       counter = :counters.new(1, [:atomics])
 
-      # First load advertises key_a only; second load advertises key_b only.
+      # First load advertises surface_a only; second load advertises surface_b only.
       load_fn = fn ->
         next = :counters.add(counter, 1, 1)
-        keys = if next == 1, do: [key_a], else: [key_b]
-        {:v, keys}
+        surface = if next == 1, do: surface_a, else: surface_b
+        {:v, surface}
       end
 
       node_id = {:reregister_test, System.unique_integer()}
-      :ok = Graph.register_loader(node_id, [key_a], load_fn)
+      :ok = Graph.register_loader(node_id, surface_a, load_fn)
 
       # First flush: routes via key_a.
       notify(%Ev{id: 1, tenant_id: 1})
@@ -241,11 +252,11 @@ defmodule Upkeep.Coordinator.GraphTest do
     end
 
     test "unregistering removes interest and the index" do
-      key = narrow_key(%Ev{id: 99, tenant_id: 1})
-      load_fn = fn -> {:v, [key]} end
+      surface = event_surface(%Ev{id: 99, tenant_id: 1})
+      load_fn = fn -> {:v, surface} end
       node_id = {:remove_test, System.unique_integer()}
 
-      :ok = Graph.register_loader(node_id, [key], load_fn)
+      :ok = Graph.register_loader(node_id, surface, load_fn)
       :ok = Graph.unregister(node_id)
 
       # No subscribers; notify must not deliver anything.
@@ -255,17 +266,17 @@ defmodule Upkeep.Coordinator.GraphTest do
     end
 
     test "reset removes shared source state and allows a fresh registration" do
-      key = narrow_key(%Ev{id: 100, tenant_id: 1})
+      surface = event_surface(%Ev{id: 100, tenant_id: 1})
       node_id = {:reset_test, System.unique_integer()}
 
-      :ok = Graph.register_loader(node_id, [key], fn -> {:old, [key]} end)
+      :ok = Graph.register_loader(node_id, surface, fn -> {:old, surface} end)
       :ok = Graph.reset()
 
       notify(%Ev{id: 100, tenant_id: 1})
       :ok = Graph.drain()
       refute_received {:dag_values, [{^node_id, _}]}
 
-      :ok = Graph.register_loader(node_id, [key], fn -> {:new, [key]} end)
+      :ok = Graph.register_loader(node_id, surface, fn -> {:new, surface} end)
 
       notify(%Ev{id: 100, tenant_id: 1})
       :ok = Graph.drain()
@@ -278,24 +289,24 @@ defmodule Upkeep.Coordinator.GraphTest do
       matching_loads = :counters.new(1, [:atomics])
       unrelated_loads = :counters.new(1, [:atomics])
 
-      matching_key = narrow_key(%Ev{id: 10, tenant_id: 1})
+      matching_surface = event_surface(%Ev{id: 10, tenant_id: 1})
 
       matching_id = {:matching_source, System.unique_integer()}
       unrelated_ids = for idx <- 1..8, do: {:unrelated_source, idx, System.unique_integer()}
 
       :ok =
-        Graph.register_loader(matching_id, [matching_key], fn ->
+        Graph.register_loader(matching_id, matching_surface, fn ->
           :counters.add(matching_loads, 1, 1)
-          {:matched, [matching_key]}
+          {:matched, matching_surface}
         end)
 
       Enum.each(unrelated_ids, fn node_id ->
-        key = narrow_key(%Ev{id: System.unique_integer([:positive]), tenant_id: 999})
+        surface = event_surface(%Ev{id: System.unique_integer([:positive]), tenant_id: 999})
 
         :ok =
-          Graph.register_loader(node_id, [key], fn ->
+          Graph.register_loader(node_id, surface, fn ->
             :counters.add(unrelated_loads, 1, 1)
-            {:unrelated, [key]}
+            {:unrelated, surface}
           end)
       end)
 
@@ -319,7 +330,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       derived_computes = :counters.new(1, [:atomics])
 
       event = %Ev{id: 11, tenant_id: 1}
-      key = narrow_key(event)
+      surface = event_surface(event)
       node_id = {:failing_refresh_source, System.unique_integer()}
       derived_id = {:failing_refresh_derived, System.unique_integer()}
 
@@ -327,9 +338,9 @@ defmodule Upkeep.Coordinator.GraphTest do
         :counters.add(loads, 1, 1)
 
         case :counters.get(loads, 1) do
-          1 -> {:stable_value, [key]}
+          1 -> {:stable_value, surface}
           2 -> raise "refresh failed"
-          _ -> {:recovered_value, [key]}
+          _ -> {:recovered_value, surface}
         end
       end
 
@@ -338,7 +349,7 @@ defmodule Upkeep.Coordinator.GraphTest do
         {:derived, Map.fetch!(deps, node_id)}
       end
 
-      :ok = Graph.register_loader(node_id, [key], load_fn)
+      :ok = Graph.register_loader(node_id, surface, load_fn)
       :ok = Graph.register_derived(derived_id, [node_id], compute_fn)
 
       notify(event)
@@ -396,7 +407,7 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       loads = :counters.new(1, [:atomics])
       event = %Ev{id: 12, tenant_id: 1}
-      key = narrow_key(event)
+      surface = event_surface(event)
       node_id = {:bounded_retry_source, System.unique_integer()}
 
       load_fn = fn ->
@@ -404,17 +415,17 @@ defmodule Upkeep.Coordinator.GraphTest do
 
         case :counters.get(loads, 1) do
           1 ->
-            {:stable_value, [key]}
+            {:stable_value, surface}
 
           _ ->
             case :ets.lookup(table, :mode) do
-              [{:mode, :recover}] -> {:recovered_value, [key]}
+              [{:mode, :recover}] -> {:recovered_value, surface}
               _ -> raise "still broken"
             end
         end
       end
 
-      :ok = Graph.register_loader(node_id, [key], load_fn)
+      :ok = Graph.register_loader(node_id, surface, load_fn)
 
       notify(event)
       :ok = Graph.drain()
@@ -535,11 +546,11 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       source_id = {:shared_source, System.unique_integer()}
       derived_id = {:shared_derived, System.unique_integer()}
-      keys = [narrow_key(%Ev{id: 20, tenant_id: 1})]
+      surface = event_surface(%Ev{id: 20, tenant_id: 1})
 
       load_fn = fn ->
         :counters.add(source_loads, 1, 1)
-        {[:a, :b], keys}
+        {[:a, :b], surface}
       end
 
       compute_fn = fn deps ->
@@ -547,12 +558,12 @@ defmodule Upkeep.Coordinator.GraphTest do
         deps |> Map.fetch!(source_id) |> length()
       end
 
-      :ok = Graph.register_loader(source_id, keys, load_fn)
+      :ok = Graph.register_loader(source_id, surface, load_fn)
       :ok = Graph.register_derived(derived_id, [source_id], compute_fn)
 
       subscribers =
         start_subscribers(12, fn ->
-          :ok = Graph.register_loader(source_id, keys, load_fn)
+          :ok = Graph.register_loader(source_id, surface, load_fn)
           :ok = Graph.register_derived(derived_id, [source_id], compute_fn)
         end)
 
@@ -579,11 +590,11 @@ defmodule Upkeep.Coordinator.GraphTest do
       source_id = {:coalesced_source, System.unique_integer()}
       derived_id = {:coalesced_derived, System.unique_integer()}
       event = %Ev{id: 21, tenant_id: 1}
-      keys = [narrow_key(event)]
+      surface = event_surface(event)
 
       load_fn = fn ->
         :counters.add(source_loads, 1, 1)
-        {:value, keys}
+        {:value, surface}
       end
 
       compute_fn = fn deps ->
@@ -591,7 +602,7 @@ defmodule Upkeep.Coordinator.GraphTest do
         Map.fetch!(deps, source_id)
       end
 
-      :ok = Graph.register_loader(source_id, keys, load_fn)
+      :ok = Graph.register_loader(source_id, surface, load_fn)
       :ok = Graph.register_derived(derived_id, [source_id], compute_fn)
 
       Enum.each(1..12, fn _ -> notify(event) end)
@@ -618,11 +629,11 @@ defmodule Upkeep.Coordinator.GraphTest do
       # tests that register_derived/3 routes to the source's shard, not
       # the derived's hash.
       derived_id = {:der, System.unique_integer()}
-      keys = [narrow_key(%Ev{id: 7, tenant_id: 1})]
+      surface = event_surface(%Ev{id: 7, tenant_id: 1})
 
       load_fn = fn ->
         :counters.add(source_loads, 1, 1)
-        {42, keys}
+        {42, surface}
       end
 
       compute_fn = fn deps ->
@@ -630,7 +641,7 @@ defmodule Upkeep.Coordinator.GraphTest do
         Map.fetch!(deps, source_id) * 2
       end
 
-      :ok = Graph.register_loader(source_id, keys, load_fn)
+      :ok = Graph.register_loader(source_id, surface, load_fn)
       :ok = Graph.register_derived(derived_id, [source_id], compute_fn)
 
       Enum.each(1..12, fn _ -> notify(%Ev{id: 7, tenant_id: 1}) end)
@@ -652,13 +663,13 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       [src_a, src_b, src_c] = pick_colocated_split_triple(shards)
 
-      keys_a = [narrow_key(%Ev{id: 1, tenant_id: 1})]
-      keys_b = [narrow_key(%Ev{id: 2, tenant_id: 1})]
-      keys_c = [narrow_key(%Ev{id: 3, tenant_id: 1})]
+      surface_a = event_surface(%Ev{id: 1, tenant_id: 1})
+      surface_b = event_surface(%Ev{id: 2, tenant_id: 1})
+      surface_c = event_surface(%Ev{id: 3, tenant_id: 1})
 
-      :ok = Graph.register_loader(src_a, keys_a, fn -> {nil, keys_a} end)
-      :ok = Graph.register_loader(src_b, keys_b, fn -> {nil, keys_b} end)
-      :ok = Graph.register_loader(src_c, keys_c, fn -> {nil, keys_c} end)
+      :ok = Graph.register_loader(src_a, surface_a, fn -> {nil, surface_a} end)
+      :ok = Graph.register_loader(src_b, surface_b, fn -> {nil, surface_b} end)
+      :ok = Graph.register_loader(src_c, surface_c, fn -> {nil, surface_c} end)
 
       error =
         assert_raise ArgumentError, fn ->

@@ -23,10 +23,10 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
 
         task =
           Task.Supervisor.async_nolink(Shards.task_sup(), fn ->
-            {value, current_keys, tracked_deps} =
+            {value, current_keys, tracked_deps, reactive_surface} =
               Loaders.run_with_deps(node.loader, load_metadata)
 
-            {node_id, value, current_keys, tracked_deps, node}
+            {node_id, value, current_keys, tracked_deps, reactive_surface, node}
           end)
 
         source_loads = SingleFlight.start(state.source_loads, node_id, task.ref, from, node)
@@ -61,13 +61,22 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
     end
   end
 
-  def handle_source_result(state, ref, node_id, value, current_keys, tracked_deps, %Node{} = node) do
+  def handle_source_result(
+        state,
+        ref,
+        node_id,
+        value,
+        current_keys,
+        tracked_deps,
+        reactive_surface,
+        %Node{} = node
+      ) do
     case SingleFlight.pop(state.source_loads, ref) do
       {:ok, ^node_id, load, source_loads} ->
         Process.demonitor(ref, [:flush])
 
-        if current_keys != node.registered_keys do
-          Topology.reconcile_source(node_id, state.idx, node.registered_keys, current_keys)
+        if reactive_surface != node.reactive_surface do
+          Topology.reconcile_source(node_id, state.idx, node.reactive_surface, reactive_surface)
         end
 
         {store, _changed?} = Store.put_source(state.store, node_id, value, [])
@@ -76,7 +85,13 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
           Store.put_metadata(
             store,
             node_id,
-            %Node{node | registered_keys: current_keys, tracked_deps: tracked_deps, loaded?: true}
+            %Node{
+              node
+              | registered_keys: current_keys,
+                reactive_surface: reactive_surface,
+                tracked_deps: tracked_deps,
+                loaded?: true
+            }
           )
 
         SingleFlight.reply_all(load, {:ok, value, tracked_deps})
