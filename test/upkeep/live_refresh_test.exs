@@ -182,26 +182,21 @@ defmodule Upkeep.LiveRefreshTest do
     assert load_count(:activity) == 2
   end
 
-  test "failed source load leaves old assign intact and clears pending refreshes", %{table: table} do
+  test "failed source load raises", %{table: table} do
     socket =
       new_socket()
       |> Live.watch(:issues, FailingIssues, project_id: 1)
 
-    assert socket.assigns.issues == [:stable]
     assert load_count(:failing) == 1
 
     :ets.insert(table, {{:failing, 1}, :raise})
 
-    socket =
+    assert_raise RuntimeError, "source failed", fn ->
       socket
       |> Live.queue_matching(updated_issue(1, 1))
       |> Live.flush_refreshes()
+    end
 
-    assert socket.assigns.issues == [:stable]
-    assert load_count(:failing) == 2
-
-    socket = Live.flush_refreshes(socket)
-    assert socket.assigns.issues == [:stable]
     assert load_count(:failing) == 2
   end
 

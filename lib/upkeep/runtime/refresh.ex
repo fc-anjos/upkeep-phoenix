@@ -105,8 +105,6 @@ defmodule Upkeep.Runtime.Refresh do
       end
 
     {socket, changed, Effects.assign_watch(watch, value)}
-  rescue
-    _ -> {socket, changed, []}
   end
 
   defp recompute_derived(socket, []), do: {socket, []}
