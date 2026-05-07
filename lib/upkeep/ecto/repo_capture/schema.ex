@@ -68,7 +68,5 @@ defmodule Upkeep.Ecto.RepoCapture.Schema do
       %{source: source} -> source_schema(source)
       _from -> nil
     end)
-  rescue
-    _ -> nil
   end
 end
