@@ -290,9 +290,7 @@ defmodule Upkeep.Invalidation.ReadCacheTest do
     assert ReadCache.count() == 1
   end
 
-  test "removing a source node releases its read-cache entries" do
-    # Use a custom source that goes through Upkeep.Source.Loader.load so the
-    # holder propagation is exercised end-to-end.
+  test "unwatching a local source releases its read-cache entries" do
     Repo.insert!(%Project{id: 1, name: "alpha"})
 
     defmodule HolderSource do
@@ -312,12 +310,13 @@ defmodule Upkeep.Invalidation.ReadCacheTest do
       def __upkeep_sharing_partition__(params), do: params
     end
 
-    {_value, _deps} = Upkeep.Source.Loader.load(HolderSource, %{id: 1})
+    socket =
+      %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+      |> Upkeep.Live.watch(:project, HolderSource, id: 1)
+
     assert ReadCache.count() == 1
 
-    Upkeep.Invalidation.ReadCache.release(
-      Upkeep.Source.Identity.source_id(HolderSource, %{id: 1})
-    )
+    _socket = Upkeep.Live.unwatch(socket, :project)
 
     assert ReadCache.count() == 0
   end

@@ -70,6 +70,8 @@ defmodule Upkeep.Runtime.Watches do
           |> State.delete_pending_refresh(source_id)
           |> maybe_leave_local_notifications(watches)
 
+        Upkeep.Invalidation.release_read_holder(source_id)
+
         watch.assign_names
         |> Enum.reduce(socket, &State.delete_assign_node(&2, &1))
         |> DAGOperations.remove_source(source_id)
