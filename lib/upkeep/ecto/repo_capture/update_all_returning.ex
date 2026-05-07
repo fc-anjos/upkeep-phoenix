@@ -8,24 +8,23 @@ defmodule Upkeep.Ecto.RepoCapture.UpdateAllReturning do
   def run(repo, queryable, updates, opts, schema)
       when is_atom(repo) and is_list(opts) do
     with {:ok, query} <- returning_query(repo, queryable, schema),
-         [_ | _] = changed_fields <- changed_fields(query, updates),
+         {:ok, changed_fields} <- changed_fields(query, updates),
          :ok <- ensure_compiles(repo, query, updates),
          {count, records} <- repo.update_all(query, updates, Keyword.put(opts, :upkeep, false)) do
       {:ok, {count, nil}, List.wrap(records), changed_fields}
-    else
-      :unsupported -> :unsupported
-      [] -> :unsupported
     end
   end
+
+  defp returning_query(_repo, _queryable, nil), do: {:deopt, :no_schema}
 
   defp returning_query(repo, queryable, schema) do
     query = Ecto.Queryable.to_query(queryable)
 
     if query.select do
-      :unsupported
+      {:deopt, :caller_select}
     else
       case Schema.capture_query(repo, query, schema) do
-        nil -> :unsupported
+        nil -> {:deopt, :no_row_shape}
         query -> {:ok, query}
       end
     end
@@ -39,6 +38,10 @@ defmodule Upkeep.Ecto.RepoCapture.UpdateAllReturning do
       for {_op, kw} <- expr, {field, _value} <- kw, is_atom(field), do: field
     end)
     |> Enum.uniq()
+    |> case do
+      [] -> {:deopt, :no_changed_fields}
+      fields -> {:ok, fields}
+    end
   end
 
   defp ensure_compiles(repo, query, updates) do
@@ -49,12 +52,12 @@ defmodule Upkeep.Ecto.RepoCapture.UpdateAllReturning do
         {_sql, _params} -> :ok
       end
     else
-      :unsupported
+      {:deopt, :no_sql_adapter}
     end
   rescue
     exception ->
       if unsupported_returning_error?(exception) do
-        :unsupported
+        {:deopt, :adapter_returning_unsupported}
       else
         reraise exception, __STACKTRACE__
       end

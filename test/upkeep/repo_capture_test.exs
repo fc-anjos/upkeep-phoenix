@@ -4,6 +4,7 @@ defmodule Upkeep.RepoCaptureTest do
   alias Ecto.Changeset
   alias Upkeep.Live
   import ExUnit.CaptureLog
+  import Upkeep.TestSupport, only: [attach_telemetry: 1]
 
   defmodule Issue do
     use Ecto.Schema
@@ -432,6 +433,8 @@ defmodule Upkeep.RepoCaptureTest do
   end
 
   test "update_all capture preserves caller-selected results" do
+    attach_telemetry([[:upkeep, :repo, :update_all_returning, :deopt]])
+
     Repo.insert!(issue(id: 1, assignee_id: 9, title: "Before"), upkeep: false)
     socket = watch_project(user_id: 9)
 
@@ -445,6 +448,14 @@ defmodule Upkeep.RepoCaptureTest do
 
     socket = assert_project_issues(socket, 9, ["After"])
     assert Enum.map(socket.assigns.issues, & &1.title) == ["After"]
+
+    assert_receive {:telemetry, [:upkeep, :repo, :update_all_returning, :deopt], %{count: 1},
+                    %{
+                      repo: Repo,
+                      schema: Issue,
+                      operation: :update_all,
+                      reason: :caller_select
+                    }}
   end
 
   test "update_all capture supports schemaless table queries" do

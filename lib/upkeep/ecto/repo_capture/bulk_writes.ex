@@ -43,9 +43,18 @@ defmodule Upkeep.Ecto.RepoCapture.BulkWrites do
 
         result
 
-      :unsupported ->
+      {:deopt, reason} ->
+        emit_update_all_deopt(repo, schema, reason)
         capture_update_all_with_reloaded_records(repo, queryable, schema, run)
     end
+  end
+
+  defp emit_update_all_deopt(repo, schema, reason) do
+    :telemetry.execute(
+      [:upkeep, :repo, :update_all_returning, :deopt],
+      %{count: 1},
+      %{repo: repo, schema: schema, operation: :update_all, reason: reason}
+    )
   end
 
   defp capture_update_all_with_reloaded_records(repo, queryable, schema, run) do
