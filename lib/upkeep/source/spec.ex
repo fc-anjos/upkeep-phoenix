@@ -79,7 +79,8 @@ defmodule Upkeep.Source.Spec do
       Enum.map(reactors, fn {notification, fun} ->
         quote do
           Upkeep.Source.Keys.matches?(event, unquote(Macro.escape(notification))) and
-            (Upkeep.Change.broad_update?(event) or unquote(fun).(event, params))
+            (Upkeep.Change.broad_update?(event) or Upkeep.Change.partial_update?(event) or
+               unquote(fun).(event, params))
         end
       end)
 

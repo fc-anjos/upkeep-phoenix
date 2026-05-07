@@ -387,7 +387,7 @@ defmodule Upkeep.RepoCaptureTest do
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Imported table"]
   end
 
-  test "update_all capture emits updated changes with before and after records" do
+  test "update_all capture refreshes sources when records enter and leave filters" do
     Repo.insert!(issue(id: 1, assignee_id: 10, title: "Moved"), upkeep: false)
     Repo.insert!(issue(id: 2, assignee_id: 9, title: "Mine"), upkeep: false)
 
@@ -410,6 +410,41 @@ defmodule Upkeep.RepoCaptureTest do
 
     assert Enum.map(mine.assigns.issues, & &1.title) == ["Moved", "Mine"]
     assert theirs.assigns.issues == []
+  end
+
+  test "update_all capture uses returning rows when the adapter supports it" do
+    Repo.insert!(issue(id: 1, assignee_id: 10, title: "Moved"), upkeep: false)
+
+    {result, queries} =
+      capture_repo_queries(fn ->
+        Upkeep.mutate(fn ->
+          Repo.update_all(
+            from(i in Issue, where: i.project_id == 1 and i.assignee_id == 10),
+            set: [assignee_id: 9]
+          )
+        end)
+      end)
+
+    assert {:ok, {1, nil}} = result
+    assert %Issue{assignee_id: 9} = Repo.get!(Issue, 1)
+    assert Enum.any?(queries, &update_returning_query?/1)
+    refute Enum.any?(queries, &String.starts_with?(String.upcase(&1), "SELECT"))
+  end
+
+  test "update_all capture preserves caller-selected results" do
+    Repo.insert!(issue(id: 1, assignee_id: 9, title: "Before"), upkeep: false)
+    socket = watch_project(user_id: 9)
+
+    assert {:ok, {1, [%{id: 1, title: "After"}]}} =
+             Upkeep.mutate(fn ->
+               Repo.update_all(
+                 from(i in Issue, where: i.id == 1, select: %{id: i.id, title: i.title}),
+                 set: [title: "After"]
+               )
+             end)
+
+    socket = assert_project_issues(socket, 9, ["After"])
+    assert Enum.map(socket.assigns.issues, & &1.title) == ["After"]
   end
 
   test "update_all capture supports schemaless table queries" do
@@ -650,6 +685,41 @@ defmodule Upkeep.RepoCaptureTest do
         title: field(i, :title),
         position: field(i, :position)
       }
+  end
+
+  defp capture_repo_queries(fun) do
+    parent = self()
+    handler_id = "repo-capture-test-#{System.unique_integer([:positive])}"
+
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        [:upkeep, :repo, :query],
+        fn _event, _measurements, metadata, _config ->
+          send(parent, {handler_id, metadata.query})
+        end,
+        nil
+      )
+
+    try do
+      result = fun.()
+      {result, collect_repo_queries(handler_id, [])}
+    after
+      :telemetry.detach(handler_id)
+    end
+  end
+
+  defp collect_repo_queries(handler_id, queries) do
+    receive do
+      {^handler_id, query} -> collect_repo_queries(handler_id, [query | queries])
+    after
+      0 -> Enum.reverse(queries)
+    end
+  end
+
+  defp update_returning_query?(query) do
+    normalized = String.upcase(query)
+    String.starts_with?(normalized, "UPDATE") and String.contains?(normalized, "RETURNING")
   end
 
   defp with_repo_capture_policy(policy, fun) do

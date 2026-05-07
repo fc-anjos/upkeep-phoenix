@@ -3,7 +3,7 @@ defmodule Upkeep.Ecto.RepoCapture.BulkWrites do
 
   import Ecto.Query
 
-  alias Upkeep.Ecto.RepoCapture.{Notify, Schema, TableMetadata}
+  alias Upkeep.Ecto.RepoCapture.{Notify, Schema, TableMetadata, UpdateAllReturning}
 
   def capture_insert_all(repo, schema_or_source, %Ecto.Query{} = query, capture_opts, run)
       when is_atom(repo) and is_function(run, 0) do
@@ -31,10 +31,27 @@ defmodule Upkeep.Ecto.RepoCapture.BulkWrites do
     result
   end
 
-  def capture_update_all(repo, queryable, capture_opts, run)
+  def capture_update_all(repo, queryable, updates, opts, capture_opts, run)
       when is_atom(repo) and is_function(run, 0) do
+    schema = Schema.queryable_schema(queryable, capture_opts)
+
+    case UpdateAllReturning.run(repo, queryable, updates, opts, schema) do
+      {:ok, result, records, changed_fields} ->
+        Enum.each(records, fn record ->
+          Notify.notify_change(:updated, schema, record, nil,
+            meta: %{changed_fields: changed_fields}
+          )
+        end)
+
+        result
+
+      :unsupported ->
+        capture_update_all_with_reloaded_records(repo, queryable, schema, run)
+    end
+  end
+
+  defp capture_update_all_with_reloaded_records(repo, queryable, schema, run) do
     case repo.transaction(fn ->
-           schema = Schema.queryable_schema(queryable, capture_opts)
            before_records = bulk_records(repo, queryable, schema)
            result = run.()
            after_records = reload_records(repo, schema, before_records)

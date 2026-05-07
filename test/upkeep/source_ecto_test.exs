@@ -594,6 +594,30 @@ defmodule Upkeep.SourceEctoTest do
            )
   end
 
+  test "plain query/1 sources use partial update fields without losing stable filters" do
+    params = %{project_id: 1, user_id: 9}
+
+    assignee_change =
+      issue(project_id: 1, assignee_id: 10, status: "open")
+      |> Upkeep.Change.updated(meta: %{changed_fields: [:assignee_id]})
+
+    assert ProjectIssues.reacts_to?(assignee_change, params)
+    assert ProjectIssues.reacts_to?(assignee_change, %{project_id: 1, user_id: 10})
+    refute ProjectIssues.reacts_to?(assignee_change, %{project_id: 2, user_id: 9})
+
+    status_change =
+      issue(project_id: 1, assignee_id: 9, status: "archived")
+      |> Upkeep.Change.updated(meta: %{changed_fields: [:status]})
+
+    assert ProjectIssues.reacts_to?(status_change, params)
+
+    unrelated_project =
+      issue(project_id: 2, assignee_id: 9, status: "archived")
+      |> Upkeep.Change.updated(meta: %{changed_fields: [:status]})
+
+    refute ProjectIssues.reacts_to?(unrelated_project, params)
+  end
+
   test "simple or query shapes infer precise alternative invalidation keys" do
     assert BroadProjectIssues.__upkeep_interest_keys__(%{project_id: 1, user_id: 9})
            |> sort_terms() ==

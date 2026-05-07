@@ -14,6 +14,7 @@ defmodule Upkeep.Ecto do
       Ecto.Migration.SchemaMigration,
       Ecto.Multi,
       Ecto.Query,
+      Ecto.QueryError,
       Ecto.Queryable,
       Ecto.Repo,
       Ecto.Schema.Metadata,

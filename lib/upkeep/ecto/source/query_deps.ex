@@ -679,10 +679,25 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
   end
 
   defp change_matches_filters?(change, filters) do
+    if Upkeep.Change.partial_update?(change) do
+      partial_change_matches_filters?(change, filters)
+    else
+      change
+      |> Upkeep.Change.field_sets()
+      |> Enum.any?(fn fields ->
+        Enum.all?(filters, fn {field, values} -> Enum.member?(values, Map.get(fields, field)) end)
+      end)
+    end
+  end
+
+  defp partial_change_matches_filters?(change, filters) do
     change
     |> Upkeep.Change.field_sets()
     |> Enum.any?(fn fields ->
-      Enum.all?(filters, fn {field, values} -> Enum.member?(values, Map.get(fields, field)) end)
+      Enum.all?(filters, fn {field, values} ->
+        Upkeep.Change.changed_field?(change, field) or
+          Enum.member?(values, Map.get(fields, field))
+      end)
     end)
   end
 

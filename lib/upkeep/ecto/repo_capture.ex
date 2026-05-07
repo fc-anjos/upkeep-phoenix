@@ -86,6 +86,8 @@ defmodule Upkeep.Ecto.RepoCapture do
           Upkeep.Ecto.RepoCapture.capture_update_all(
             __MODULE__,
             queryable,
+            updates,
+            opts,
             capture_opts,
             fn -> super(queryable, updates, opts) end
           )
@@ -152,7 +154,9 @@ defmodule Upkeep.Ecto.RepoCapture do
   defdelegate capture_insert_all(repo, schema_or_source, entries, capture_opts, run),
     to: BulkWrites
 
-  defdelegate capture_update_all(repo, queryable, capture_opts, run), to: BulkWrites
+  defdelegate capture_update_all(repo, queryable, updates, opts, capture_opts, run),
+    to: BulkWrites
+
   defdelegate capture_delete_all(repo, queryable, capture_opts, run), to: BulkWrites
 
   def insert_or_update_action(%Ecto.Changeset{action: :insert}), do: :inserted

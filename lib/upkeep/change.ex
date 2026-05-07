@@ -6,7 +6,10 @@ defmodule Upkeep.Change do
   an application-named semantic notification such as `:issue_moved`.
 
   `updated(record, from: old_record)` is field-aware. `updated(record)` without
-  old state is treated as a broad `:updated` invalidation for correctness.
+  old state is treated as a broad `:updated` invalidation for correctness unless
+  it carries `meta: %{changed_fields: fields}`. In that case Upkeep can keep
+  unchanged equality filters precise and only widen filters that mention changed
+  fields.
   """
 
   use Boundary,
@@ -40,13 +43,40 @@ defmodule Upkeep.Change do
   end
 
   @doc """
-  Returns true when an update has no old record state.
+  Returns true when an update has neither old record state nor known changed
+  fields.
 
   These updates are handled as schema/action-wide invalidations because Upkeep
   cannot prove which field-indexed sources the record may have moved out of.
   """
-  def broad_update?(%__MODULE__{name: :updated, from: nil}), do: true
+  def broad_update?(%__MODULE__{name: :updated, from: nil} = change),
+    do: not partial_update?(change)
+
   def broad_update?(_event), do: false
+
+  @doc """
+  Returns true when an update has no old record state but does have a known set
+  of changed fields.
+
+  Partial updates can match declarative equality filters precisely for unchanged
+  fields and conservatively for changed fields.
+  """
+  def partial_update?(%__MODULE__{name: :updated, from: nil} = change),
+    do: changed_fields_known?(change)
+
+  def partial_update?(_event), do: false
+
+  def changed_fields(%__MODULE__{} = change) do
+    change
+    |> changed_fields_list()
+    |> MapSet.new()
+  end
+
+  def changed_field?(%__MODULE__{} = change, field) when is_atom(field) do
+    change
+    |> changed_fields()
+    |> MapSet.member?(field)
+  end
 
   @doc false
   def diagnose_broad_update(%__MODULE__{} = change) do
@@ -69,6 +99,9 @@ defmodule Upkeep.Change do
     |> Enum.map(&fields/1)
     |> Enum.uniq()
   end
+
+  @doc false
+  def changed_fields_known?(%__MODULE__{} = change), do: changed_fields_list(change) != []
 
   defp new(name, payload, opts) do
     record = Keyword.get(opts, :record, record_payload(payload))
@@ -93,6 +126,14 @@ defmodule Upkeep.Change do
   defp fields(%_{} = struct), do: Map.from_struct(struct)
   defp fields(map) when is_map(map), do: map
   defp fields(_term), do: %{}
+
+  defp changed_fields_list(%__MODULE__{meta: %{changed_fields: fields}}) when is_list(fields) do
+    fields
+    |> Enum.filter(&is_atom/1)
+    |> Enum.uniq()
+  end
+
+  defp changed_fields_list(_change), do: []
 
   defp field_value(nil, _field), do: nil
 

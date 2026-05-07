@@ -10,14 +10,23 @@ defmodule Upkeep.Source.Keys do
   end
 
   def equal_fields?(%Upkeep.Change{} = change, params, event_fields, source_fields) do
-    if Upkeep.Change.broad_update?(change) do
-      true
-    else
-      change
-      |> Upkeep.Change.field_sets()
-      |> Enum.any?(fn fields ->
-        equal_field_set?(fields, params, event_fields, source_fields)
-      end)
+    cond do
+      Upkeep.Change.partial_update?(change) ->
+        change
+        |> Upkeep.Change.field_sets()
+        |> Enum.any?(fn fields ->
+          partial_equal_field_set?(change, fields, params, event_fields, source_fields)
+        end)
+
+      Upkeep.Change.broad_update?(change) ->
+        true
+
+      true ->
+        change
+        |> Upkeep.Change.field_sets()
+        |> Enum.any?(fn fields ->
+          equal_field_set?(fields, params, event_fields, source_fields)
+        end)
     end
   end
 
@@ -62,6 +71,14 @@ defmodule Upkeep.Source.Keys do
     Enum.zip(event_fields, source_fields)
     |> Enum.all?(fn {event_field, source_field} ->
       Map.fetch!(fields, event_field) == Map.fetch!(params, source_field)
+    end)
+  end
+
+  defp partial_equal_field_set?(change, fields, params, event_fields, source_fields) do
+    Enum.zip(event_fields, source_fields)
+    |> Enum.all?(fn {event_field, source_field} ->
+      Upkeep.Change.changed_field?(change, event_field) or
+        Map.fetch!(fields, event_field) == Map.fetch!(params, source_field)
     end)
   end
 

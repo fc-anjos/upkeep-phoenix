@@ -188,6 +188,21 @@ defmodule Upkeep.SourceTest do
            ]
   end
 
+  test "partial updates match changed declarative fields conservatively" do
+    change =
+      updated_issue(project_id: 123, assignee_id: 10, meta: %{changed_fields: [:assignee_id]})
+
+    refute Upkeep.Change.broad_update?(change)
+    assert Upkeep.Change.partial_update?(change)
+
+    assert MyIssues.reacts_to?(change, %{project_id: 123, user_id: 9})
+    assert MyIssues.reacts_to?(change, %{project_id: 123, user_id: 10})
+    refute MyIssues.reacts_to?(change, %{project_id: 456, user_id: 9})
+
+    assert BoardColumns.reacts_to?(change, %{project_id: 123})
+    refute BoardColumns.reacts_to?(change, %{project_id: 456})
+  end
+
   test "custom reactors can inspect old and new record state" do
     change =
       updated_issue(
@@ -357,10 +372,11 @@ defmodule Upkeep.SourceTest do
 
   defp updated_issue(attrs) do
     {from, attrs} = Keyword.pop(attrs, :from)
+    {meta, attrs} = Keyword.pop(attrs, :meta, %{})
 
     attrs
     |> issue()
-    |> Upkeep.Change.updated(from: from)
+    |> Upkeep.Change.updated(from: from, meta: meta)
   end
 
   defp issue_moved(attrs) do
