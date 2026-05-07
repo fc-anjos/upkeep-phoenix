@@ -1,9 +1,7 @@
 defmodule Upkeep.Ecto.RepoCapture.BulkWrites do
   @moduledoc false
 
-  import Ecto.Query
-
-  alias Upkeep.Ecto.RepoCapture.{Notify, Schema, TableMetadata, UpdateAllReturning}
+  alias Upkeep.Ecto.RepoCapture.{BulkRows, Notify, Schema, UpdateAllReturning}
 
   def capture_insert_all(repo, schema_or_source, %Ecto.Query{} = query, capture_opts, run)
       when is_atom(repo) and is_function(run, 0) do
@@ -59,17 +57,23 @@ defmodule Upkeep.Ecto.RepoCapture.BulkWrites do
 
   defp capture_update_all_with_reloaded_records(repo, queryable, schema, run) do
     case repo.transaction(fn ->
-           before_records = bulk_records(repo, queryable, schema)
-           result = run.()
-           after_records = reload_records(repo, schema, before_records)
+           case BulkRows.load(repo, queryable, schema) do
+             {:ok, before_records} ->
+               result = run.()
+               after_records = BulkRows.reload(repo, schema, before_records)
 
-           before_records
-           |> Enum.zip(after_records)
-           |> Enum.each(fn {before_record, after_record} ->
-             Notify.notify_change(:updated, schema, after_record, before_record)
-           end)
+               before_records
+               |> Enum.zip(after_records)
+               |> Enum.each(fn {before_record, after_record} ->
+                 Notify.notify_change(:updated, schema, after_record, before_record)
+               end)
 
-           result
+               result
+
+             {:deopt, reason} ->
+               emit_bulk_capture_deopt(repo, schema, :update_all, reason)
+               run.()
+           end
          end) do
       {:ok, result} -> result
       {:error, reason} -> {:error, reason}
@@ -80,16 +84,31 @@ defmodule Upkeep.Ecto.RepoCapture.BulkWrites do
       when is_atom(repo) and is_function(run, 0) do
     case repo.transaction(fn ->
            schema = Schema.queryable_schema(queryable, capture_opts)
-           before_records = bulk_records(repo, queryable, schema)
-           result = run.()
 
-           Enum.each(before_records, &Notify.notify_change(:deleted, schema, &1))
+           case BulkRows.load(repo, queryable, schema) do
+             {:ok, before_records} ->
+               result = run.()
 
-           result
+               Enum.each(before_records, &Notify.notify_change(:deleted, schema, &1))
+
+               result
+
+             {:deopt, reason} ->
+               emit_bulk_capture_deopt(repo, schema, :delete_all, reason)
+               run.()
+           end
          end) do
       {:ok, result} -> result
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  defp emit_bulk_capture_deopt(repo, schema, operation, reason) do
+    :telemetry.execute(
+      [:upkeep, :repo, :bulk_capture, :deopt],
+      %{count: 1},
+      %{repo: repo, schema: schema, operation: operation, reason: reason}
+    )
   end
 
   defp notify_insert_all(result, schema, entries) do
@@ -165,107 +184,4 @@ defmodule Upkeep.Ecto.RepoCapture.BulkWrites do
   defp entry_map(entry) when is_map(entry), do: entry
   defp entry_map(entry) when is_list(entry), do: Map.new(entry)
   defp entry_map(_entry), do: %{}
-
-  defp bulk_records(repo, queryable, schema) do
-    case Schema.capture_query(repo, queryable, schema) do
-      nil -> []
-      query -> repo.all(query)
-    end
-  end
-
-  defp reload_records(_repo, nil, _before_records), do: []
-  defp reload_records(_repo, _schema, []), do: []
-
-  defp reload_records(repo, schema, before_records) when is_atom(schema) do
-    case schema.__schema__(:primary_key) do
-      [] ->
-        before_records
-
-      primary_keys ->
-        schema
-        |> primary_key_query(primary_keys, before_records)
-        |> repo.all()
-        |> Map.new(fn record -> {primary_key_values(record, primary_keys), record} end)
-        |> then(fn records_by_key ->
-          Enum.map(before_records, fn record ->
-            Map.get(records_by_key, primary_key_values(record, primary_keys), record)
-          end)
-        end)
-    end
-  end
-
-  defp reload_records(repo, source, before_records) when is_binary(source) do
-    fields = before_records |> List.first() |> Map.keys()
-
-    case TableMetadata.primary_keys(repo, source) do
-      [] ->
-        before_records
-
-      _primary_keys when fields == [] ->
-        before_records
-
-      primary_keys ->
-        source
-        |> primary_key_query(primary_keys, before_records, fields)
-        |> repo.all()
-        |> Map.new(fn record -> {primary_key_values(record, primary_keys), record} end)
-        |> then(fn records_by_key ->
-          Enum.map(before_records, fn record ->
-            Map.get(records_by_key, primary_key_values(record, primary_keys), record)
-          end)
-        end)
-    end
-  end
-
-  defp primary_key_query(schema, [primary_key], records) do
-    values = Enum.map(records, &Map.fetch!(&1, primary_key))
-
-    from record in schema,
-      where: field(record, ^primary_key) in ^values
-  end
-
-  defp primary_key_query(schema, primary_keys, records) do
-    predicate =
-      Enum.reduce(records, dynamic(false), fn record, predicate ->
-        record_predicate =
-          Enum.reduce(primary_keys, dynamic(true), fn primary_key, record_predicate ->
-            value = Map.fetch!(record, primary_key)
-            dynamic([candidate], ^record_predicate and field(candidate, ^primary_key) == ^value)
-          end)
-
-        dynamic([candidate], ^predicate or ^record_predicate)
-      end)
-
-    from record in schema,
-      where: ^predicate
-  end
-
-  defp primary_key_query(source, [primary_key], records, fields) when is_binary(source) do
-    values = Enum.map(records, &Map.fetch!(&1, primary_key))
-
-    from record in source,
-      where: field(record, ^primary_key) in ^values,
-      select: map(record, ^fields)
-  end
-
-  defp primary_key_query(source, primary_keys, records, fields) when is_binary(source) do
-    predicate =
-      Enum.reduce(records, dynamic(false), fn record, predicate ->
-        record_predicate =
-          Enum.reduce(primary_keys, dynamic(true), fn primary_key, record_predicate ->
-            value = Map.fetch!(record, primary_key)
-            dynamic([candidate], ^record_predicate and field(candidate, ^primary_key) == ^value)
-          end)
-
-        dynamic([candidate], ^predicate or ^record_predicate)
-      end)
-
-    from record in source,
-      where: ^predicate,
-      select: map(record, ^fields)
-  end
-
-  defp primary_key_values(record, primary_keys) do
-    Enum.map(primary_keys, &Map.fetch!(record, &1))
-  end
 end

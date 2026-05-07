@@ -23,10 +23,7 @@ defmodule Upkeep.Ecto.RepoCapture.UpdateAllReturning do
     if query.select do
       {:deopt, :caller_select}
     else
-      case Schema.capture_query(repo, query, schema) do
-        nil -> {:deopt, :no_row_shape}
-        query -> {:ok, query}
-      end
+      Schema.capture_query(repo, query, schema)
     end
   end
 

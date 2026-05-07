@@ -1,34 +1,20 @@
 defmodule Upkeep.Ecto.RepoCapture.TableMetadata do
   @moduledoc false
 
-  def fields(repo, source) do
-    case metadata(repo, source) do
-      %{fields: fields} -> fields
-      _metadata -> []
-    end
-  end
-
-  def primary_keys(repo, source) do
-    case metadata(repo, source) do
-      %{primary_keys: primary_keys} -> primary_keys
-      _metadata -> []
-    end
-  end
-
   def metadata(repo, source) do
     case repo.__adapter__() do
-      Ecto.Adapters.Postgres -> postgres_metadata(repo, source)
+      Ecto.Adapters.Postgres -> {:ok, postgres_metadata(repo, source)}
       adapter when is_atom(adapter) -> adapter_metadata(repo, source, adapter)
     end
   rescue
-    _ -> %{fields: [], primary_keys: []}
+    _exception -> {:deopt, :table_metadata_failed}
   end
 
   defp adapter_metadata(repo, source, adapter) do
     if sqlite_adapter?(adapter) do
-      sqlite_metadata(repo, source)
+      {:ok, sqlite_metadata(repo, source)}
     else
-      %{fields: [], primary_keys: []}
+      {:deopt, :unsupported_adapter}
     end
   end
 

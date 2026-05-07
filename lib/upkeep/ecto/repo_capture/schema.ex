@@ -35,30 +35,35 @@ defmodule Upkeep.Ecto.RepoCapture.Schema do
 
   def put_query_schema(query, _schema), do: query
 
-  def capture_query(_repo, _queryable, nil), do: nil
+  def capture_query(_repo, _queryable, nil), do: {:deopt, :no_schema}
 
   def capture_query(_repo, queryable, schema) when is_atom(schema) do
-    queryable
-    |> Ecto.Queryable.to_query()
-    |> put_query_schema(schema)
-    |> exclude(:select)
-    |> select([record], record)
+    query =
+      queryable
+      |> Ecto.Queryable.to_query()
+      |> put_query_schema(schema)
+      |> exclude(:select)
+      |> select([record], record)
+
+    {:ok, query}
   end
 
   def capture_query(repo, queryable, source) when is_binary(source) do
-    case TableMetadata.fields(repo, source) do
-      [] ->
-        nil
-
-      fields ->
+    with {:ok, %{fields: [_ | _] = fields}} <- TableMetadata.metadata(repo, source) do
+      query =
         queryable
         |> Ecto.Queryable.to_query()
         |> exclude(:select)
         |> select([record], map(record, ^fields))
+
+      {:ok, query}
+    else
+      {:ok, %{fields: []}} -> {:deopt, :no_table_fields}
+      {:deopt, reason} -> {:deopt, reason}
     end
   end
 
-  def capture_query(_repo, _queryable, _schema), do: nil
+  def capture_query(_repo, _queryable, _schema), do: {:deopt, :no_schema}
 
   defp queryable_source_schema(queryable) do
     queryable
