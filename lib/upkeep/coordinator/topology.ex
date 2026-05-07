@@ -106,12 +106,19 @@ defmodule Upkeep.Coordinator.Topology do
   end
 
   def affected_source_node_ids(event) when is_struct(event) do
-    event
-    |> ReactiveSurface.candidate_keys()
-    |> Enum.flat_map(&:ets.lookup(@index_table, &1))
-    |> Enum.map(fn {_key, node_id} -> node_id end)
-    |> Enum.uniq()
-    |> Enum.filter(&source_node_matches?(&1, event))
+    candidate_keys = ReactiveSurface.candidate_keys(event)
+
+    candidate_node_ids =
+      candidate_keys
+      |> Enum.flat_map(&:ets.lookup(@index_table, &1))
+      |> Enum.map(fn {_key, node_id} -> node_id end)
+      |> Enum.uniq()
+
+    matched_node_ids = Enum.filter(candidate_node_ids, &source_node_matches?(&1, event))
+
+    emit_invalidation(event, candidate_keys, candidate_node_ids, matched_node_ids)
+
+    matched_node_ids
   end
 
   def affected_source_node_ids(event, shard_idx)
@@ -197,5 +204,31 @@ defmodule Upkeep.Coordinator.Topology do
       {:ok, %{kind: :source, surface: surface}} -> ReactiveSurface.matches?(surface, event)
       _ -> false
     end
+  end
+
+  defp emit_invalidation(event, candidate_keys, candidate_node_ids, matched_node_ids) do
+    :telemetry.execute(
+      [:upkeep, :graph, :invalidation],
+      %{
+        count: 1,
+        candidate_key_count: length(candidate_keys),
+        candidate_count: length(candidate_node_ids),
+        matched_count: length(matched_node_ids)
+      },
+      event_metadata(event)
+    )
+  end
+
+  defp event_metadata(%Upkeep.Change{} = change) do
+    %{
+      kind: :change,
+      name: change.name,
+      action: change.action,
+      schema: change.schema
+    }
+  end
+
+  defp event_metadata(event) when is_struct(event) do
+    %{kind: :event, event_module: event.__struct__}
   end
 end

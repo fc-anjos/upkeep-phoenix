@@ -81,19 +81,27 @@ defmodule Upkeep.Invalidation.ReadCache do
     :ok
   end
 
-  def invalidate(%{action: _, schema: _} = event) do
-    event
-    |> Upkeep.ReactiveSurface.candidate_keys()
-    |> Enum.flat_map(&:ets.lookup(@index, &1))
-    |> Enum.uniq_by(fn {_key, {node_id, _surface}} -> node_id end)
-    |> Enum.reduce(0, fn {_key, {node_id, surface}}, acc ->
-      if Upkeep.ReactiveSurface.matches?(surface, event) do
-        evict(node_id, surface)
-        acc + 1
-      else
-        acc
-      end
-    end)
+  def invalidate(event) when is_struct(event) do
+    candidate_keys = Upkeep.ReactiveSurface.candidate_keys(event)
+
+    candidates =
+      candidate_keys
+      |> Enum.flat_map(&:ets.lookup(@index, &1))
+      |> Enum.uniq_by(fn {_key, {node_id, _surface}} -> node_id end)
+
+    evicted_count =
+      Enum.reduce(candidates, 0, fn {_key, {node_id, surface}}, acc ->
+        if Upkeep.ReactiveSurface.matches?(surface, event) do
+          evict(node_id, surface)
+          acc + 1
+        else
+          acc
+        end
+      end)
+
+    emit_invalidation(event, candidate_keys, candidates, evicted_count)
+
+    evicted_count
   end
 
   def invalidate(_event), do: 0
@@ -118,5 +126,31 @@ defmodule Upkeep.Invalidation.ReadCache do
     # Refs from holders to this read-node are stale once the value is
     # gone; let the next fetch_or_load re-establish them.
     :ets.match_delete(@refs, {:_, node_id})
+  end
+
+  defp emit_invalidation(event, candidate_keys, candidates, evicted_count) do
+    :telemetry.execute(
+      [:upkeep, :read_nodes, :invalidation],
+      %{
+        count: 1,
+        candidate_key_count: length(candidate_keys),
+        candidate_count: length(candidates),
+        evicted_count: evicted_count
+      },
+      event_metadata(event)
+    )
+  end
+
+  defp event_metadata(%Upkeep.Change{} = change) do
+    %{
+      kind: :change,
+      name: change.name,
+      action: change.action,
+      schema: change.schema
+    }
+  end
+
+  defp event_metadata(event) when is_struct(event) do
+    %{kind: :event, event_module: event.__struct__}
   end
 end

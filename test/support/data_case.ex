@@ -42,7 +42,15 @@ defmodule Upkeep.TestSupport.DataCase do
       Ecto.Adapters.SQL.Sandbox.start_owner!(Upkeep.TestSupport.Repo, shared: not tags[:async])
 
     Upkeep.Test.allow_sandbox()
-    on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
+
+    on_exit(fn ->
+      try do
+        Upkeep.Test.drain()
+      after
+        Upkeep.Test.reset_graph()
+        Ecto.Adapters.SQL.Sandbox.stop_owner(pid)
+      end
+    end)
   end
 
   @doc """

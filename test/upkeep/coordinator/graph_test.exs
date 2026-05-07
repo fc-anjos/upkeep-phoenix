@@ -84,6 +84,7 @@ defmodule Upkeep.Coordinator.GraphTest do
 
     test "load_fn runs once per coalesced event; subscribers receive {:dag_values, ...}" do
       attach_telemetry([
+        [:upkeep, :graph, :invalidation],
         [:upkeep, :graph, :notifier, :flush],
         [:upkeep, :graph, :dispatch, :start],
         [:upkeep, :graph, :dispatch, :stop]
@@ -108,6 +109,14 @@ defmodule Upkeep.Coordinator.GraphTest do
       end)
 
       :ok = Graph.drain()
+
+      assert_receive {:telemetry, [:upkeep, :graph, :invalidation],
+                      %{
+                        count: 1,
+                        candidate_key_count: 1,
+                        candidate_count: 1,
+                        matched_count: 1
+                      }, %{kind: :event, event_module: Ev}}
 
       assert_receive {:telemetry, [:upkeep, :graph, :notifier, :flush], %{count: 1},
                       %{

@@ -79,6 +79,7 @@ defmodule Upkeep.Invalidation.ReadCacheTest do
 
     counter = :counters.new(1, [])
     handler_id = {__MODULE__, :invalidate_test}
+    test_pid = self()
 
     :telemetry.attach(
       handler_id,
@@ -87,7 +88,19 @@ defmodule Upkeep.Invalidation.ReadCacheTest do
       nil
     )
 
+    invalidation_handler_id = {__MODULE__, :read_cache_invalidation_test}
+
+    :telemetry.attach(
+      invalidation_handler_id,
+      [:upkeep, :read_nodes, :invalidation],
+      fn event, measurements, metadata, _config ->
+        send(test_pid, {:telemetry, event, measurements, metadata})
+      end,
+      nil
+    )
+
     on_exit(fn -> :telemetry.detach(handler_id) end)
+    on_exit(fn -> :telemetry.detach(invalidation_handler_id) end)
 
     q = from(p in Project)
 
@@ -100,6 +113,14 @@ defmodule Upkeep.Invalidation.ReadCacheTest do
     event = Upkeep.Change.updated(%Project{id: 1, name: "alpha"})
     ReadCache.invalidate(event)
     assert ReadCache.count() == 0
+
+    assert_receive {:telemetry, [:upkeep, :read_nodes, :invalidation],
+                    %{
+                      count: 1,
+                      candidate_key_count: 2,
+                      candidate_count: 1,
+                      evicted_count: 1
+                    }, %{kind: :change, name: :updated, action: :updated, schema: Project}}
 
     fetch_query(q)
     assert :counters.get(counter, 1) == 2
