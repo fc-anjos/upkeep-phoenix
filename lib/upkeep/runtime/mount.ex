@@ -33,7 +33,7 @@ defmodule Upkeep.Runtime.Mount do
         effects = [
           {:telemetry, [:source, :watch], %{count: 1},
            Telemetry.watch_metadata(watch, assign_name, :alias)},
-          {:assign, assign_name, Map.fetch!(socket.assigns, primary_assign_name(watch))}
+          {:assign, assign_name, Store.fetch!(State.store(socket), spec.id)}
         ]
 
         {:ok, socket, effects}
@@ -67,7 +67,6 @@ defmodule Upkeep.Runtime.Mount do
         socket =
           socket
           |> State.put_watch(source_id, %{
-            assign_name: assign_name,
             assign_names: MapSet.new([assign_name]),
             source: producer.source,
             params: producer.params,
@@ -205,9 +204,5 @@ defmodule Upkeep.Runtime.Mount do
   defp seed_initial_value(store, id, value) do
     {store, _changed?} = Store.seed(store, id, value)
     store
-  end
-
-  defp primary_assign_name(watch) do
-    watch.assign_name || Enum.at(watch.assign_names, 0)
   end
 end

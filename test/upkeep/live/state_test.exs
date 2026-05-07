@@ -6,7 +6,7 @@ defmodule Upkeep.Runtime.StateTest do
   test "stores Upkeep runtime as one socket-private value" do
     socket =
       new_socket()
-      |> State.put_watch(:source_id, %{assign_name: :items, assign_names: MapSet.new([:items])})
+      |> State.put_watch(:source_id, %{assign_names: MapSet.new([:items])})
       |> State.put_assign_node(:items, {:source, :source_id})
       |> State.queue_refresh(:source_id)
 
