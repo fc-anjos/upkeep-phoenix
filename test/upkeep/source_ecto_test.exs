@@ -599,7 +599,7 @@ defmodule Upkeep.SourceEctoTest do
 
     assignee_change =
       issue(project_id: 1, assignee_id: 10, status: "open")
-      |> Upkeep.Change.updated(meta: %{changed_fields: [:assignee_id]})
+      |> Upkeep.Change.updated(changed_fields: [:assignee_id])
 
     assert ProjectIssues.reacts_to?(assignee_change, params)
     assert ProjectIssues.reacts_to?(assignee_change, %{project_id: 1, user_id: 10})
@@ -607,13 +607,13 @@ defmodule Upkeep.SourceEctoTest do
 
     status_change =
       issue(project_id: 1, assignee_id: 9, status: "archived")
-      |> Upkeep.Change.updated(meta: %{changed_fields: [:status]})
+      |> Upkeep.Change.updated(changed_fields: [:status])
 
     assert ProjectIssues.reacts_to?(status_change, params)
 
     unrelated_project =
       issue(project_id: 2, assignee_id: 9, status: "archived")
-      |> Upkeep.Change.updated(meta: %{changed_fields: [:status]})
+      |> Upkeep.Change.updated(changed_fields: [:status])
 
     refute ProjectIssues.reacts_to?(unrelated_project, params)
   end

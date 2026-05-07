@@ -60,6 +60,13 @@ defmodule Upkeep.ChangeEqualityTest do
       e2 = Change.updated(r, meta: %{seq: 2})
       refute e1 == e2
     end
+
+    test "different known changed fields are not equal" do
+      r = row(id: 1, name: "a")
+      e1 = Change.updated(r, changed_fields: [:name])
+      e2 = Change.updated(r, changed_fields: [:tenant_id])
+      refute e1 == e2
+    end
   end
 
   describe "documented safe collisions (dedup may collapse these)" do

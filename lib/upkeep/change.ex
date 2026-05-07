@@ -5,11 +5,10 @@ defmodule Upkeep.Change do
   A change can be a record-aware convenience notification such as `:updated`, or
   an application-named semantic notification such as `:issue_moved`.
 
-  `updated(record, from: old_record)` is field-aware. `updated(record)` without
-  old state is treated as a broad `:updated` invalidation for correctness unless
-  it carries `meta: %{changed_fields: fields}`. In that case Upkeep can keep
-  unchanged equality filters precise and only widen filters that mention changed
-  fields.
+  `updated(record, from: old_record)` has full field-change knowledge.
+  `updated(record, changed_fields: fields)` has partial field-change knowledge
+  from the write boundary. `updated(record)` without either is treated as a
+  broad `:updated` invalidation because Upkeep cannot know which fields changed.
   """
 
   use Boundary,
@@ -18,7 +17,7 @@ defmodule Upkeep.Change do
       Logger
     ]
 
-  defstruct [:name, :action, :schema, :record, :from, :payload, meta: %{}]
+  defstruct [:name, :action, :schema, :record, :from, :payload, :changed_fields, meta: %{}]
 
   def inserted(record, opts \\ []) when is_struct(record) do
     new(:inserted, record, Keyword.put(opts, :action, :inserted))
@@ -36,11 +35,28 @@ defmodule Upkeep.Change do
     new(name, payload, opts)
   end
 
-  def changed?(%__MODULE__{from: nil}, _field), do: false
+  def changed?(%__MODULE__{} = change, field) when is_atom(field),
+    do: field_change(change, field) == :changed
 
-  def changed?(%__MODULE__{from: from, record: record}, field) when is_atom(field) do
-    field_value(from, field) != field_value(record, field)
+  @doc """
+  Returns what Upkeep knows about a field for this change.
+
+  `:changed` means the field is known to have changed, `:unchanged` means the
+  current record value is safe to use for equality matching, and `:unknown`
+  means an update happened without enough field knowledge.
+  """
+  def field_change(%__MODULE__{name: :updated, from: from, record: record}, field)
+      when is_atom(field) and not is_nil(from) do
+    if field_value(from, field) == field_value(record, field), do: :unchanged, else: :changed
   end
+
+  def field_change(%__MODULE__{name: :updated, changed_fields: fields}, field)
+      when is_atom(field) and is_list(fields) do
+    if field in fields, do: :changed, else: :unchanged
+  end
+
+  def field_change(%__MODULE__{name: :updated}, field) when is_atom(field), do: :unknown
+  def field_change(%__MODULE__{}, field) when is_atom(field), do: :unchanged
 
   @doc """
   Returns true when an update has neither old record state nor known changed
@@ -49,8 +65,7 @@ defmodule Upkeep.Change do
   These updates are handled as schema/action-wide invalidations because Upkeep
   cannot prove which field-indexed sources the record may have moved out of.
   """
-  def broad_update?(%__MODULE__{name: :updated, from: nil} = change),
-    do: not partial_update?(change)
+  def broad_update?(%__MODULE__{name: :updated, from: nil, changed_fields: nil}), do: true
 
   def broad_update?(_event), do: false
 
@@ -61,22 +76,26 @@ defmodule Upkeep.Change do
   Partial updates can match declarative equality filters precisely for unchanged
   fields and conservatively for changed fields.
   """
-  def partial_update?(%__MODULE__{name: :updated, from: nil} = change),
-    do: changed_fields_known?(change)
+  def partial_update?(%__MODULE__{name: :updated, from: nil, changed_fields: fields})
+      when is_list(fields),
+      do: true
 
   def partial_update?(_event), do: false
 
-  def changed_fields(%__MODULE__{} = change) do
-    change
-    |> changed_fields_list()
+  def changed_fields(%__MODULE__{name: :updated, changed_fields: fields}) when is_list(fields) do
+    MapSet.new(fields)
+  end
+
+  def changed_fields(%__MODULE__{name: :updated, from: from, record: record})
+      when not is_nil(from) do
+    [fields(record), fields(from)]
+    |> Enum.flat_map(&Map.keys/1)
+    |> Enum.uniq()
+    |> Enum.filter(&(field_value(from, &1) != field_value(record, &1)))
     |> MapSet.new()
   end
 
-  def changed_field?(%__MODULE__{} = change, field) when is_atom(field) do
-    change
-    |> changed_fields()
-    |> MapSet.member?(field)
-  end
+  def changed_fields(%__MODULE__{}), do: MapSet.new()
 
   @doc false
   def diagnose_broad_update(%__MODULE__{} = change) do
@@ -100,19 +119,18 @@ defmodule Upkeep.Change do
     |> Enum.uniq()
   end
 
-  @doc false
-  def changed_fields_known?(%__MODULE__{} = change), do: changed_fields_list(change) != []
-
   defp new(name, payload, opts) do
     record = Keyword.get(opts, :record, record_payload(payload))
+    from = Keyword.get(opts, :from)
 
     %__MODULE__{
       name: name,
       action: Keyword.get(opts, :action),
       schema: Keyword.get(opts, :schema, schema(record || payload)),
       record: record,
-      from: Keyword.get(opts, :from),
+      from: from,
       payload: payload,
+      changed_fields: changed_fields_for(name, opts),
       meta: Keyword.get(opts, :meta, %{})
     }
   end
@@ -127,13 +145,18 @@ defmodule Upkeep.Change do
   defp fields(map) when is_map(map), do: map
   defp fields(_term), do: %{}
 
-  defp changed_fields_list(%__MODULE__{meta: %{changed_fields: fields}}) when is_list(fields) do
+  defp changed_fields_for(:updated, opts),
+    do: normalize_changed_fields(Keyword.get(opts, :changed_fields))
+
+  defp changed_fields_for(_name, _opts), do: nil
+
+  defp normalize_changed_fields(nil), do: nil
+
+  defp normalize_changed_fields(fields) when is_list(fields) do
     fields
     |> Enum.filter(&is_atom/1)
     |> Enum.uniq()
   end
-
-  defp changed_fields_list(_change), do: []
 
   defp field_value(nil, _field), do: nil
 

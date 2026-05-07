@@ -77,7 +77,7 @@ defmodule Upkeep.Source.Keys do
   defp partial_equal_field_set?(change, fields, params, event_fields, source_fields) do
     Enum.zip(event_fields, source_fields)
     |> Enum.all?(fn {event_field, source_field} ->
-      Upkeep.Change.changed_field?(change, event_field) or
+      Upkeep.Change.field_change(change, event_field) == :changed or
         Map.fetch!(fields, event_field) == Map.fetch!(params, source_field)
     end)
   end

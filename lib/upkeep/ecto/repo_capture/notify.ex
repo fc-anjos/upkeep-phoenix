@@ -42,6 +42,7 @@ defmodule Upkeep.Ecto.RepoCapture.Notify do
       schema: schema,
       record: record,
       from: from,
+      changed_fields: Keyword.get(opts, :changed_fields),
       meta: Keyword.get(opts, :meta, %{})
     )
     |> Upkeep.Mutation.notify()

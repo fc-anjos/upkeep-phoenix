@@ -39,9 +39,10 @@ defmodule Upkeep do
   - `read/1` — Ecto-backed read inside a source context.
   - `recent_events/1`, `clear_events/0` — observability buffer.
 
-  `updated(record, from: old_record)` is field-aware. `updated(record)`
-  without old state refreshes matching `:updated` sources broadly for
-  correctness and emits a diagnostic.
+  `updated(record, from: old_record)` has full field-change knowledge.
+  `updated(record, changed_fields: fields)` carries write-boundary field
+  knowledge. `updated(record)` without either refreshes matching `:updated`
+  sources broadly for correctness and emits a diagnostic.
 
   Optional: add `:upkeep_inspector` to your deps for an in-app dashboard
   that renders the runtime DAG, sources, and telemetry trail.

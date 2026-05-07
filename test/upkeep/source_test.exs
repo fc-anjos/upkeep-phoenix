@@ -190,10 +190,12 @@ defmodule Upkeep.SourceTest do
 
   test "partial updates match changed declarative fields conservatively" do
     change =
-      updated_issue(project_id: 123, assignee_id: 10, meta: %{changed_fields: [:assignee_id]})
+      updated_issue(project_id: 123, assignee_id: 10, changed_fields: [:assignee_id])
 
     refute Upkeep.Change.broad_update?(change)
     assert Upkeep.Change.partial_update?(change)
+    assert Upkeep.Change.field_change(change, :assignee_id) == :changed
+    assert Upkeep.Change.field_change(change, :project_id) == :unchanged
 
     assert MyIssues.reacts_to?(change, %{project_id: 123, user_id: 9})
     assert MyIssues.reacts_to?(change, %{project_id: 123, user_id: 10})
@@ -372,11 +374,11 @@ defmodule Upkeep.SourceTest do
 
   defp updated_issue(attrs) do
     {from, attrs} = Keyword.pop(attrs, :from)
-    {meta, attrs} = Keyword.pop(attrs, :meta, %{})
+    {changed_fields, attrs} = Keyword.pop(attrs, :changed_fields)
 
     attrs
     |> issue()
-    |> Upkeep.Change.updated(from: from, meta: meta)
+    |> Upkeep.Change.updated(from: from, changed_fields: changed_fields)
   end
 
   defp issue_moved(attrs) do

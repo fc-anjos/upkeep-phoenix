@@ -38,9 +38,7 @@ defmodule Upkeep.Ecto.RepoCapture.BulkWrites do
     case UpdateAllReturning.run(repo, queryable, updates, opts, schema) do
       {:ok, result, records, changed_fields} ->
         Enum.each(records, fn record ->
-          Notify.notify_change(:updated, schema, record, nil,
-            meta: %{changed_fields: changed_fields}
-          )
+          Notify.notify_change(:updated, schema, record, nil, changed_fields: changed_fields)
         end)
 
         result

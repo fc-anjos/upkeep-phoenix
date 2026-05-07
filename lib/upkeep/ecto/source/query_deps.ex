@@ -695,7 +695,7 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
     |> Upkeep.Change.field_sets()
     |> Enum.any?(fn fields ->
       Enum.all?(filters, fn {field, values} ->
-        Upkeep.Change.changed_field?(change, field) or
+        Upkeep.Change.field_change(change, field) == :changed or
           Enum.member?(values, Map.get(fields, field))
       end)
     end)
