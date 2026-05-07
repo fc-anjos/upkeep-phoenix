@@ -10,25 +10,25 @@ defmodule Upkeep.Runtime.Push do
   def apply_dag_values(socket, pairs) when is_list(pairs) do
     started_at = System.monotonic_time()
 
-    {socket, changed_nodes, shared_nodes, effects} =
-      Enum.reduce(pairs, {socket, [], [], []}, fn {node_id, value},
-                                                  {socket, changed, shared, effects} ->
+    {socket, changed_nodes, shared_nodes, effects, ignored} =
+      Enum.reduce(pairs, {socket, [], [], [], []}, fn {node_id, value},
+                                                      {socket, changed, shared, effects, ignored} ->
         case put_pushed_value(socket, node_id, value) do
           {:source, socket, local_node_id, true, assign_effects} ->
-            {socket, [local_node_id | changed], shared, effects ++ assign_effects}
+            {socket, [local_node_id | changed], shared, effects ++ assign_effects, ignored}
 
           {:source, socket, _local_node_id, false, assign_effects} ->
-            {socket, changed, shared, effects ++ assign_effects}
+            {socket, changed, shared, effects ++ assign_effects, ignored}
 
           {:shared, socket, local_node_id, true, assign_effects} ->
             {socket, [local_node_id | changed], [local_node_id | shared],
-             effects ++ assign_effects}
+             effects ++ assign_effects, ignored}
 
           {:shared, socket, local_node_id, false, assign_effects} ->
-            {socket, changed, [local_node_id | shared], effects ++ assign_effects}
+            {socket, changed, [local_node_id | shared], effects ++ assign_effects, ignored}
 
-          :unknown ->
-            {socket, changed, shared, effects}
+          {:ignored, reason, node_id} ->
+            {socket, changed, shared, effects, [%{reason: reason, node_id: node_id} | ignored]}
         end
       end)
 
@@ -43,8 +43,11 @@ defmodule Upkeep.Runtime.Push do
       shared_nodes,
       effects,
       recompute_effects,
+      ignored,
       started_at
     )
+
+    emit_ignored_dag_values(ignored)
 
     {:ok, socket, effects}
   end
@@ -58,7 +61,8 @@ defmodule Upkeep.Runtime.Push do
       {_kind, socket, _local_node_id, false, assign_effects} ->
         {:ok, socket, assign_effects}
 
-      :unknown ->
+      {:ignored, reason, node_id} ->
+        emit_ignored_dag_values([%{reason: reason, node_id: node_id}])
         {:ok, socket, []}
     end
   end
@@ -80,7 +84,7 @@ defmodule Upkeep.Runtime.Push do
   defp put_pushed_shared_value(socket, graph_node_id, value) do
     case State.local_shared_derived_node(socket, graph_node_id) do
       nil ->
-        :unknown
+        {:ignored, ignored_reason(graph_node_id), graph_node_id}
 
       local_node_id ->
         {socket, changed?} = DAGOperations.put_derived_value(socket, local_node_id, value)
@@ -89,6 +93,16 @@ defmodule Upkeep.Runtime.Push do
          Effects.assign_shared_derived(socket, local_node_id, value)}
     end
   end
+
+  defp ignored_reason({_source, params}) when is_map(params), do: :unwatched_source
+
+  defp ignored_reason({:scoped, _component, {_source, params}}) when is_map(params),
+    do: :unwatched_source
+
+  defp ignored_reason({:derived, _view, _assign_name, _deps, _compute_fn}),
+    do: :unknown_shared_derived
+
+  defp ignored_reason(_node_id), do: :stale_push
 
   defp recompute_derived(socket, changed_source_nodes, opts \\ [])
 
@@ -104,6 +118,7 @@ defmodule Upkeep.Runtime.Push do
          shared_nodes,
          effects,
          recompute_effects,
+         ignored,
          started_at
        ) do
     :telemetry.execute(
@@ -115,8 +130,35 @@ defmodule Upkeep.Runtime.Push do
         shared_node_count: length(shared_nodes),
         effect_count: length(effects),
         assign_effect_count: Enum.count(effects, &match?({:assign, _name, _value}, &1)),
-        recompute_effect_count: length(recompute_effects)
+        recompute_effect_count: length(recompute_effects),
+        ignored_count: length(ignored),
+        ignored_reason_counts: reason_counts(ignored)
       }
     )
   end
+
+  defp emit_ignored_dag_values([]), do: :ok
+
+  defp emit_ignored_dag_values(ignored) do
+    ignored
+    |> Enum.group_by(& &1.reason)
+    |> Enum.each(fn {reason, ignored} ->
+      node_ids = Enum.map(ignored, & &1.node_id)
+
+      :telemetry.execute(
+        [:upkeep, :live, :dag_values, :ignored],
+        %{count: length(ignored)},
+        %{reason: reason, node_id: single_node_id(node_ids), node_ids: node_ids}
+      )
+    end)
+  end
+
+  defp reason_counts(ignored) do
+    Map.new(Enum.group_by(ignored, & &1.reason), fn {reason, ignored} ->
+      {reason, length(ignored)}
+    end)
+  end
+
+  defp single_node_id([node_id]), do: node_id
+  defp single_node_id(_node_ids), do: nil
 end
