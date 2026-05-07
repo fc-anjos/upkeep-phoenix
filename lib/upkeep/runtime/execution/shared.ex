@@ -127,13 +127,6 @@ defmodule Upkeep.Runtime.Execution.Shared do
           dep_partitions: dep_partitions
         )
     end
-  rescue
-    ArgumentError ->
-      {compute_initial_value(socket, dep_node_ids, compute), nil,
-       Map.merge(sharing_metadata(socket, assign_name, dep_node_ids), %{
-         result: :local,
-         reason: :error
-       })}
   end
 
   def sharing_plan(socket, dep_node_ids, metadata)
