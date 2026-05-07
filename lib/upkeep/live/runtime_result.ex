@@ -31,12 +31,7 @@ defmodule Upkeep.Live.RuntimeResult do
   end
 
   defp apply_one({:register_derived, node_id, dep_node_ids, compute_fn}, socket) do
-    try do
-      :ok = Subscriptions.register_derived(node_id, dep_node_ids, compute_fn)
-    rescue
-      ArgumentError -> :ok
-    end
-
+    :ok = Subscriptions.register_derived(node_id, dep_node_ids, compute_fn)
     socket
   end
 
