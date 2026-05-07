@@ -18,7 +18,7 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
     |> collect_where_equalities(query.wheres)
     |> collect_preload_deps(query)
     |> collect_subquery_deps(query)
-    |> mark_broad_for_unsupported(query)
+    |> mark_fragment_broad_reasons(query)
   end
 
   def from_query(_query), do: %__MODULE__{}
@@ -150,12 +150,12 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
     Enum.reduce(wheres, deps, fn where, deps ->
       params = params_by_index(where.params)
 
-      case extract_equality_filter_sets(where.expr, params) do
+      case extract_equality_filter_sets(where.expr, params, deps) do
         {:ok, filter_sets} ->
           put_equality_filter_sets(deps, filter_sets)
 
-        :error ->
-          deps
+        {:unsupported, reason, expr} ->
+          put_broad_for_expr(deps, expr, reason)
       end
     end)
   end
@@ -166,36 +166,35 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
     |> Map.new(fn {{value, _type}, index} -> {index, value} end)
   end
 
-  defp extract_equality_filter_sets({:and, _meta, [left, right]}, params) do
-    with {:ok, left_sets} <- extract_equality_filter_sets(left, params),
-         {:ok, right_sets} <- extract_equality_filter_sets(right, params) do
-      {:ok, combine_filter_sets(left_sets, right_sets)}
-    end
+  defp extract_equality_filter_sets({:and, _meta, [left, right]}, params, deps) do
+    left
+    |> extract_equality_filter_sets(params, deps)
+    |> combine_and_result(extract_equality_filter_sets(right, params, deps))
   end
 
-  defp extract_equality_filter_sets({:or, _meta, [left, right]}, params) do
-    with {:ok, [_ | _] = left_sets} <- extract_equality_filter_sets(left, params),
-         {:ok, [_ | _] = right_sets} <- extract_equality_filter_sets(right, params) do
+  defp extract_equality_filter_sets({:or, _meta, [left, right]} = expr, params, deps) do
+    with {:ok, [_ | _] = left_sets} <- extract_equality_filter_sets(left, params, deps),
+         {:ok, [_ | _] = right_sets} <- extract_equality_filter_sets(right, params, deps) do
       {:ok, left_sets ++ right_sets}
     else
-      _ -> :error
+      _ -> {:unsupported, :unsupported_or, expr}
     end
   end
 
-  defp extract_equality_filter_sets({:==, _meta, [left, right]}, params) do
+  defp extract_equality_filter_sets({:==, _meta, [left, right]} = expr, params, deps) do
     []
-    |> maybe_add_equality_filter(left, right, params)
-    |> maybe_add_equality_filter(right, left, params)
+    |> maybe_add_equality_filter(left, right, params, deps, expr)
+    |> maybe_add_equality_filter(right, left, params, deps, expr)
     |> filter_result()
   end
 
-  defp extract_equality_filter_sets({:in, _meta, [left, right]}, params) do
+  defp extract_equality_filter_sets({:in, _meta, [left, right]} = expr, params, deps) do
     []
-    |> maybe_add_membership_filter(left, right, params)
+    |> maybe_add_membership_filter(left, right, params, deps, expr)
     |> filter_result()
   end
 
-  defp extract_equality_filter_sets(_expr, _params), do: {:ok, []}
+  defp extract_equality_filter_sets(_expr, _params, _deps), do: {:ok, []}
 
   defp combine_filter_sets([], right_sets), do: right_sets
   defp combine_filter_sets(left_sets, []), do: left_sets
@@ -206,8 +205,33 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
     end
   end
 
-  defp filter_result([]), do: {:ok, []}
-  defp filter_result(filters), do: {:ok, [filters]}
+  defp combine_and_result({:ok, left_sets}, {:ok, right_sets}) do
+    {:ok, combine_filter_sets(left_sets, right_sets)}
+  end
+
+  defp combine_and_result({:ok, [_ | _] = filter_sets}, {:unsupported, _reason, _expr}) do
+    {:ok, filter_sets}
+  end
+
+  defp combine_and_result({:unsupported, _reason, _expr}, {:ok, [_ | _] = filter_sets}) do
+    {:ok, filter_sets}
+  end
+
+  defp combine_and_result({:unsupported, _reason, _expr} = unsupported, _right), do: unsupported
+  defp combine_and_result(_left, {:unsupported, _reason, _expr} = unsupported), do: unsupported
+
+  defp filter_result(filters) do
+    case Enum.find(filters, &match?({:unsupported, _reason, _expr}, &1)) do
+      {:unsupported, reason, expr} ->
+        {:unsupported, reason, expr}
+
+      nil ->
+        case filters do
+          [] -> {:ok, []}
+          filters -> {:ok, [filters]}
+        end
+    end
+  end
 
   defp put_equality_filter_sets(deps, filter_sets) do
     Enum.reduce(filter_sets, deps, fn filter_set, deps ->
@@ -230,37 +254,60 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
     end)
   end
 
-  defp maybe_add_equality_filter(filters, field_side, value_side, params) do
-    with {binding, field} <- Upkeep.Ecto.Source.QueryDeps.Expressions.field_ref(field_side),
-         {:ok, value} <- equality_value(value_side, params) do
-      [{binding, field, value} | filters]
-    else
-      _ -> filters
+  defp maybe_add_equality_filter(filters, field_side, value_side, params, deps, expr) do
+    maybe_add_field_filter(filters, field_side, value_side, params, deps, expr, &equality_value/2)
+  end
+
+  defp maybe_add_membership_filter(filters, field_side, value_side, params, deps, expr) do
+    maybe_add_field_filter(
+      filters,
+      field_side,
+      value_side,
+      params,
+      deps,
+      expr,
+      &membership_values/2
+    )
+  end
+
+  defp maybe_add_field_filter(filters, field_side, value_side, params, deps, expr, value_fun) do
+    case Upkeep.Ecto.Source.QueryDeps.Expressions.field_ref(field_side) do
+      {binding, field} ->
+        with :ok <- known_binding(deps, binding),
+             {:ok, value} <- value_fun.(value_side, params) do
+          [{binding, field, value} | filters]
+        else
+          {:unsupported, reason} -> [{:unsupported, reason, expr} | filters]
+        end
+
+      nil ->
+        filters
     end
   end
 
-  defp maybe_add_membership_filter(filters, field_side, value_side, params) do
-    with {binding, field} <- Upkeep.Ecto.Source.QueryDeps.Expressions.field_ref(field_side),
-         {:ok, values} <- membership_values(value_side, params) do
-      [{binding, field, values} | filters]
-    else
-      _ -> filters
+  defp known_binding(%__MODULE__{bindings: bindings}, binding) do
+    if Map.has_key?(bindings, binding), do: :ok, else: {:unsupported, :unknown_binding}
+  end
+
+  defp equality_value({:^, _meta, [index]}, params) do
+    case Map.fetch(params, index) do
+      {:ok, value} -> {:ok, value}
+      :error -> {:unsupported, :unsupported_value_expression}
     end
   end
 
-  defp equality_value({:^, _meta, [index]}, params), do: Map.fetch(params, index)
   defp equality_value(%Ecto.Query.Tagged{value: value}, _params), do: {:ok, value}
 
   defp equality_value(value, _params) when is_binary(value) or is_number(value) or is_atom(value),
     do: {:ok, value}
 
-  defp equality_value(_value, _params), do: :error
+  defp equality_value(_value, _params), do: {:unsupported, :unsupported_value_expression}
 
   defp membership_values({:^, _meta, [index]}, params) do
     case Map.fetch(params, index) do
       {:ok, values} when is_list(values) -> {:ok, values}
       {:ok, value} -> {:ok, [value]}
-      :error -> :error
+      :error -> {:unsupported, :unsupported_value_expression}
     end
   end
 
@@ -269,16 +316,16 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
     |> Enum.reduce_while({:ok, []}, fn value, {:ok, values} ->
       case equality_value(value, params) do
         {:ok, value} -> {:cont, {:ok, [value | values]}}
-        :error -> {:halt, :error}
+        {:unsupported, reason} -> {:halt, {:unsupported, reason}}
       end
     end)
     |> case do
       {:ok, values} -> {:ok, Enum.reverse(values)}
-      :error -> :error
+      {:unsupported, reason} -> {:unsupported, reason}
     end
   end
 
-  defp membership_values(_value, _params), do: :error
+  defp membership_values(_value, _params), do: {:unsupported, :unsupported_value_expression}
 
   defp put_field(deps, binding, field) do
     case Map.fetch(deps.bindings, binding) do
@@ -321,48 +368,16 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
 
   defp put_broad_reason(deps, _schema, _reason), do: deps
 
-  defp mark_broad_for_unsupported(deps, query) do
-    deps =
-      query.wheres
-      |> Enum.reduce(deps, fn where, deps ->
-        params = params_by_index(where.params)
-        mark_unsupported_or(deps, where.expr, params)
-      end)
+  defp put_broad_for_expr(deps, expr, reason) do
+    expr
+    |> schemas_for_expr(deps)
+    |> Enum.reduce(deps, fn schema, deps -> put_broad_reason(deps, schema, reason) end)
+  end
 
+  defp mark_fragment_broad_reasons(deps, query) do
     query
     |> Upkeep.Ecto.Source.QueryDeps.Expressions.all()
     |> Enum.reduce(deps, &mark_fragments/2)
-  end
-
-  defp mark_unsupported_or(deps, {:or, _meta, [left, right]} = expr, params) do
-    deps =
-      with {:ok, [_ | _]} <- extract_equality_filter_sets(expr, params) do
-        deps
-      else
-        _ ->
-          expr
-          |> schemas_for_expr(deps)
-          |> Enum.reduce(deps, fn schema, deps ->
-            put_broad_reason(deps, schema, :unsupported_or)
-          end)
-      end
-
-    deps
-    |> mark_unsupported_or(left, params)
-    |> mark_unsupported_or(right, params)
-  end
-
-  defp mark_unsupported_or(deps, expr, params) do
-    {_expr, deps} =
-      Macro.prewalk(expr, deps, fn
-        {:or, _meta, [_left, _right]} = expr, deps ->
-          {expr, mark_unsupported_or(deps, expr, params)}
-
-        node, deps ->
-          {node, deps}
-      end)
-
-    deps
   end
 
   defp mark_fragments(expr, deps) do

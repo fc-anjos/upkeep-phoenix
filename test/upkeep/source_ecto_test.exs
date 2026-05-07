@@ -137,6 +137,19 @@ defmodule Upkeep.SourceEctoTest do
     end
   end
 
+  defmodule FieldComparisonIssues do
+    use Upkeep.Ecto.Source
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.Issue
+
+    def query(_params) do
+      from i in Issue,
+        where: i.project_id == i.assignee_id
+    end
+  end
+
   defmodule JoinedIssueCards do
     use Upkeep.Ecto.Source
 
@@ -284,19 +297,6 @@ defmodule Upkeep.SourceEctoTest do
 
       from i in Issue,
         where: i.project_id == ^project_id and i.id in subquery(commented_issue_ids)
-    end
-  end
-
-  defmodule FragmentIssues do
-    use Upkeep.Ecto.Source
-
-    import Ecto.Query
-
-    alias Upkeep.SourceEctoTest.Issue
-
-    def query(%{project_id: project_id, term: term}) do
-      from i in Issue,
-        where: i.project_id == ^project_id and fragment("lower(?)", i.title) == ^term
     end
   end
 
@@ -693,6 +693,28 @@ defmodule Upkeep.SourceEctoTest do
     assert Enum.any?(diagnostics, &(&1.reason == :unsupported_or and &1.action =~ "equality/in"))
   end
 
+  test "field-to-field comparisons deopt with a value-expression reason" do
+    coverage = Upkeep.Source.coverage(FieldComparisonIssues, %{})
+
+    assert FieldComparisonIssues.__upkeep_interest_keys__(%{}) == [
+             {:upkeep_change, :inserted, Issue},
+             {:upkeep_change, :updated, Issue},
+             {:upkeep_change, :deleted, Issue}
+           ]
+
+    assert coverage.unknown == []
+    assert %{schema: Issue, reason: :unsupported_value_expression} in coverage.broad
+
+    assert [
+             %{
+               schema: Issue,
+               reason: :unsupported_value_expression,
+               label: "unsupported value expression"
+             }
+           ] =
+             Upkeep.Source.Coverage.diagnostics(coverage)
+  end
+
   test "joined queries infer dependencies for every schema with equality filters" do
     params = %{project_id: 1, statuses: ["open", "blocked"]}
 
@@ -969,29 +991,6 @@ defmodule Upkeep.SourceEctoTest do
 
     assert_receive {:dag_values, [{^source_id, [%Issue{comments: [%Comment{body: "visible"}]}]}]},
                    1_000
-  end
-
-  test "fragments intentionally fall back to broad schema invalidation" do
-    params = %{project_id: 1, term: "issue"}
-
-    assert FragmentIssues.__upkeep_interest_keys__(params) == [
-             {:upkeep_change, :inserted, Issue},
-             {:upkeep_change, :updated, Issue},
-             {:upkeep_change, :deleted, Issue}
-           ]
-
-    assert FragmentIssues.reacts_to?(
-             issue(project_id: 2, title: "Other") |> Upkeep.Change.updated(),
-             params
-           )
-
-    coverage = Upkeep.Source.coverage(FragmentIssues, params)
-
-    assert coverage.unknown == []
-    assert %{schema: Issue, reason: :fragment} in coverage.broad
-
-    assert [%{schema: Issue, reason: :fragment, label: "fragment fallback"}] =
-             Upkeep.Source.Coverage.diagnostics(coverage)
   end
 
   test "fragment broad fallback is scoped to the schema referenced by the fragment" do

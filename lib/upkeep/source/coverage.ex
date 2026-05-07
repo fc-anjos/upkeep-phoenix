@@ -183,6 +183,22 @@ defmodule Upkeep.Source.Coverage do
     }
   end
 
+  defp reason_detail(:unsupported_value_expression) do
+    {
+      "unsupported value expression",
+      "A field comparison used a value expression Upkeep cannot turn into invalidation key values.",
+      "Compare fields to source params or literal values, or declare explicit invalidation."
+    }
+  end
+
+  defp reason_detail(:unknown_binding) do
+    {
+      "unknown binding",
+      "A query predicate referenced a binding Upkeep could not map to a schema or table.",
+      "Use a query shape with inspectable bindings or declare explicit invalidation."
+    }
+  end
+
   defp reason_detail(:unsupported_preload) do
     {
       "unsupported preload",
