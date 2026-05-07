@@ -50,6 +50,8 @@ defmodule Upkeep.Runtime do
 
   def refresh_matching(socket, event), do: Refresh.refresh_matching(socket, event)
 
+  def refresh_local_matching(socket, event), do: Refresh.refresh_local_matching(socket, event)
+
   def queue_matching(socket, event), do: Refresh.queue_matching(socket, event)
 
   def flush_refreshes(socket), do: Refresh.flush_refreshes(socket)

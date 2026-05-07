@@ -224,7 +224,7 @@ defmodule Upkeep.LiveRefreshTest do
        %{
          table: table
        } do
-    attach_telemetry([[:upkeep, :graph, :initial_load, :hit]])
+    attach_telemetry([[:upkeep, :source, :initial_load, :coalesced]])
 
     test_pid = self()
     user_id = System.unique_integer([:positive])
@@ -245,7 +245,7 @@ defmodule Upkeep.LiveRefreshTest do
         |> Live.watch(:issues, BlockingScopedIssues, user_id: user_id, test_pid: test_pid)
       end)
 
-    assert_receive {:telemetry, [:upkeep, :graph, :initial_load, :hit], %{count: 1},
+    assert_receive {:telemetry, [:upkeep, :source, :initial_load, :coalesced], %{count: 1},
                     %{node_id: ^source_id}}
 
     send(loader_pid, :continue)
@@ -280,10 +280,10 @@ defmodule Upkeep.LiveRefreshTest do
     assert load_count(:scoped_issues, user_b) == 1
   end
 
-  test "connected source sharing emits initial-load miss and hit telemetry", %{table: table} do
+  test "connected source sharing emits initial-load miss and coalesced telemetry", %{table: table} do
     attach_telemetry([
-      [:upkeep, :graph, :initial_load, :miss],
-      [:upkeep, :graph, :initial_load, :hit]
+      [:upkeep, :source, :initial_load, :miss],
+      [:upkeep, :source, :initial_load, :coalesced]
     ])
 
     test_pid = self()
@@ -305,22 +305,17 @@ defmodule Upkeep.LiveRefreshTest do
         |> Live.watch(:issues, BlockingScopedIssues, user_id: user_id, test_pid: test_pid)
       end)
 
-    assert_receive {:telemetry, [:upkeep, :graph, :initial_load, :hit], %{count: 1},
-                    %{
-                      node_id: ^source_id,
-                      source: BlockingScopedIssues,
-                      params: %{test_pid: _, user_id: ^user_id},
-                      sharing_partition: %{user_id: ^user_id}
-                    }}
+    assert_receive {:telemetry, [:upkeep, :source, :initial_load, :coalesced], %{count: 1},
+                    %{node_id: ^source_id}}
 
     send(loader_pid, :continue)
 
     Task.await(task_a)
     Task.await(task_b)
 
-    assert_receive {:telemetry, [:upkeep, :graph, :initial_load, :miss], %{count: 1},
+    assert_receive {:telemetry, [:upkeep, :source, :initial_load, :miss], %{count: 1},
                     %{
-                      node_id: ^source_id,
+                      node_id: {:source, ^source_id},
                       source: BlockingScopedIssues,
                       params: %{test_pid: _, user_id: ^user_id},
                       sharing_partition: %{user_id: ^user_id}
@@ -1525,7 +1520,7 @@ defmodule Upkeep.LiveRefreshTest do
       [:upkeep, :dag, :recompute, :start],
       [:upkeep, :dag, :recompute, :stop],
       [:upkeep, :live, :assign],
-      [:upkeep, :graph, :initial_load, :miss]
+      [:upkeep, :source, :initial_load, :miss]
     ])
 
     source_id = {ProjectIssues, %{project_id: 1}}
@@ -1535,9 +1530,9 @@ defmodule Upkeep.LiveRefreshTest do
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
       |> Live.derive(:issue_count, [:issues], fn %{issues: issues} -> length(issues) end)
 
-    assert_receive {:telemetry, [:upkeep, :graph, :initial_load, :miss], %{count: 1},
+    assert_receive {:telemetry, [:upkeep, :source, :initial_load, :miss], %{count: 1},
                     %{
-                      node_id: ^source_id,
+                      node_id: {:source, ^source_id},
                       source: ProjectIssues,
                       params: %{project_id: 1},
                       sharing_partition: %{project_id: 1}

@@ -5,6 +5,7 @@ defmodule Upkeep.Runtime.SourceLoads do
   alias Upkeep.Runtime.Subscriptions
   alias Upkeep.Source.Loader, as: Source
   alias Upkeep.Source.Reactivity, as: SourceReactivity
+  alias Upkeep.SingleFlight.Registry
 
   def load(watch, reason) do
     load(watch.source, watch.params, watch.source_id, watch.component, reason)
@@ -18,6 +19,27 @@ defmodule Upkeep.Runtime.SourceLoads do
         {value, tracked_deps} = Source.load(source, params)
         {{value, tracked_deps}, %{changed?: nil, tracked_deps: length(tracked_deps)}}
       end
+    )
+  end
+
+  def load_coalesced(source, params, source_id, component, reason) do
+    if Process.whereis(coalescer_name()) do
+      Registry.coalesce(coalescer_name(), source_id, fn ->
+        emit_initial_load_miss(source, params, source_id, component)
+        load(source, params, source_id, component, reason)
+      end)
+    else
+      load(source, params, source_id, component, reason)
+    end
+  end
+
+  def coalescer_name, do: __MODULE__.Coalescer
+
+  defp emit_initial_load_miss(source, params, source_id, component) do
+    :telemetry.execute(
+      [:upkeep, :source, :initial_load, :miss],
+      %{count: 1},
+      Telemetry.source_metadata(source, params, source_id, component, :initial_load)
     )
   end
 
@@ -50,7 +72,7 @@ defmodule Upkeep.Runtime.SourceLoads do
       watch.source.reacts_to?(event, watch.params)
   end
 
-  defp interest_keys(source, params, tracked_deps) do
+  def interest_keys(source, params, tracked_deps) do
     (source.__upkeep_interest_keys__(params) ++ SourceReactivity.deps_interest_keys(tracked_deps))
     |> Enum.uniq()
   end

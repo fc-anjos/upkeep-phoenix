@@ -33,6 +33,14 @@ defmodule Upkeep.Live do
         {:noreply, Upkeep.Live.apply_dag_values(socket, pairs)}
       end
 
+      def handle_info({:upkeep_invalidation, _origin, event}, socket) do
+        {:noreply, Upkeep.Live.refresh_local_matching(socket, event)}
+      end
+
+      def handle_info({:upkeep_invalidation, event}, socket) do
+        {:noreply, Upkeep.Live.refresh_local_matching(socket, event)}
+      end
+
       defoverridable handle_info: 2
     end
   end
@@ -96,6 +104,10 @@ defmodule Upkeep.Live do
 
   def refresh_matching(socket, event) when is_struct(event) do
     with_current_scope(socket, &Upkeep.Runtime.refresh_matching(&1, event))
+  end
+
+  def refresh_local_matching(socket, event) when is_struct(event) do
+    with_current_scope(socket, &Upkeep.Runtime.refresh_local_matching(&1, event))
   end
 
   @doc false

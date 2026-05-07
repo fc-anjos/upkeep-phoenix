@@ -51,6 +51,7 @@ defmodule Upkeep.Invalidation do
   def notification_key, do: Bus.key()
 
   def join_notifications(kind), do: Bus.join(kind)
+  def leave_notifications, do: Bus.leave()
 
   def fetch_read(node_id, deps, load, holder \\ nil) do
     ReadCache.fetch_or_load(node_id, deps, load, holder)

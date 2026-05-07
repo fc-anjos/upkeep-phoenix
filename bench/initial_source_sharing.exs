@@ -47,9 +47,9 @@ defmodule Bench.InitialSourceSharing do
       Bench.InitialSharingSupport.timed(fn ->
         probe =
           Bench.InitialSharingSupport.telemetry_probe(
-            [[:upkeep, :graph, :initial_load, :hit]],
+            [[:upkeep, :source, :initial_load, :coalesced]],
             fn _event, _measurements, metadata ->
-              metadata.source == Source and metadata.params.run_id == run_id
+              match?({Source, %{run_id: ^run_id}}, metadata.node_id)
             end
           )
 

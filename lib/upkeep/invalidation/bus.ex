@@ -14,6 +14,13 @@ defmodule Upkeep.Invalidation.Bus do
     end
   end
 
+  def leave do
+    case Group.leave(@group, @key) do
+      :ok -> :ok
+      {:error, :not_in_group} -> :ok
+    end
+  end
+
   def dispatch(event) when is_struct(event) do
     Group.dispatch(@group, @key, {:upkeep_invalidation, node(), event})
   end

@@ -6,6 +6,7 @@ defmodule Upkeep.Runtime.Refresh do
   alias Upkeep.Runtime.Effects
   alias Upkeep.Runtime.SourceLoads
   alias Upkeep.Runtime.State
+  alias Upkeep.Runtime.Subscriptions
   alias Upkeep.Runtime.Watches
   alias Upkeep.Source.Loader, as: Source
 
@@ -20,11 +21,17 @@ defmodule Upkeep.Runtime.Refresh do
     {:ok, socket, queue_effects ++ flush_effects}
   end
 
-  def queue_matching(socket, event) when is_struct(event) do
+  def refresh_local_matching(socket, event) when is_struct(event) do
+    {:ok, socket, queue_effects} = queue_matching(socket, event, :local)
+    {:ok, socket, flush_effects} = flush_refreshes(socket)
+    {:ok, socket, queue_effects ++ flush_effects}
+  end
+
+  def queue_matching(socket, event, mode \\ :all) when is_struct(event) do
     socket
     |> State.watches()
     |> Enum.reduce({socket, []}, fn {_source_id, watch}, {socket, effects} ->
-      if SourceLoads.reacts_to?(watch, event) do
+      if refresh_watch?(watch, event, mode) do
         socket = State.queue_refresh(socket, watch.source_id)
 
         effects = [
@@ -39,6 +46,17 @@ defmodule Upkeep.Runtime.Refresh do
       end
     end)
     |> then(fn {socket, effects} -> {:ok, socket, Enum.reverse(effects)} end)
+  end
+
+  defp refresh_watch?(watch, event, :all), do: SourceLoads.reacts_to?(watch, event)
+
+  defp refresh_watch?(watch, event, :local) do
+    SourceLoads.reacts_to?(watch, event) and local_watch?(watch)
+  end
+
+  defp local_watch?(watch) do
+    not Map.get(watch, :registered?, false) and
+      not Subscriptions.registered_source?(watch.source_id)
   end
 
   def flush_refreshes(socket) do

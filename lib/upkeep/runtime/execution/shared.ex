@@ -24,6 +24,8 @@ defmodule Upkeep.Runtime.Execution.Shared do
          {:ok, graph_dep_ids, local_to_graph} <- graph_dep_ids(socket, dep_node_ids),
          {:ok, sharing_partition, dep_partitions} <-
            Coordinator.shared_partition_info(graph_dep_ids) do
+      ensure_graph_source_deps(socket, graph_dep_ids)
+
       dep_values = graph_dep_values(socket, local_to_graph)
 
       graph_compute = fn graph_node_values ->
@@ -222,6 +224,27 @@ defmodule Upkeep.Runtime.Execution.Shared do
 
     Map.new(local_to_graph, fn {local_node_id, graph_node_id} ->
       {graph_node_id, Store.fetch!(store, local_node_id)}
+    end)
+  end
+
+  defp ensure_graph_source_deps(socket, graph_dep_ids) do
+    watches = State.watches(socket)
+
+    Enum.each(graph_dep_ids, fn
+      source_id when is_map_key(watches, source_id) ->
+        watch = Map.fetch!(watches, source_id)
+
+        :ok =
+          Subscriptions.register(
+            source_id,
+            watch.interest_keys,
+            watch.source,
+            watch.params,
+            Map.get(watch, :tracked_deps, [])
+          )
+
+      _graph_dep_id ->
+        :ok
     end)
   end
 

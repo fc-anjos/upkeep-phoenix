@@ -62,6 +62,7 @@ defmodule Upkeep do
       Upkeep.Invalidation,
       Upkeep.Mutation,
       Upkeep.ReactiveSurface,
+      Upkeep.SingleFlight,
       Upkeep.Source,
       {Mix, :compile}
     ]
@@ -78,6 +79,9 @@ defmodule Upkeep do
       Upkeep.Observability,
       {Group, name: Upkeep.Group, log: false},
       {Upkeep.Invalidation, []},
+      {Upkeep.SingleFlight.Registry,
+       name: Upkeep.Runtime.SourceLoads.Coalescer,
+       telemetry_prefix: [:upkeep, :source, :initial_load]},
       {Upkeep.Coordinator.Graph, []}
     ]
 

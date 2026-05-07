@@ -55,6 +55,8 @@ defmodule Upkeep.Coordinator.Graph do
   defdelegate unregister(node_id), to: Subscriptions, as: :unsubscribe
   defdelegate subscribers(node_id), to: Subscriptions
   defdelegate subscribed?(node_id, pid \\ nil), to: Subscriptions
+  defdelegate member_count(encoded_key), to: Subscriptions
+  defdelegate registered?(node_id), to: Topology
 
   def drain do
     Notifier.drain()

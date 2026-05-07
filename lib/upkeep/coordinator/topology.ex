@@ -105,6 +105,10 @@ defmodule Upkeep.Coordinator.Topology do
     end
   end
 
+  def registered?(node_id) do
+    match?({:ok, _}, lookup(node_id))
+  end
+
   def affected_source_node_ids(event) when is_struct(event) do
     candidate_keys = ReactiveSurface.candidate_keys(event)
 

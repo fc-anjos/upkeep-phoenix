@@ -39,18 +39,30 @@ defmodule Upkeep.Runtime.Mount do
         {:ok, socket, effects}
 
       :error ->
-        registered? = Subscriptions.register_interest?(socket)
-        shared_initial_load? = Subscriptions.shared_initial_load?(socket)
+        policy = Subscriptions.tracking_policy(socket)
+        tracked? = policy == :auto
 
-        {value, tracked_deps, interest_keys} =
-          SourceLoads.load_or_register(
-            socket,
-            shared_initial_load?,
-            source_id,
+        if tracked? do
+          :ok = Subscriptions.track_source(source_id)
+        end
+
+        subscriber_count = if tracked?, do: Subscriptions.source_member_count(source_id), else: 0
+        registered? = policy == :eager or subscriber_count > 1
+
+        if tracked? and not registered? do
+          :ok = Subscriptions.join_local_notifications()
+        end
+
+        {value, tracked_deps} =
+          SourceLoads.load_coalesced(
             producer.source,
             producer.params,
-            producer.component
+            source_id,
+            producer.component,
+            :watch
           )
+
+        interest_keys = SourceLoads.interest_keys(producer.source, producer.params, tracked_deps)
 
         socket =
           socket
@@ -61,6 +73,7 @@ defmodule Upkeep.Runtime.Mount do
             params: producer.params,
             component: producer.component,
             registered?: registered?,
+            subscribed?: tracked?,
             interest_keys: interest_keys,
             tracked_deps: tracked_deps
           })
@@ -69,7 +82,7 @@ defmodule Upkeep.Runtime.Mount do
 
         effects =
           Effects.maybe_register_source(
-            registered? and not shared_initial_load?,
+            registered?,
             source_id,
             interest_keys,
             tracked_deps,

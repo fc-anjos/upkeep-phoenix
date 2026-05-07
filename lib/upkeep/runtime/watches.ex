@@ -68,13 +68,14 @@ defmodule Upkeep.Runtime.Watches do
           socket
           |> State.put_watches(watches)
           |> State.delete_pending_refresh(source_id)
+          |> maybe_leave_local_notifications(watches)
 
         watch.assign_names
         |> Enum.reduce(socket, &State.delete_assign_node(&2, &1))
         |> DAGOperations.remove_source(source_id)
         |> then(fn socket ->
           effects =
-            maybe_unregister_effect(watch.registered?, source_id) ++
+            maybe_unregister_effect(watch, source_id) ++
               [
                 {:telemetry, [:source, :unwatch], %{count: 1}, Telemetry.watch_metadata(watch)}
               ]
@@ -112,6 +113,23 @@ defmodule Upkeep.Runtime.Watches do
     end
   end
 
-  defp maybe_unregister_effect(true, source_id), do: [{:unregister, source_id}]
-  defp maybe_unregister_effect(false, _source_id), do: []
+  defp maybe_unregister_effect(%{registered?: true}, source_id), do: [{:unregister, source_id}]
+  defp maybe_unregister_effect(%{subscribed?: true}, source_id), do: [{:unregister, source_id}]
+  defp maybe_unregister_effect(_watch, _source_id), do: []
+
+  defp maybe_leave_local_notifications(socket, watches) do
+    if local_notifications_needed?(watches) do
+      socket
+    else
+      :ok = Upkeep.Runtime.Subscriptions.leave_local_notifications()
+      socket
+    end
+  end
+
+  defp local_notifications_needed?(watches) do
+    Enum.any?(watches, fn {_source_id, watch} ->
+      not Map.get(watch, :registered?, false) and
+        not Upkeep.Runtime.Subscriptions.registered_source?(watch.source_id)
+    end)
+  end
 end

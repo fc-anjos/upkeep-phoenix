@@ -25,6 +25,8 @@ defmodule Upkeep.Observability do
     [:upkeep, :source, :reload, :start],
     [:upkeep, :source, :reload, :stop],
     [:upkeep, :source, :reload, :exception],
+    [:upkeep, :source, :initial_load, :miss],
+    [:upkeep, :source, :initial_load, :coalesced],
     [:upkeep, :source, :unwatch],
     [:upkeep, :dag, :recompute, :start],
     [:upkeep, :dag, :recompute, :stop],
