@@ -1,16 +1,16 @@
 defmodule Upkeep.Ecto.RepoCapture.BulkWrites do
   @moduledoc false
 
-  alias Upkeep.Ecto.RepoCapture.{BulkRows, Notify, Schema, UpdateAllReturning}
+  alias Upkeep.Ecto.RepoCapture.{BulkRows, InsertAllRecords, Notify, Schema, UpdateAllReturning}
 
   def capture_insert_all(repo, schema_or_source, %Ecto.Query{} = query, capture_opts, run)
       when is_atom(repo) and is_function(run, 0) do
     case repo.transaction(fn ->
            schema = Schema.source_schema(schema_or_source, capture_opts)
-           entries = insert_query_entries(repo, query, schema)
+           entries = InsertAllRecords.query_entries(repo, query, schema)
            result = run.()
 
-           notify_insert_all(result, schema, entries)
+           notify_insert_all(repo, result, schema, entries)
 
            result
          end) do
@@ -19,12 +19,13 @@ defmodule Upkeep.Ecto.RepoCapture.BulkWrites do
     end
   end
 
-  def capture_insert_all(_repo, schema_or_source, entries, capture_opts, run)
-      when is_function(run, 0) do
+  def capture_insert_all(repo, schema_or_source, entries, capture_opts, run)
+      when is_atom(repo) and is_function(run, 0) do
     schema = Schema.source_schema(schema_or_source, capture_opts)
+    entries = InsertAllRecords.submitted_entries(entries, schema)
     result = run.()
 
-    notify_insert_all(result, schema, entries)
+    notify_insert_all(repo, result, schema, entries)
 
     result
   end
@@ -111,77 +112,13 @@ defmodule Upkeep.Ecto.RepoCapture.BulkWrites do
     )
   end
 
-  defp notify_insert_all(result, schema, entries) do
-    result
-    |> inserted_records(schema, entries)
-    |> Enum.each(&Notify.notify_change(:inserted, schema, &1))
+  defp notify_insert_all(repo, result, schema, entries) do
+    case InsertAllRecords.materialize(result, schema, entries) do
+      {:ok, records} ->
+        Enum.each(records, &Notify.notify_change(:inserted, schema, &1))
+
+      {:deopt, reason} ->
+        emit_bulk_capture_deopt(repo, schema, :insert_all, reason)
+    end
   end
-
-  defp insert_query_entries(repo, query, schema) do
-    query
-    |> repo.all()
-    |> Enum.map(&entry_record(schema, &1))
-  end
-
-  defp inserted_records({_count, records}, schema, entries)
-       when is_atom(schema) and is_list(records) and is_list(entries) do
-    records
-    |> Enum.zip(entries)
-    |> Enum.map(fn {record, entry} -> merge_insert_record(schema, record, entry) end)
-  end
-
-  defp inserted_records({_count, records}, _schema, _entries) when is_list(records), do: records
-
-  defp inserted_records(_result, schema, entries) when is_atom(schema) and is_list(entries) do
-    Enum.map(entries, &entry_record(schema, &1))
-  end
-
-  defp inserted_records(_result, schema, entries) when is_binary(schema) and is_list(entries) do
-    Enum.map(entries, &entry_record(schema, &1))
-  end
-
-  defp inserted_records(_result, _schema, _entries), do: []
-
-  defp entry_record(nil, _entry), do: nil
-  defp entry_record(schema, entry) when is_binary(schema), do: entry_map(entry)
-  defp entry_record(schema, %schema{} = entry) when is_atom(schema), do: entry
-
-  defp entry_record(schema, %_{} = entry) when is_atom(schema),
-    do: struct(schema, Map.from_struct(entry))
-
-  defp entry_record(schema, entry) when is_atom(schema) and is_map(entry),
-    do: struct(schema, entry)
-
-  defp entry_record(schema, entry) when is_atom(schema) and is_list(entry),
-    do: struct(schema, Map.new(entry))
-
-  defp merge_insert_record(schema, %schema{} = record, entry) do
-    entry_map =
-      schema
-      |> entry_record(entry)
-      |> Map.from_struct()
-
-    record_map = Map.from_struct(record)
-
-    schema
-    |> struct(
-      Map.merge(entry_map, record_map, fn _key, entry_value, record_value ->
-        if is_nil(record_value), do: entry_value, else: record_value
-      end)
-    )
-  end
-
-  defp merge_insert_record(schema, record, entry)
-       when is_binary(schema) and is_map(record) do
-    Map.merge(entry_map(entry), entry_map(record), fn _key, entry_value, record_value ->
-      if is_nil(record_value), do: entry_value, else: record_value
-    end)
-  end
-
-  defp merge_insert_record(_schema, record, _entry), do: record
-
-  defp entry_map(%_{} = entry), do: Map.from_struct(entry)
-  defp entry_map(entry) when is_map(entry), do: entry
-  defp entry_map(entry) when is_list(entry), do: Map.new(entry)
-  defp entry_map(_entry), do: %{}
 end

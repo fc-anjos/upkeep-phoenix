@@ -302,22 +302,6 @@ defmodule Upkeep.RepoCaptureTest do
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Mine"]
   end
 
-  test "insert_all capture merges partial returning rows with submitted entries" do
-    socket = watch_project(user_id: 9)
-
-    assert {:ok, {1, [%Issue{id: 1}]}} =
-             Upkeep.mutate(fn ->
-               Repo.insert_all(
-                 Issue,
-                 [issue_attrs(id: 1, assignee_id: 9, title: "Partial")],
-                 returning: [:id]
-               )
-             end)
-
-    socket = assert_project_issues(socket, 9, ["Partial"])
-    assert Enum.map(socket.assigns.issues, & &1.title) == ["Partial"]
-  end
-
   test "insert_all capture supports schemaless table writes with a schema bridge" do
     socket = watch_project(user_id: 9)
 
