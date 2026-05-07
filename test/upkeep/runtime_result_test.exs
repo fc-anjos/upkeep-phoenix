@@ -34,11 +34,44 @@ defmodule Upkeep.RuntimeResultTest do
   end
 
   test "Live materializes runtime result effects at the boundary" do
+    attach_telemetry([[:upkeep, :live, :effects, :apply]])
+
     socket =
       new_socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
 
     assert socket.assigns.issues == [:issue]
+
+    assert_receive {:telemetry, [:upkeep, :live, :effects, :apply],
+                    %{count: 1, duration: duration},
+                    %{
+                      effect_count: effect_count,
+                      assign_count: assign_count,
+                      telemetry_count: telemetry_count,
+                      register_source_count: register_source_count
+                    }}
+
+    assert is_integer(duration)
+    assert effect_count >= 3
+    assert assign_count >= 1
+    assert telemetry_count >= 1
+    assert register_source_count >= 1
+  end
+
+  defp attach_telemetry(events) do
+    handler_id = {__MODULE__, self(), System.unique_integer([:positive])}
+
+    :ok =
+      :telemetry.attach_many(
+        handler_id,
+        events,
+        fn event, measurements, metadata, pid ->
+          send(pid, {:telemetry, event, measurements, metadata})
+        end,
+        self()
+      )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
   end
 
   defp find_effect(effects, kind) do

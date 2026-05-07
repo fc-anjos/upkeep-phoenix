@@ -974,7 +974,11 @@ defmodule Upkeep.LiveRefreshTest do
   end
 
   test "graph-pushed source updates reuse shared derived graph values", %{table: table} do
-    attach_telemetry([[:upkeep, :graph, :dispatch, :stop]])
+    attach_telemetry([
+      [:upkeep, :graph, :dispatch, :stop],
+      [:upkeep, :live, :dag_values, :apply],
+      [:upkeep, :live, :effects, :apply]
+    ])
 
     user_id = System.unique_integer([:positive])
     put_scoped_user(table, user_id, [{user_id, :before}])
@@ -1015,7 +1019,39 @@ defmodule Upkeep.LiveRefreshTest do
                       ]
                     }}
 
+    flush_telemetry_messages()
     socket = Live.apply_dag_values(socket, pairs)
+
+    assert_receive {:telemetry, [:upkeep, :live, :dag_values, :apply],
+                    %{count: 1, duration: apply_duration},
+                    %{
+                      pair_count: 2,
+                      changed_node_count: changed_node_count,
+                      shared_node_count: shared_node_count,
+                      effect_count: effect_count,
+                      assign_effect_count: assign_effect_count,
+                      recompute_effect_count: recompute_effect_count
+                    }}
+
+    assert is_integer(apply_duration)
+    assert changed_node_count >= 1
+    assert shared_node_count >= 1
+    assert effect_count >= 2
+    assert assign_effect_count >= 2
+    assert recompute_effect_count >= 0
+
+    assert_receive {:telemetry, [:upkeep, :live, :effects, :apply],
+                    %{count: 1, duration: effects_duration},
+                    %{
+                      effect_count: materialized_effect_count,
+                      assign_count: materialized_assign_count,
+                      telemetry_count: materialized_telemetry_count
+                    }}
+
+    assert is_integer(effects_duration)
+    assert materialized_effect_count >= 2
+    assert materialized_assign_count >= 2
+    assert materialized_telemetry_count >= 2
 
     assert socket.assigns.issues == [{user_id, :before}, {user_id, :after}]
     assert socket.assigns.issue_count == 2
@@ -1787,6 +1823,14 @@ defmodule Upkeep.LiveRefreshTest do
       )
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
+  end
+
+  defp flush_telemetry_messages do
+    receive do
+      {:telemetry, _event, _measurements, _metadata} -> flush_telemetry_messages()
+    after
+      0 -> :ok
+    end
   end
 
   defp with_captured_scope_policy(policy, fun) do

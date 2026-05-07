@@ -8,6 +8,8 @@ defmodule Upkeep.Runtime.Push do
   alias Upkeep.Runtime.Watches
 
   def apply_dag_values(socket, pairs) when is_list(pairs) do
+    started_at = System.monotonic_time()
+
     {socket, changed_nodes, shared_nodes, effects} =
       Enum.reduce(pairs, {socket, [], [], []}, fn {node_id, value},
                                                   {socket, changed, shared, effects} ->
@@ -33,7 +35,18 @@ defmodule Upkeep.Runtime.Push do
     {socket, recompute_effects} =
       recompute_derived(socket, changed_nodes, skip: shared_nodes)
 
-    {:ok, socket, effects ++ recompute_effects}
+    effects = effects ++ recompute_effects
+
+    emit_apply_dag_values(
+      pairs,
+      changed_nodes,
+      shared_nodes,
+      effects,
+      recompute_effects,
+      started_at
+    )
+
+    {:ok, socket, effects}
   end
 
   def apply_dag_value(socket, source_id, value) do
@@ -83,5 +96,27 @@ defmodule Upkeep.Runtime.Push do
 
   defp recompute_derived(socket, changed_source_nodes, opts) do
     DAGOperations.recompute_derived(socket, changed_source_nodes, &Watches.remove_watch/2, opts)
+  end
+
+  defp emit_apply_dag_values(
+         pairs,
+         changed_nodes,
+         shared_nodes,
+         effects,
+         recompute_effects,
+         started_at
+       ) do
+    :telemetry.execute(
+      [:upkeep, :live, :dag_values, :apply],
+      %{count: 1, duration: System.monotonic_time() - started_at},
+      %{
+        pair_count: length(pairs),
+        changed_node_count: length(changed_nodes),
+        shared_node_count: length(shared_nodes),
+        effect_count: length(effects),
+        assign_effect_count: Enum.count(effects, &match?({:assign, _name, _value}, &1)),
+        recompute_effect_count: length(recompute_effects)
+      }
+    )
   end
 end

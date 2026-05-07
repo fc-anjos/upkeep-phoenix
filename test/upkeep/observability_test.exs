@@ -87,8 +87,9 @@ defmodule Upkeep.ObservabilityTest do
     project_id = System.unique_integer([:positive])
     :ets.insert(table, {{:issues, project_id}, [:before]})
 
-    %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
-    |> Live.watch(:issues, ProjectIssues, project_id: project_id)
+    socket =
+      %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+      |> Live.watch(:issues, ProjectIssues, project_id: project_id)
 
     :ets.insert(table, {{:issues, project_id}, [:after]})
 
@@ -99,7 +100,11 @@ defmodule Upkeep.ObservabilityTest do
 
     :ok = Upkeep.Test.drain()
 
-    assert_receive {:dag_values, [{{ProjectIssues, %{project_id: ^project_id}}, [:after]}]}
+    assert_receive {:dag_values,
+                    [{{ProjectIssues, %{project_id: ^project_id}}, [:after]}] = pairs}
+
+    socket = Live.apply_dag_values(socket, pairs)
+    assert socket.assigns.issues == [:after]
 
     events = recent_events_after_observability_flush()
 
@@ -116,6 +121,18 @@ defmodule Upkeep.ObservabilityTest do
                event.metadata.load_reason == :refresh and
                is_integer(event.metadata.shard) and
                is_integer(event.metadata.subscriber_count) and
+               is_integer(event.measurements.duration)
+           end)
+
+    assert Enum.any?(events, fn event ->
+             event.event == [:upkeep, :live, :dag_values, :apply] and
+               Map.get(event.metadata, :pair_count, 0) >= 1 and
+               is_integer(event.measurements.duration)
+           end)
+
+    assert Enum.any?(events, fn event ->
+             event.event == [:upkeep, :live, :effects, :apply] and
+               Map.get(event.metadata, :assign_count, 0) >= 1 and
                is_integer(event.measurements.duration)
            end)
   end
