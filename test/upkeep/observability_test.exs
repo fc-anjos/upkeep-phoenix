@@ -113,6 +113,7 @@ defmodule Upkeep.ObservabilityTest do
     assert Enum.any?(events, fn event ->
              event.event == [:upkeep, :graph, :source_load, :stop] and
                event.metadata.source == ProjectIssues and
+               event.metadata.load_reason == :refresh and
                is_integer(event.metadata.shard) and
                is_integer(event.metadata.subscriber_count) and
                is_integer(event.measurements.duration)

@@ -138,6 +138,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
     node.loader
     |> Loaders.metadata()
     |> Map.put(:shard, state.idx)
+    |> Map.put(:load_reason, :refresh)
     |> Map.put(:subscriber_count, subscriber_count(node))
     |> maybe_put_node_id(node_id)
   end

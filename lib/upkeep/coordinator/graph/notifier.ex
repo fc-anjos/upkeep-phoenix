@@ -84,6 +84,8 @@ defmodule Upkeep.Coordinator.Graph.Notifier do
   end
 
   defp flush(%{events: events, message_count: message_count}) do
+    started_at = System.monotonic_time()
+
     routes =
       events
       |> Enum.flat_map(&Topology.affected_source_node_ids/1)
@@ -94,18 +96,20 @@ defmodule Upkeep.Coordinator.Graph.Notifier do
       Shards.notify_source_nodes(shard, node_ids)
     end)
 
-    emit_flush(events, message_count, routes)
+    duration = System.monotonic_time() - started_at
+
+    emit_flush(events, message_count, routes, duration)
 
     new_state()
   end
 
-  defp emit_flush(events, message_count, routes) do
+  defp emit_flush(events, message_count, routes, duration) do
     event_count = MapSet.size(events)
 
     if event_count > 0 do
       :telemetry.execute(
         [:upkeep, :graph, :notifier, :flush],
-        %{count: 1},
+        %{count: 1, duration: duration},
         %{
           message_count: message_count,
           event_count: event_count,

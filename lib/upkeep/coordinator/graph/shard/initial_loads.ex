@@ -173,6 +173,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
     |> Loaders.metadata()
     |> Map.put(:shard, state.idx)
     |> Map.put(:node_id, node_id)
+    |> Map.put(:load_reason, :initial_load)
     |> Map.put(:subscriber_count, subscriber_count(node))
   end
 

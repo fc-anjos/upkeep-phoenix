@@ -32,6 +32,7 @@ defmodule Upkeep.Observability do
     [:upkeep, :live, :assign],
     [:upkeep, :derive, :sharing],
     [:upkeep, :derive, :sharing_plan],
+    [:upkeep, :graph, :notifier, :flush],
     [:upkeep, :graph, :dispatch, :start],
     [:upkeep, :graph, :dispatch, :stop],
     [:upkeep, :graph, :dispatch, :exception],

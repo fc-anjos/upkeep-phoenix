@@ -118,13 +118,16 @@ defmodule Upkeep.Coordinator.GraphTest do
                         matched_count: 1
                       }, %{kind: :event, event_module: Ev}}
 
-      assert_receive {:telemetry, [:upkeep, :graph, :notifier, :flush], %{count: 1},
+      assert_receive {:telemetry, [:upkeep, :graph, :notifier, :flush],
+                      %{count: 1, duration: flush_duration},
                       %{
                         message_count: 12,
                         event_count: 1,
                         source_node_count: 1,
                         shard_count: 1
                       }}
+
+      assert is_integer(flush_duration)
 
       assert_receive {:dag_values, [{^node_id, :loaded_value}]}, 1_000
 
