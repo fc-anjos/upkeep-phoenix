@@ -38,13 +38,17 @@ defmodule Upkeep.Coordinator.Topology do
   def register_source(node_id, shard_idx, %ReactiveSurface{} = surface) do
     index_keys = ReactiveSurface.index_keys(surface)
 
-    :ets.insert(@nodes_table, {node_id, :source, shard_idx, surface, []})
+    :ets.insert(@nodes_table, {node_id, shard_idx, %{kind: :source, surface: surface, deps: []}})
     Enum.each(index_keys, &:ets.insert(@index_table, {&1, node_id}))
     :ok
   end
 
   def register_derived(node_id, shard_idx, deps) do
-    :ets.insert(@nodes_table, {node_id, :derived, shard_idx, [], deps})
+    :ets.insert(
+      @nodes_table,
+      {node_id, shard_idx, %{kind: :derived, interest_keys: [], deps: deps}}
+    )
+
     :ok
   end
 
@@ -60,7 +64,11 @@ defmodule Upkeep.Coordinator.Topology do
       :ets.insert(@index_table, {key, node_id})
     end)
 
-    :ets.insert(@nodes_table, {node_id, :source, shard_idx, new_surface, []})
+    :ets.insert(
+      @nodes_table,
+      {node_id, shard_idx, %{kind: :source, surface: new_surface, deps: []}}
+    )
+
     :ok
   end
 
@@ -87,18 +95,14 @@ defmodule Upkeep.Coordinator.Topology do
 
   def lookup(node_id) do
     case :ets.lookup(@nodes_table, node_id) do
-      [{^node_id, :source, shard_idx, %ReactiveSurface{} = surface, deps}] ->
+      [{^node_id, shard_idx, %{kind: :source, surface: surface} = node}] ->
         {:ok,
-         %{
-           kind: :source,
-           shard_idx: shard_idx,
-           surface: surface,
-           interest_keys: ReactiveSurface.index_keys(surface),
-           deps: deps
-         }}
+         node
+         |> Map.put(:shard_idx, shard_idx)
+         |> Map.put(:interest_keys, ReactiveSurface.index_keys(surface))}
 
-      [{^node_id, kind, shard_idx, interest_keys, deps}] ->
-        {:ok, %{kind: kind, shard_idx: shard_idx, interest_keys: interest_keys, deps: deps}}
+      [{^node_id, shard_idx, node}] ->
+        {:ok, Map.put(node, :shard_idx, shard_idx)}
 
       _ ->
         :error
@@ -134,8 +138,8 @@ defmodule Upkeep.Coordinator.Topology do
 
   def owned_nodes(shard_idx) do
     @nodes_table
-    |> :ets.match_object({:_, :_, shard_idx, :_, :_})
-    |> Enum.map(fn {node_id, _kind, _idx, _keys, _deps} -> node_id end)
+    |> :ets.match_object({:_, shard_idx, :_})
+    |> Enum.map(fn {node_id, _idx, _node} -> node_id end)
   end
 
   ## Sharding
