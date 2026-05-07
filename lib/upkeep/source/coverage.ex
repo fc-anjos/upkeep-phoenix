@@ -215,6 +215,38 @@ defmodule Upkeep.Source.Coverage do
     }
   end
 
+  defp reason_detail(:unknown_owner_binding) do
+    {
+      "unknown owner binding",
+      "An association reference points at a query binding Upkeep could not resolve.",
+      "Use a supported association join/preload shape or declare explicit invalidation."
+    }
+  end
+
+  defp reason_detail(:non_schema_owner) do
+    {
+      "non-schema owner",
+      "An association reference is owned by a table or module that is not an Ecto schema.",
+      "Use schema-backed associations or declare explicit invalidation for this source."
+    }
+  end
+
+  defp reason_detail(:unknown_association) do
+    {
+      "unknown association",
+      "An association reference could not be found on the owner schema.",
+      "Check the association name or declare explicit invalidation for this source."
+    }
+  end
+
+  defp reason_detail(:association_lookup_failed) do
+    {
+      "association lookup failed",
+      "Association metadata lookup raised while Upkeep was analyzing the query.",
+      "Fix the schema metadata issue or declare explicit invalidation for this source."
+    }
+  end
+
   defp reason_detail(reason) do
     label = reason |> to_string() |> String.replace("_", " ")
 

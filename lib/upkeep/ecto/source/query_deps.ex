@@ -13,7 +13,11 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
   def from_query(%Ecto.Query{} = query) do
     bindings = Upkeep.Ecto.Source.QueryDeps.Bindings.from_query(query)
 
-    %__MODULE__{bindings: bindings, schemas: bindings |> Map.values() |> MapSet.new()}
+    %__MODULE__{
+      bindings: bindings.by_index,
+      schemas: Upkeep.Ecto.Source.QueryDeps.Bindings.schemas(bindings),
+      warnings: bindings.diagnostics
+    }
     |> collect_query_fields(query)
     |> collect_where_equalities(query.wheres)
     |> collect_preload_deps(query)
@@ -430,7 +434,7 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
 
   defp collect_preload_deps(deps, query) do
     preload_deps = preload_query_deps(query.preloads)
-    schema_reasons = preload_schema_reasons(query)
+    {schema_reasons, preload_diagnostics} = preload_schema_reasons(query, deps.bindings)
     warnings = preload_warnings(query.preloads)
 
     deps =
@@ -442,7 +446,9 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
 
     deps
     |> merge_deps(preload_deps)
-    |> then(fn deps -> %{deps | warnings: Enum.uniq(warnings ++ deps.warnings)} end)
+    |> then(fn deps ->
+      %{deps | warnings: Enum.uniq(preload_diagnostics ++ warnings ++ deps.warnings)}
+    end)
   end
 
   defp preload_query_deps(preloads) when is_list(preloads) do
@@ -491,19 +497,33 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
 
   defp preload_warnings(_preloads), do: []
 
-  defp preload_schema_reasons(query) do
-    root_schema = Map.get(Upkeep.Ecto.Source.QueryDeps.Bindings.from_query(query), 0)
+  defp preload_schema_reasons(query, bindings) do
+    root_schema = Map.get(bindings, 0)
 
-    query.preloads
-    |> schema_reasons_for_preloads(root_schema)
-    |> Enum.concat(schema_reasons_for_assocs(query.assocs, query))
-    |> Enum.uniq()
+    {preload_reasons, preload_diagnostics} =
+      schema_reasons_for_preloads(query.preloads, root_schema)
+
+    {assoc_reasons, assoc_diagnostics} = schema_reasons_for_assocs(query.assocs, bindings)
+
+    {Enum.uniq(preload_reasons ++ assoc_reasons),
+     Enum.uniq(preload_diagnostics ++ assoc_diagnostics)}
   end
 
-  defp schema_reasons_for_preloads(_preloads, nil), do: []
+  defp schema_reasons_for_preloads(_preloads, nil), do: {[], []}
 
   defp schema_reasons_for_preloads(preloads, owner_schema) when is_list(preloads) do
-    Enum.flat_map(preloads, fn
+    Enum.reduce(preloads, {[], []}, fn preload, {reasons, diagnostics} ->
+      {preload_reasons, preload_diagnostics} =
+        schema_reasons_for_preload(preload, owner_schema)
+
+      {preload_reasons ++ reasons, preload_diagnostics ++ diagnostics}
+    end)
+  end
+
+  defp schema_reasons_for_preloads(_preloads, _owner_schema), do: {[], []}
+
+  defp schema_reasons_for_preload(preload, owner_schema) do
+    case preload do
       assoc when is_atom(assoc) ->
         association_schema_reasons(owner_schema, assoc)
 
@@ -511,77 +531,61 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
         association_join_schema_reasons(owner_schema, assoc)
 
       {assoc, nested} when is_atom(assoc) ->
-        nested_schemas =
-          case association_schema_reasons(owner_schema, assoc) do
-            [] -> []
+        {assoc_reasons, assoc_diagnostics} = association_schema_reasons(owner_schema, assoc)
+
+        {nested_reasons, nested_diagnostics} =
+          case assoc_reasons do
+            [] -> {[], []}
             [{schema, _reason} | _] -> schema_reasons_for_preloads(List.wrap(nested), schema)
           end
 
-        association_schema_reasons(owner_schema, assoc) ++ nested_schemas
+        {assoc_reasons ++ nested_reasons, assoc_diagnostics ++ nested_diagnostics}
 
       _other ->
-        []
+        {[], []}
+    end
+  end
+
+  defp schema_reasons_for_assocs(assocs, bindings) when is_list(assocs) do
+    Enum.reduce(assocs, {[], []}, fn assoc_entry, {reasons, diagnostics} ->
+      {assoc_reasons, assoc_diagnostics} = schema_reasons_for_assoc(assoc_entry, bindings)
+      {assoc_reasons ++ reasons, assoc_diagnostics ++ diagnostics}
     end)
   end
 
-  defp schema_reasons_for_preloads(_preloads, _owner_schema), do: []
+  defp schema_reasons_for_assocs(_assocs, _bindings), do: {[], []}
 
-  defp schema_reasons_for_assocs(assocs, query) when is_list(assocs) do
-    bindings = Upkeep.Ecto.Source.QueryDeps.Bindings.from_query(query)
-
-    Enum.flat_map(assocs, fn
+  defp schema_reasons_for_assoc(assoc_entry, bindings) do
+    case assoc_entry do
       {assoc, {binding, nested}} when is_atom(assoc) and is_integer(binding) ->
         case Map.fetch(bindings, binding) do
           {:ok, schema} ->
-            [{schema, :preload} | schema_reasons_for_preloads(List.wrap(nested), schema)]
+            {nested_reasons, nested_diagnostics} =
+              schema_reasons_for_preloads(List.wrap(nested), schema)
+
+            {[{schema, :preload} | nested_reasons], nested_diagnostics}
 
           :error ->
-            []
+            {[], [%{reason: :unknown_owner_binding, owner_binding: binding, assoc: assoc}]}
         end
 
       _other ->
-        []
-    end)
+        {[], []}
+    end
   end
 
-  defp schema_reasons_for_assocs(_assocs, _query), do: []
-
-  defp association_schema_reasons(owner_schema, assoc)
-       when is_atom(owner_schema) and is_atom(assoc) do
-    with true <- function_exported?(owner_schema, :__schema__, 2),
-         association when not is_nil(association) <- owner_schema.__schema__(:association, assoc) do
-      [
-        {Map.get(association, :related), :preload},
-        {Map.get(association, :join_through), :many_to_many_join}
-      ]
-      |> Enum.filter(fn {schema, _reason} ->
-        (is_atom(schema) and not is_nil(schema)) or is_binary(schema)
-      end)
-    else
-      _ -> []
+  defp association_schema_reasons(owner_schema, assoc) do
+    case Upkeep.Ecto.Source.QueryDeps.Bindings.association_dependencies(owner_schema, assoc) do
+      {:ok, reasons} -> {reasons, []}
+      {:error, diagnostic} -> {[], [diagnostic]}
     end
-  rescue
-    _ -> []
   end
 
-  defp association_join_schema_reasons(owner_schema, assoc)
-       when is_atom(owner_schema) and is_atom(assoc) do
-    with true <- function_exported?(owner_schema, :__schema__, 2),
-         association when not is_nil(association) <- owner_schema.__schema__(:association, assoc) do
-      association
-      |> Map.get(:join_through)
-      |> then(fn
-        value when (is_atom(value) and not is_nil(value)) or is_binary(value) ->
-          [{value, :many_to_many_join}]
-
-        _other ->
-          []
-      end)
-    else
-      _ -> []
+  defp association_join_schema_reasons(owner_schema, assoc) do
+    case Upkeep.Ecto.Source.QueryDeps.Bindings.association_join_dependencies(owner_schema, assoc) do
+      {:ok, reasons} -> {reasons, []}
+      {:error, diagnostic} -> {[], [diagnostic]}
     end
-  rescue
-    _ -> []
   end
 
   defp merge_deps(left, right) do
@@ -609,7 +613,11 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
   defp unknown_warning?(%{reason: reason})
        when reason in [
               :unsupported_preload,
-              :unsupported_preload_function
+              :unsupported_preload_function,
+              :unknown_owner_binding,
+              :non_schema_owner,
+              :unknown_association,
+              :association_lookup_failed
             ],
        do: true
 
