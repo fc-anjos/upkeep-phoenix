@@ -160,36 +160,9 @@ defmodule Upkeep.Ecto.RepoCapture.BulkWrites do
   defp entry_map(_entry), do: %{}
 
   defp bulk_records(repo, queryable, schema) do
-    case schema do
-      nil ->
-        []
-
-      _schema ->
-        case bulk_select_query(repo, queryable, schema) do
-          nil -> []
-          query -> repo.all(query)
-        end
-    end
-  end
-
-  defp bulk_select_query(_repo, queryable, schema) when is_atom(schema) do
-    queryable
-    |> Ecto.Queryable.to_query()
-    |> Schema.put_query_schema(schema)
-    |> exclude(:select)
-    |> select([record], record)
-  end
-
-  defp bulk_select_query(repo, queryable, source) when is_binary(source) do
-    fields = TableMetadata.fields(repo, source)
-
-    if fields == [] do
-      nil
-    else
-      queryable
-      |> Ecto.Queryable.to_query()
-      |> exclude(:select)
-      |> select([record], map(record, ^fields))
+    case Schema.capture_query(repo, queryable, schema) do
+      nil -> []
+      query -> repo.all(query)
     end
   end
 

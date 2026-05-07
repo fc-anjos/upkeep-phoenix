@@ -3,7 +3,7 @@ defmodule Upkeep.Ecto.RepoCapture.UpdateAllReturning do
 
   import Ecto.Query
 
-  alias Upkeep.Ecto.RepoCapture.{Schema, TableMetadata}
+  alias Upkeep.Ecto.RepoCapture.Schema
 
   def run(repo, queryable, updates, opts, schema)
       when is_atom(repo) and is_list(opts) do
@@ -18,33 +18,18 @@ defmodule Upkeep.Ecto.RepoCapture.UpdateAllReturning do
     end
   end
 
-  defp returning_query(_repo, _queryable, nil), do: :unsupported
-
-  defp returning_query(_repo, queryable, schema) when is_atom(schema) do
-    query =
-      queryable
-      |> Ecto.Queryable.to_query()
-      |> Schema.put_query_schema(schema)
+  defp returning_query(repo, queryable, schema) do
+    query = Ecto.Queryable.to_query(queryable)
 
     if query.select do
       :unsupported
     else
-      {:ok, select(query, [record], record)}
+      case Schema.capture_query(repo, query, schema) do
+        nil -> :unsupported
+        query -> {:ok, query}
+      end
     end
   end
-
-  defp returning_query(repo, queryable, source) when is_binary(source) do
-    query = Ecto.Queryable.to_query(queryable)
-    fields = TableMetadata.fields(repo, source)
-
-    cond do
-      query.select -> :unsupported
-      fields == [] -> :unsupported
-      true -> {:ok, select(query, [record], map(record, ^fields))}
-    end
-  end
-
-  defp returning_query(_repo, _queryable, _schema), do: :unsupported
 
   defp changed_fields(query, updates) do
     query
