@@ -13,6 +13,7 @@ defmodule Upkeep.MixProject do
       package: package(),
       docs: docs(),
       boundary: boundary(),
+      dialyzer: dialyzer(),
       aliases: aliases(),
       deps: deps()
     ]
@@ -52,6 +53,20 @@ defmodule Upkeep.MixProject do
     ]
   end
 
+  defp dialyzer do
+    [
+      flags: [
+        :unmatched_returns,
+        :error_handling,
+        :underspecs,
+        :extra_return,
+        :missing_return,
+        :overlapping_contract
+      ],
+      plt_add_apps: [:ex_unit]
+    ]
+  end
+
   # Specifies your project dependencies.
   #
   # Type `mix help deps` for examples and options.
@@ -65,7 +80,8 @@ defmodule Upkeep.MixProject do
       {:telemetry, "~> 1.0"},
       {:group, "~> 0.1"},
       {:boundary, "~> 0.10.4", runtime: false},
-      {:benchee, "~> 1.3", only: [:dev, :test], runtime: false}
+      {:benchee, "~> 1.3", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
 
@@ -77,7 +93,8 @@ defmodule Upkeep.MixProject do
         "xref graph --format cycles --label compile-connected --fail-above 0",
         "deps.unlock --unused",
         "format",
-        "test"
+        "test",
+        "dialyzer"
       ]
     ]
   end

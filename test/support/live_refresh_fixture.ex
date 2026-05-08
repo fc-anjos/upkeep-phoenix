@@ -62,12 +62,15 @@ defmodule Upkeep.TestSupport.LiveRefreshFixture do
   end
 
   def load_source_value(source, id) do
-    bump_load({:loads, source, id})
+    :ok = bump_load({:loads, source, id})
     fetch({source, id})
   end
 
   def bump_load(key) do
-    :ets.update_counter(@table, key, 1)
+    case :ets.update_counter(@table, key, 1) do
+      count when is_integer(count) -> :ok
+      counts when is_list(counts) -> :ok
+    end
   end
 
   def load_count(source, id \\ 1), do: fetch({:loads, source, id})

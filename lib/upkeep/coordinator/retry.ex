@@ -63,7 +63,11 @@ defmodule Upkeep.Coordinator.Retry do
   def cancel_all(%__MODULE__{} = retry) do
     retry.timers
     |> Map.values()
-    |> Enum.each(fn {_timer_ref, process_ref} -> Process.cancel_timer(process_ref) end)
+    |> Enum.each(fn {_timer_ref, process_ref} ->
+      process_ref
+      |> cancel_retry_timer()
+      |> accept_timer_cancellation()
+    end)
 
     %{retry | attempts: %{}, timers: %{}}
   end
@@ -81,12 +85,35 @@ defmodule Upkeep.Coordinator.Retry do
   defp cancel_timer(retry, key) do
     case Map.fetch(retry.timers, key) do
       {:ok, {_timer_ref, process_ref}} ->
-        Process.cancel_timer(process_ref)
-        update_in(retry.timers, &Map.delete(&1, key))
+        process_ref
+        |> cancel_retry_timer()
+        |> forget_timer_after_cancellation(retry, key)
 
       :error ->
         retry
     end
+  end
+
+  defp cancel_retry_timer(process_ref) do
+    case Process.cancel_timer(process_ref) do
+      false -> :already_fired_or_missing
+      remaining_ms when is_integer(remaining_ms) -> {:cancelled, remaining_ms}
+    end
+  end
+
+  defp accept_timer_cancellation({:cancelled, _remaining_ms}), do: :ok
+  defp accept_timer_cancellation(:already_fired_or_missing), do: :ok
+
+  defp forget_timer_after_cancellation({:cancelled, _remaining_ms}, retry, key) do
+    delete_timer(retry, key)
+  end
+
+  defp forget_timer_after_cancellation(:already_fired_or_missing, retry, key) do
+    delete_timer(retry, key)
+  end
+
+  defp delete_timer(retry, key) do
+    update_in(retry.timers, &Map.delete(&1, key))
   end
 
   defp retry_delay_ms(retry, attempt) do

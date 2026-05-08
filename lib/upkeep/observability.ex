@@ -72,22 +72,14 @@ defmodule Upkeep.Observability do
   @impl true
   def init(opts) do
     limit = Keyword.get(opts, :limit, @default_limit)
-    :telemetry.detach(@handler_id)
-
-    :ok =
-      :telemetry.attach_many(
-        @handler_id,
-        @events,
-        &__MODULE__.handle_event/4,
-        %{server: self()}
-      )
+    :ok = replace_handler(self())
 
     {:ok, %{events: [], limit: limit}}
   end
 
   @impl true
   def terminate(_reason, _state) do
-    :telemetry.detach(@handler_id)
+    :ok = detach_handler_if_attached()
     :ok
   end
 
@@ -122,5 +114,23 @@ defmodule Upkeep.Observability do
 
   def handle_call(:clear, _from, state) do
     {:reply, :ok, %{state | events: []}}
+  end
+
+  defp replace_handler(server) do
+    :ok = detach_handler_if_attached()
+
+    :telemetry.attach_many(
+      @handler_id,
+      @events,
+      &__MODULE__.handle_event/4,
+      %{server: server}
+    )
+  end
+
+  defp detach_handler_if_attached do
+    case :telemetry.detach(@handler_id) do
+      :ok -> :ok
+      {:error, :not_found} -> :ok
+    end
   end
 end

@@ -23,7 +23,9 @@ defmodule Upkeep.Invalidation do
 
   @impl true
   def init(_opts) do
-    Enum.each(ReadCache.table_specs(), fn {name, opts} -> ensure_table(name, opts) end)
+    Enum.each(ReadCache.table_specs(), fn {name, opts} ->
+      :ok = ensure_named_table!(name, opts)
+    end)
 
     children = [
       {Upkeep.SingleFlight.Registry,
@@ -66,10 +68,14 @@ defmodule Upkeep.Invalidation do
     Bus.dispatch(event)
   end
 
-  defp ensure_table(name, opts) do
-    case :ets.info(name) do
-      :undefined -> :ets.new(name, opts)
-      _ -> :ok
+  defp ensure_named_table!(name, opts) do
+    case :ets.whereis(name) do
+      :undefined ->
+        ^name = :ets.new(name, opts)
+        :ok
+
+      _ ->
+        :ok
     end
   end
 end

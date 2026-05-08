@@ -50,22 +50,9 @@ defmodule Upkeep.DAG.Graph do
   end
 
   def topological_order!(%__MODULE__{} = graph) do
-    indegrees =
-      Map.new(graph.nodes, fn {id, _node} -> {id, length(Map.get(graph.deps, id, []))} end)
-
-    queue =
-      indegrees
-      |> Enum.filter(fn {_id, degree} -> degree == 0 end)
-      |> Enum.map(fn {id, _degree} -> id end)
-      |> sort_terms()
-
-    order = kahn(graph, queue, indegrees, [])
-
-    if length(order) == map_size(graph.nodes) do
-      order
-    else
-      raise ArgumentError, "cycle detected in Upkeep DAG"
-    end
+    order = topological_order(graph)
+    :ok = validate_topological_order!(graph, order)
+    order
   end
 
   def downstream_ids(%__MODULE__{} = graph, root_id) do
@@ -210,7 +197,7 @@ defmodule Upkeep.DAG.Graph do
   defp downstream_order(graph, root_ids) do
     affected =
       root_ids
-      |> Enum.flat_map(&downstream_ids_depth_first(graph, &1, MapSet.new()))
+      |> Enum.flat_map(&downstream_ids_depth_first(graph, &1, new_visited()))
       |> MapSet.new()
 
     graph
@@ -221,24 +208,24 @@ defmodule Upkeep.DAG.Graph do
   defp downstream_ids_depth_first(graph, id, seen) do
     graph.dependents
     |> Map.get(id, MapSet.new())
-    |> Enum.reject(&MapSet.member?(seen, &1))
+    |> Enum.reject(&visited?(seen, &1))
     |> Enum.flat_map(fn dependent ->
-      [dependent | downstream_ids_depth_first(graph, dependent, MapSet.put(seen, dependent))]
+      [dependent | downstream_ids_depth_first(graph, dependent, visit(seen, dependent))]
     end)
   end
 
   defp upstream_ids(graph, roots) do
     roots
     |> Enum.filter(&Map.has_key?(graph.nodes, &1))
-    |> Enum.flat_map(&upstream_ids_depth_first(graph, &1, MapSet.new()))
+    |> Enum.flat_map(&upstream_ids_depth_first(graph, &1, new_visited()))
     |> MapSet.new()
   end
 
   defp upstream_ids_depth_first(graph, id, seen) do
-    if MapSet.member?(seen, id) do
+    if visited?(seen, id) do
       []
     else
-      seen = MapSet.put(seen, id)
+      seen = visit(seen, id)
 
       deps =
         graph.deps
@@ -288,9 +275,40 @@ defmodule Upkeep.DAG.Graph do
   end
 
   defp ensure_acyclic!(graph) do
-    topological_order!(graph)
+    :ok = validate_acyclic!(graph)
     graph
   end
+
+  defp validate_acyclic!(graph) do
+    graph
+    |> topological_order()
+    |> then(&validate_topological_order!(graph, &1))
+  end
+
+  defp topological_order(graph) do
+    indegrees =
+      Map.new(graph.nodes, fn {id, _node} -> {id, length(Map.get(graph.deps, id, []))} end)
+
+    queue =
+      indegrees
+      |> Enum.filter(fn {_id, degree} -> degree == 0 end)
+      |> Enum.map(fn {id, _degree} -> id end)
+      |> sort_terms()
+
+    kahn(graph, queue, indegrees, [])
+  end
+
+  defp validate_topological_order!(graph, order) do
+    if length(order) == map_size(graph.nodes) do
+      :ok
+    else
+      raise ArgumentError, "cycle detected in Upkeep DAG"
+    end
+  end
+
+  defp new_visited, do: %{}
+  defp visited?(visited, id), do: Map.has_key?(visited, id)
+  defp visit(visited, id), do: Map.put(visited, id, true)
 
   defp kahn(_graph, [], _indegrees, order), do: Enum.reverse(order)
 

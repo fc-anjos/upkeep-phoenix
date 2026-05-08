@@ -55,14 +55,28 @@ defmodule Upkeep.Coordinator.Graph.Shard.Lifecycle do
   end
 
   defp bump_generation(idx) do
-    case :ets.info(@generation_table) do
+    :ok = ensure_generation_table!()
+
+    :ets.update_counter(@generation_table, idx, 1, {idx, 0})
+  end
+
+  defp ensure_generation_table! do
+    ensure_named_table!(@generation_table, [
+      :set,
+      :public,
+      :named_table,
+      write_concurrency: true
+    ])
+  end
+
+  defp ensure_named_table!(name, opts) do
+    case :ets.whereis(name) do
       :undefined ->
-        :ets.new(@generation_table, [:set, :public, :named_table, write_concurrency: true])
+        ^name = :ets.new(name, opts)
+        :ok
 
       _ ->
         :ok
     end
-
-    :ets.update_counter(@generation_table, idx, 1, {idx, 0})
   end
 end

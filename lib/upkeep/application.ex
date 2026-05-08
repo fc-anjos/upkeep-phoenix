@@ -16,8 +16,7 @@ defmodule Upkeep.Application do
   end
 
   @impl true
-  def config_change(changed, _new, removed) do
-    _ = {changed, removed}
+  def config_change(_changed, _new, _removed) do
     :ok
   end
 end

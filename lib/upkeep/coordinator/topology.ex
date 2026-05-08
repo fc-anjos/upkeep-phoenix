@@ -10,21 +10,23 @@ defmodule Upkeep.Coordinator.Topology do
   ## ETS lifecycle
 
   def init_tables do
-    ensure_table(@nodes_table, [
-      :set,
-      :public,
-      :named_table,
-      read_concurrency: true,
-      write_concurrency: true
-    ])
+    :ok =
+      ensure_named_table!(@nodes_table, [
+        :set,
+        :public,
+        :named_table,
+        read_concurrency: true,
+        write_concurrency: true
+      ])
 
-    ensure_table(@index_table, [
-      :bag,
-      :public,
-      :named_table,
-      read_concurrency: true,
-      write_concurrency: true
-    ])
+    :ok =
+      ensure_named_table!(@index_table, [
+        :bag,
+        :public,
+        :named_table,
+        read_concurrency: true,
+        write_concurrency: true
+      ])
   end
 
   def reset do
@@ -200,10 +202,14 @@ defmodule Upkeep.Coordinator.Topology do
     |> Enum.sort_by(&{-&1.count, &1.shard})
   end
 
-  defp ensure_table(name, opts) do
-    case :ets.info(name) do
-      :undefined -> :ets.new(name, opts)
-      _ -> :ok
+  defp ensure_named_table!(name, opts) do
+    case :ets.whereis(name) do
+      :undefined ->
+        ^name = :ets.new(name, opts)
+        :ok
+
+      _ ->
+        :ok
     end
   end
 
