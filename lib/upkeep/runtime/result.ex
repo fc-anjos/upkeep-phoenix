@@ -1,9 +1,9 @@
-defmodule Upkeep.Live.RuntimeResult do
+defmodule Upkeep.Runtime.Result do
   @moduledoc false
 
   import Phoenix.Component, only: [assign: 3]
 
-  alias Upkeep.Live.Telemetry
+  alias Upkeep.Runtime.Telemetry
   alias Upkeep.Runtime.Subscriptions
 
   def to_socket({:ok, socket, effects}) when is_list(effects) do

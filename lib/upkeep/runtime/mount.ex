@@ -2,7 +2,7 @@ defmodule Upkeep.Runtime.Mount do
   @moduledoc false
 
   alias Upkeep.DAG.Store
-  alias Upkeep.Live.Telemetry
+  alias Upkeep.Runtime.Telemetry
 
   alias Upkeep.Runtime.Effects
   alias Upkeep.Runtime.Execution.Shared

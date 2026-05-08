@@ -2,10 +2,9 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
   @moduledoc false
 
   alias Upkeep.Coordinator.Graph.Shard.{Dispatch, Loaders, Retries}
-  alias Upkeep.Coordinator.Node
+  alias Upkeep.Coordinator.LoadFailure
+  alias Upkeep.Coordinator.LoadedSource
   alias Upkeep.Coordinator.Shards
-  alias Upkeep.Coordinator.Subscriptions
-  alias Upkeep.Coordinator.Topology
   alias Upkeep.DAG.Store
   alias Upkeep.Coordinator.DirtyBuffer
 
@@ -50,13 +49,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
   defp run_flush(state, dirty_sources) do
     {sources_loaded, state} = load_sources(dirty_sources, state)
 
-    store =
-      Enum.reduce(sources_loaded, state.store, fn {id, value}, store ->
-        {store, _changed?} = Store.put_source(store, id, value, [])
-        store
-      end)
-
-    {store, diff} = Store.recompute(store, Enum.map(sources_loaded, &elem(&1, 0)))
+    {store, diff} = Store.recompute(state.store, Enum.map(sources_loaded, &elem(&1, 0)))
 
     derived_loaded =
       Enum.map(diff.changed_node_ids, fn id -> {id, Store.fetch!(store, id)} end)
@@ -73,9 +66,9 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
         node_ids,
         fn node_id ->
           node = Store.fetch_metadata!(state.store, node_id)
-          metadata = source_load_metadata(node, state, node_id)
+          metadata = LoadedSource.load_metadata(state, node_id, node, :refresh)
 
-          %{node_id: node_id, loaded: Loaders.run_with_deps(node.loader, metadata), node: node}
+          Loaders.run_with_deps(node_id, node, metadata)
         end,
         ordered: true,
         timeout: 30_000,
@@ -86,68 +79,21 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
       node_ids
       |> Stream.zip(stream)
       |> Enum.reduce({[], state}, fn
-        {_node_id, {:ok, %{node_id: node_id, loaded: loaded, node: %Node{} = node}}},
-        {results, state} ->
-          if loaded.surface != node.surface do
-            Topology.reconcile_source(
-              node_id,
-              state.idx,
-              node.surface,
-              loaded.surface
-            )
-          end
-
+        {_node_id, {:ok, %LoadedSource{node_id: node_id} = loaded}}, {results, state} ->
           state = Retries.clear(state, node_id)
+          state = LoadedSource.apply(state, loaded)
 
-          store =
-            Store.put_metadata(state.store, node_id, %Node{
-              node
-              | surface_keys: loaded.surface_keys,
-                surface: loaded.surface,
-                tracked_deps: loaded.tracked_deps,
-                loaded?: true
-            })
-
-          {[{node_id, loaded.value} | results], %{state | store: store}}
+          {[LoadedSource.pair(loaded) | results], state}
 
         {node_id, {:exit, reason}}, {results, state} ->
           node = Store.fetch_metadata!(state.store, node_id)
           {state, retry_metadata} = Retries.after_failure(state, node_id, node)
-
-          :telemetry.execute(
-            [:upkeep, :graph, :source_load, :exception],
-            %{count: 1},
-            node
-            |> exception_metadata(state, reason)
-            |> Map.merge(retry_metadata)
-            |> Map.put(:node_id, node_id)
-          )
+          failure = LoadFailure.new(node_id, node, reason, :refresh, retry_metadata)
+          LoadFailure.emit(state, failure)
 
           {results, state}
       end)
 
     {Enum.reverse(results), state}
-  end
-
-  defp exception_metadata(%Node{} = node, state, reason) do
-    node.loader
-    |> Loaders.exception_metadata(reason)
-    |> Map.merge(source_load_metadata(node, state))
-  end
-
-  defp source_load_metadata(%Node{} = node, state, node_id \\ nil) do
-    node.loader
-    |> Loaders.metadata()
-    |> Map.put(:shard, state.idx)
-    |> Map.put(:load_reason, :refresh)
-    |> Map.put(:subscriber_count, subscriber_count(node))
-    |> maybe_put_node_id(node_id)
-  end
-
-  defp maybe_put_node_id(metadata, nil), do: metadata
-  defp maybe_put_node_id(metadata, node_id), do: Map.put(metadata, :node_id, node_id)
-
-  defp subscriber_count(%Node{encoded_key: encoded_key}) do
-    Subscriptions.member_count(encoded_key)
   end
 end

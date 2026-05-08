@@ -1,7 +1,7 @@
 defmodule Upkeep.Runtime.SourceLoads do
   @moduledoc false
 
-  alias Upkeep.Live.Telemetry
+  alias Upkeep.Runtime.Telemetry
   alias Upkeep.Source.Instance
   alias Upkeep.Source.LoadResult
   alias Upkeep.Source.Loader, as: Source

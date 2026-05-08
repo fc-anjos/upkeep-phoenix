@@ -2,8 +2,7 @@ defmodule Upkeep.Runtime.Patch do
   @moduledoc false
 
   alias Upkeep.DAG.{Graph, Store}
-  alias Upkeep.Live.{Components, Ids, Telemetry}
-  alias Upkeep.Runtime.{Effects, State}
+  alias Upkeep.Runtime.{Components, Effects, Ids, State, Telemetry}
 
   defstruct socket: nil,
             changed_nodes: [],

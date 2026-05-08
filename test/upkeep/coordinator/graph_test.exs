@@ -382,8 +382,7 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       assert log =~ "refresh failed"
 
-      assert_receive {:telemetry, [:upkeep, :graph, :source_load, :exception], %{count: 1},
-                      metadata}
+      metadata = receive_source_load_failure()
 
       assert %{
                node_id: ^node_id,
@@ -498,8 +497,7 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       assert log =~ "no retry source failed"
 
-      assert_receive {:telemetry, [:upkeep, :graph, :source_load, :exception], %{count: 1},
-                      metadata}
+      metadata = receive_source_load_failure()
 
       assert %{
                node_id: ^node_id,
@@ -774,10 +772,7 @@ defmodule Upkeep.Coordinator.GraphTest do
   end
 
   defp receive_source_exception_metadata_until_exhausted(metadata \\ []) do
-    assert_receive {:telemetry, [:upkeep, :graph, :source_load, :exception], %{count: 1},
-                    next_metadata},
-                   1_000
-
+    next_metadata = receive_source_load_failure()
     metadata = metadata ++ [next_metadata]
 
     if next_metadata.retry? do
@@ -785,5 +780,13 @@ defmodule Upkeep.Coordinator.GraphTest do
     else
       metadata
     end
+  end
+
+  defp receive_source_load_failure do
+    assert_receive {:telemetry, [:upkeep, :graph, :source_load, :exception], %{count: 1},
+                    metadata},
+                   1_000
+
+    metadata
   end
 end

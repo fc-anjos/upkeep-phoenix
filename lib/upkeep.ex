@@ -50,7 +50,6 @@ defmodule Upkeep do
 
   use Boundary,
     exports: [
-      Live,
       Observability
     ],
     deps: [
@@ -63,6 +62,7 @@ defmodule Upkeep do
       Upkeep.InvalidationSurface,
       Upkeep.Invalidation,
       Upkeep.Mutation,
+      Upkeep.Runtime,
       Upkeep.SingleFlight,
       Upkeep.Source,
       {Mix, :compile}
@@ -81,7 +81,7 @@ defmodule Upkeep do
       {Group, name: Upkeep.Group, log: false},
       {Upkeep.Invalidation, []},
       {Upkeep.SingleFlight.Registry,
-       name: Upkeep.Runtime.SourceLoads.Coalescer,
+       name: Upkeep.Runtime.source_load_coalescer_name(),
        telemetry_prefix: [:upkeep, :source, :initial_load]},
       {Upkeep.Coordinator.Graph, []}
     ]

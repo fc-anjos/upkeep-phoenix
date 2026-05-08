@@ -1,9 +1,8 @@
-defmodule Upkeep.RuntimeResultTest do
+defmodule Upkeep.Runtime.ResultTest do
   use ExUnit.Case, async: true
 
-  alias Upkeep.Live
-  alias Upkeep.Live.Specs
   alias Upkeep.Runtime
+  alias Upkeep.Runtime.Specs
 
   import Upkeep.TestSupport, only: [attach_telemetry: 1]
 
@@ -19,7 +18,7 @@ defmodule Upkeep.RuntimeResultTest do
     invalidated_by(Issue, :updated, on: :project_id)
   end
 
-  test "runtime mount returns tagged tuple effects instead of applying them" do
+  test "runtime mount returns effects instead of applying them" do
     socket = new_socket()
     spec = Specs.source(:issues, ProjectIssues, %{project_id: 1}, nil)
 
@@ -35,29 +34,29 @@ defmodule Upkeep.RuntimeResultTest do
     refute Map.has_key?(socket.assigns, :issues)
   end
 
-  test "Live materializes runtime result effects at the boundary" do
+  test "runtime result materializes tagged effects" do
     attach_telemetry([[:upkeep, :live, :effects, :apply]])
 
-    socket =
-      new_socket()
-      |> Live.watch(:issues, ProjectIssues, project_id: 1)
+    result =
+      {:ok, new_socket(),
+       [
+         {:assign, :issues, [:issue]},
+         {:telemetry, [:runtime, :result, :test], %{count: 1}, %{kind: :test}}
+       ]}
 
+    socket = Runtime.to_socket(result)
     assert socket.assigns.issues == [:issue]
 
     assert_receive {:telemetry, [:upkeep, :live, :effects, :apply],
                     %{count: 1, duration: duration},
                     %{
-                      effect_count: effect_count,
-                      assign_count: assign_count,
-                      telemetry_count: telemetry_count,
-                      register_source_count: register_source_count
+                      effect_count: 2,
+                      assign_count: 1,
+                      telemetry_count: 1,
+                      register_source_count: 0
                     }}
 
     assert is_integer(duration)
-    assert effect_count >= 3
-    assert assign_count >= 1
-    assert telemetry_count >= 1
-    assert register_source_count >= 1
   end
 
   defp find_effect(effects, kind) do

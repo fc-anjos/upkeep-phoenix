@@ -3,10 +3,23 @@ defmodule Upkeep.Live do
   LiveView integration for watching Upkeep sources.
   """
 
-  alias Upkeep.Live.{RuntimeResult, Snapshot, Specs}
-  alias Upkeep.Source.Loader, as: Source
+  use Boundary,
+    top_level?: true,
+    exports: [
+      Macros,
+      ScopeHook
+    ],
+    deps: [
+      Phoenix.Component,
+      Phoenix.LiveView,
+      Upkeep.Mutation,
+      Upkeep.Runtime,
+      Upkeep.Source,
+      {Mix, :compile}
+    ],
+    type: :strict
 
-  @registered_event [:upkeep, :live, :registered]
+  alias Upkeep.Source.Loader, as: Source
 
   defmacro __using__(_opts \\ []) do
     quote do
@@ -52,9 +65,7 @@ defmodule Upkeep.Live do
 
     with_current_scope(socket, fn socket ->
       Source.verify_source!(source, params, source_location: location)
-      spec = Specs.source(assign_name, source, params, component, location)
-      announce_registration(spec, location)
-      Upkeep.Runtime.mount(socket, spec)
+      Upkeep.Runtime.mount_source(socket, assign_name, source, params, component, location)
     end)
   end
 
@@ -63,9 +74,7 @@ defmodule Upkeep.Live do
     location = Keyword.get(opts, :source_location)
 
     with_current_scope(socket, fn socket ->
-      spec = Specs.component(socket, component_id, deps, fun, location)
-      announce_registration(spec, location)
-      Upkeep.Runtime.mount(socket, spec)
+      Upkeep.Runtime.mount_component(socket, component_id, deps, fun, location)
     end)
   end
 
@@ -78,9 +87,7 @@ defmodule Upkeep.Live do
     location = Keyword.get(opts, :source_location)
 
     with_current_scope(socket, fn socket ->
-      spec = Specs.derived(socket, assign_name, deps, fun, location)
-      announce_registration(spec, location)
-      Upkeep.Runtime.mount(socket, spec)
+      Upkeep.Runtime.mount_derived(socket, assign_name, deps, fun, location)
     end)
   end
 
@@ -112,7 +119,7 @@ defmodule Upkeep.Live do
 
   @doc false
   def graph_snapshot(socket) do
-    Snapshot.build(socket)
+    Upkeep.Runtime.graph_snapshot(socket)
   end
 
   def inspecting?(socket) do
@@ -127,7 +134,7 @@ defmodule Upkeep.Live do
     with_current_scope(socket, &Upkeep.Runtime.flush_refreshes/1)
   end
 
-  def notify(event) when is_struct(event), do: Upkeep.notify(event)
+  def notify(event) when is_struct(event), do: Upkeep.Mutation.notify(event)
 
   @doc """
   Apply a batch of Graph-pushed values to the LV in one pass.
@@ -145,20 +152,10 @@ defmodule Upkeep.Live do
     with_current_scope(socket, &Upkeep.Runtime.apply_dag_value(&1, source_id, value))
   end
 
-  defp announce_registration(spec, location) do
-    :telemetry.execute(@registered_event, %{}, %{
-      node_id: spec.id,
-      kind: spec.kind,
-      source_location: location
-    })
-
-    :ok
-  end
-
   defp with_current_scope(socket, fun) do
     {:ok, socket, scope_effects} = Upkeep.Runtime.sync_current_scope(socket)
     {:ok, socket, effects} = fun.(socket)
-    RuntimeResult.to_socket({:ok, socket, scope_effects ++ effects})
+    Upkeep.Runtime.to_socket({:ok, socket, scope_effects ++ effects})
   end
 
   defp normalize_params(params) when is_list(params), do: Map.new(params)

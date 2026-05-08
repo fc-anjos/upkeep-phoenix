@@ -128,15 +128,8 @@ defmodule Upkeep.Coordinator.Graph.Shard do
   end
 
   @impl true
-  def handle_info({ref, %{node_id: node_id, loaded: loaded, node: node}}, state) do
-    {:noreply,
-     InitialLoads.handle_source_result(
-       state,
-       ref,
-       node_id,
-       loaded,
-       node
-     )}
+  def handle_info({ref, %Upkeep.Coordinator.LoadedSource{} = loaded}, state) do
+    {:noreply, InitialLoads.handle_source_result(state, ref, loaded)}
   end
 
   @impl true

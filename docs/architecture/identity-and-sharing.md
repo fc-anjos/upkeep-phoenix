@@ -143,7 +143,7 @@ prove the same scope identity.
 
 Captured socket/session/current-scope values are fail-closed:
 
-- in dev, Upkeep raises `Upkeep.ImplicitScopeError`;
+- in dev, Upkeep raises `Upkeep.Runtime.ImplicitScopeError`;
 - in prod, Upkeep keeps the derive local and emits
   `[:upkeep, :derive, :sharing]` with `severity: :error` and
   `reason: :captured_scope`.
@@ -250,4 +250,3 @@ Important `[:upkeep, :derive, :sharing]` metadata:
 
 Benchmark gates should assert these events fire for any optimization they are
 intended to prove.
-

@@ -1,7 +1,7 @@
 defmodule Upkeep.Runtime.Refresh do
   @moduledoc false
 
-  alias Upkeep.Live.Telemetry
+  alias Upkeep.Runtime.Telemetry
   alias Upkeep.Runtime.Patch
   alias Upkeep.Runtime.SourceLoads
   alias Upkeep.Runtime.State

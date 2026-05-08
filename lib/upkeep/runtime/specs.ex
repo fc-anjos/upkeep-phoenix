@@ -1,8 +1,8 @@
-defmodule Upkeep.Live.Specs do
+defmodule Upkeep.Runtime.Specs do
   @moduledoc false
 
   alias Upkeep.Runtime.Dependencies
-  alias Upkeep.Live.Ids
+  alias Upkeep.Runtime.Ids
   alias Upkeep.Runtime.NodeSpec
   alias Upkeep.Runtime.Materializer
   alias Upkeep.Runtime.Producer

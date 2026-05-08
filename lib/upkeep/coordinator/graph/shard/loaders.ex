@@ -1,10 +1,11 @@
 defmodule Upkeep.Coordinator.Graph.Shard.Loaders do
   @moduledoc false
 
+  alias Upkeep.Coordinator.{LoadedSource, Node}
   alias Upkeep.Source.Instance
   alias Upkeep.Source.Loader, as: Source
 
-  def run_with_deps(loader, metadata) when is_map(metadata) do
+  def run_with_deps(node_id, %Node{} = node, metadata) when is_map(metadata) do
     :telemetry.execute(
       [:upkeep, :graph, :source_load, :start],
       %{system_time: System.system_time()},
@@ -12,7 +13,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Loaders do
     )
 
     started_at = System.monotonic_time()
-    loaded = run_with_deps(loader)
+    loaded = run_with_deps(node_id, node)
     duration = System.monotonic_time() - started_at
 
     :telemetry.execute(
@@ -26,28 +27,14 @@ defmodule Upkeep.Coordinator.Graph.Shard.Loaders do
     loaded
   end
 
-  def run_with_deps({:source, %Instance{} = instance}) do
+  def run_with_deps(node_id, %Node{loader: {:source, %Instance{} = instance}} = node) do
     result = Source.load_result(instance)
-
-    %{
-      source_result: result,
-      value: result.value,
-      surface_keys: Upkeep.InvalidationSurface.keys(result.surface),
-      tracked_deps: result.tracked_deps,
-      surface: result.surface
-    }
+    LoadedSource.from_source_result(node_id, node, result)
   end
 
-  def run_with_deps({:fun, load_fn}) do
+  def run_with_deps(node_id, %Node{loader: {:fun, load_fn}} = node) do
     {value, surface} = load_fn.()
-
-    %{
-      source_result: nil,
-      value: value,
-      surface_keys: Upkeep.InvalidationSurface.index_keys(surface),
-      tracked_deps: [],
-      surface: surface
-    }
+    LoadedSource.from_fun(node_id, node, value, surface)
   end
 
   def metadata({:source, %Instance{} = instance}) do

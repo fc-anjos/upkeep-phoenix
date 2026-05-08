@@ -1,8 +1,8 @@
-defmodule Upkeep.Live.SpecsTest do
+defmodule Upkeep.Runtime.SpecsTest do
   use ExUnit.Case, async: true
 
-  alias Upkeep.Live
-  alias Upkeep.Live.Specs
+  alias Upkeep.Runtime
+  alias Upkeep.Runtime.Specs
   alias Upkeep.Runtime.Materializer
   alias Upkeep.Runtime.Producer
   alias Upkeep.Source.Instance
@@ -53,9 +53,7 @@ defmodule Upkeep.Live.SpecsTest do
   end
 
   test "builds component node specs from component inputs" do
-    socket =
-      new_socket()
-      |> Live.watch(:issues, ProjectIssues, project_id: 1)
+    socket = socket_with_issues()
 
     spec =
       Specs.component(socket, {:issue_panel, 1}, [:issues], fn %{issues: issues} -> issues end)
@@ -82,10 +80,7 @@ defmodule Upkeep.Live.SpecsTest do
   end
 
   test "builds derived node specs from derive inputs" do
-    socket =
-      new_socket()
-      |> Live.watch(:issues, ProjectIssues, project_id: 1)
-
+    socket = socket_with_issues()
     spec = Specs.derived(socket, :issue_count, [:issues], &Calculations.count/1)
     source_id = {ProjectIssues, %{project_id: 1}}
 
@@ -107,6 +102,13 @@ defmodule Upkeep.Live.SpecsTest do
                kind: :derived
              }
            ]
+  end
+
+  defp socket_with_issues do
+    assert {:ok, socket, _effects} =
+             Runtime.mount_source(new_socket(), :issues, ProjectIssues, %{project_id: 1}, nil)
+
+    socket
   end
 
   defp new_socket, do: %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}

@@ -1,7 +1,7 @@
-defmodule Upkeep.Live.Telemetry do
+defmodule Upkeep.Runtime.Telemetry do
   @moduledoc false
 
-  alias Upkeep.Live.Ids
+  alias Upkeep.Runtime.Ids
   alias Upkeep.Source.Instance
 
   def emit(event, measurements, metadata) do

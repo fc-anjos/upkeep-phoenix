@@ -1,7 +1,7 @@
 defmodule Upkeep.Runtime.ScopeCapture do
   @moduledoc false
 
-  alias Upkeep.Live.Ids
+  alias Upkeep.Runtime.Ids
 
   @default_policy if(Mix.env() == :dev, do: :raise, else: :telemetry)
 
@@ -36,7 +36,7 @@ defmodule Upkeep.Runtime.ScopeCapture do
         assign_name = Map.fetch!(context, :assign_name)
         location_suffix = location_suffix(Map.get(context, :source_location))
 
-        raise Upkeep.ImplicitScopeError,
+        raise Upkeep.Runtime.ImplicitScopeError,
               "Upkeep derive #{inspect(assign_name)}#{location_suffix} captures " <>
                 "#{inspect(scope_capture)}. " <>
                 "Use an external function that receives current_scope from the dependency map " <>

@@ -2,10 +2,9 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
   @moduledoc false
 
   alias Upkeep.Coordinator.Graph.Shard.Loaders
-  alias Upkeep.Coordinator.Node
+  alias Upkeep.Coordinator.LoadFailure
+  alias Upkeep.Coordinator.LoadedSource
   alias Upkeep.Coordinator.Shards
-  alias Upkeep.Coordinator.Subscriptions
-  alias Upkeep.Coordinator.Topology
   alias Upkeep.DAG.Store
   alias Upkeep.SingleFlight
 
@@ -19,15 +18,11 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
 
       :no_load ->
         emit_source(:miss, state.idx, node_id, node.loader)
-        load_metadata = source_load_metadata(state, node_id, node)
+        load_metadata = LoadedSource.load_metadata(state, node_id, node, :initial_load)
 
         task =
           Task.Supervisor.async_nolink(Shards.task_sup(), fn ->
-            %{
-              node_id: node_id,
-              loaded: Loaders.run_with_deps(node.loader, load_metadata),
-              node: node
-            }
+            Loaders.run_with_deps(node_id, node, load_metadata)
           end)
 
         source_loads = SingleFlight.start(state.source_loads, node_id, task.ref, from, node)
@@ -65,41 +60,17 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
   def handle_source_result(
         state,
         ref,
-        node_id,
-        loaded,
-        %Node{} = node
+        %LoadedSource{node_id: node_id} = loaded
       ) do
     case SingleFlight.pop(state.source_loads, ref) do
       {:ok, ^node_id, load, source_loads} ->
         Process.demonitor(ref, [:flush])
 
-        if loaded.surface != node.surface do
-          Topology.reconcile_source(
-            node_id,
-            state.idx,
-            node.surface,
-            loaded.surface
-          )
-        end
+        state = LoadedSource.apply(state, loaded)
 
-        {store, _changed?} = Store.put_source(state.store, node_id, loaded.value, [])
+        SingleFlight.reply_all(load, LoadedSource.reply(loaded))
 
-        store =
-          Store.put_metadata(
-            store,
-            node_id,
-            %Node{
-              node
-              | surface_keys: loaded.surface_keys,
-                surface: loaded.surface,
-                tracked_deps: loaded.tracked_deps,
-                loaded?: true
-            }
-          )
-
-        SingleFlight.reply_all(load, {:ok, loaded.source_result})
-
-        %{state | store: store, source_loads: source_loads}
+        %{state | source_loads: source_loads}
 
       _ ->
         state
@@ -121,7 +92,9 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
   def handle_down(state, ref, reason) do
     case SingleFlight.pop(state.source_loads, ref) do
       {:ok, node_id, load, source_loads} ->
-        emit_source_exception(state, node_id, load.extra, reason)
+        failure = LoadFailure.new(node_id, load.extra, reason, :initial_load)
+        LoadFailure.emit(state, failure)
+
         SingleFlight.reply_all(load, {:error, reason})
         %{state | source_loads: source_loads}
 
@@ -160,29 +133,5 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
       |> Map.put(:node_id, node_id)
       |> Map.put(:dep_node_ids, dep_ids)
     )
-  end
-
-  defp emit_source_exception(state, node_id, %Node{} = node, reason) do
-    metadata =
-      node.loader
-      |> Loaders.exception_metadata(reason)
-      |> Map.merge(source_load_metadata(state, node_id, node))
-
-    :telemetry.execute([:upkeep, :graph, :source_load, :exception], %{count: 1}, metadata)
-  end
-
-  defp source_load_metadata(state, node_id, %Node{} = node) do
-    node.loader
-    |> Loaders.metadata()
-    |> Map.put(:shard, state.idx)
-    |> Map.put(:node_id, node_id)
-    |> Map.put(:load_reason, :initial_load)
-    |> Map.put(:subscriber_count, subscriber_count(node))
-  end
-
-  defp subscriber_count(%Node{encoded_key: encoded_key}) do
-    encoded_key
-    |> Subscriptions.members()
-    |> length()
   end
 end

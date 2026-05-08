@@ -1,12 +1,44 @@
 defmodule Upkeep.Runtime do
   @moduledoc false
 
-  alias Upkeep.Live.Ids
-  alias Upkeep.Runtime.Mount
-  alias Upkeep.Runtime.Patch
-  alias Upkeep.Runtime.Push
-  alias Upkeep.Runtime.Refresh
-  alias Upkeep.Runtime.Watches
+  use Boundary,
+    top_level?: true,
+    exports: [],
+    deps: [
+      Group,
+      Phoenix.Component,
+      Phoenix.LiveView,
+      Phoenix.LiveView.Socket,
+      Upkeep.Coordinator,
+      Upkeep.DAG,
+      Upkeep.Invalidation,
+      Upkeep.InvalidationSurface,
+      Upkeep.Source,
+      Upkeep.SingleFlight,
+      {Mix, :compile}
+    ],
+    type: :strict
+
+  alias Upkeep.Runtime.{Ids, Mount, Patch, Push, Refresh, Result, Snapshot, SourceLoads, Specs}
+  alias Upkeep.Runtime.{Telemetry, Watches}
+
+  def mount_source(socket, assign_name, source, params, component, source_location \\ nil) do
+    spec = Specs.source(assign_name, source, params, component, source_location)
+    announce_registration(spec, source_location)
+    mount(socket, spec)
+  end
+
+  def mount_component(socket, component_id, deps, fun, source_location \\ nil) do
+    spec = Specs.component(socket, component_id, deps, fun, source_location)
+    announce_registration(spec, source_location)
+    mount(socket, spec)
+  end
+
+  def mount_derived(socket, assign_name, deps, fun, source_location \\ nil) do
+    spec = Specs.derived(socket, assign_name, deps, fun, source_location)
+    announce_registration(spec, source_location)
+    mount(socket, spec)
+  end
 
   def sync_current_scope(socket) do
     case Map.fetch(socket.assigns, :current_scope) do
@@ -28,6 +60,8 @@ defmodule Upkeep.Runtime do
   end
 
   def mount(socket, spec), do: Mount.dispatch(socket, spec)
+
+  def source_load_coalescer_name, do: SourceLoads.coalescer_name()
 
   def remove_component(socket, component_id), do: Watches.remove_component(socket, component_id)
 
@@ -51,6 +85,10 @@ defmodule Upkeep.Runtime do
   def apply_dag_value(socket, source_id, value),
     do: Push.apply_dag_value(socket, source_id, value)
 
+  def graph_snapshot(socket), do: Snapshot.build(socket)
+
+  def to_socket(result), do: Result.to_socket(result)
+
   def recompute_derived(socket, changed_source_nodes, opts \\ []) do
     patch =
       socket
@@ -59,5 +97,15 @@ defmodule Upkeep.Runtime do
       |> Patch.recompute(&Watches.remove_watch/2, opts)
 
     {Patch.socket(patch), Patch.effects(patch)}
+  end
+
+  defp announce_registration(spec, source_location) do
+    Telemetry.emit([:live, :registered], %{}, %{
+      node_id: spec.id,
+      kind: spec.kind,
+      source_location: source_location
+    })
+
+    :ok
   end
 end

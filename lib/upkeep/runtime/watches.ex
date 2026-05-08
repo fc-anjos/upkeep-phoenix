@@ -1,9 +1,7 @@
 defmodule Upkeep.Runtime.Watches do
   @moduledoc false
 
-  alias Upkeep.Live.{Ids, Telemetry}
-  alias Upkeep.Runtime.Patch
-  alias Upkeep.Runtime.State
+  alias Upkeep.Runtime.{Ids, Patch, State, Telemetry}
 
   def remove_component(socket, component_id) when not is_nil(component_id) do
     node_id = Ids.component_node_id(component_id)

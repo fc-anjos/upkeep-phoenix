@@ -1,4 +1,4 @@
-defmodule Upkeep.ImplicitScopeError do
+defmodule Upkeep.Runtime.ImplicitScopeError do
   @moduledoc false
 
   defexception [:message]

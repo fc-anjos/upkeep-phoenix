@@ -1,7 +1,7 @@
 defmodule Upkeep.Runtime.Effects do
   @moduledoc false
 
-  alias Upkeep.Live.Ids
+  alias Upkeep.Runtime.Ids
   alias Upkeep.Runtime.State
 
   def maybe_register_source(true, source_id, surface, producer) do

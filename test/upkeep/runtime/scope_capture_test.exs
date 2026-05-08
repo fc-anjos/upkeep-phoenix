@@ -5,7 +5,7 @@ defmodule Upkeep.Runtime.ScopeCaptureTest do
 
   test "raise policy raises implicit scope errors" do
     with_policy(:raise, fn ->
-      assert_raise Upkeep.ImplicitScopeError, ~r/captures :socket/, fn ->
+      assert_raise Upkeep.Runtime.ImplicitScopeError, ~r/captures :socket/, fn ->
         ScopeCapture.apply_policy({:captured_scope, {__MODULE__, :example, 1}, :socket}, %{
           assign_name: :label
         })

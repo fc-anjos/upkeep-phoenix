@@ -1,4 +1,4 @@
-defmodule Upkeep.Live.Ids do
+defmodule Upkeep.Runtime.Ids do
   @moduledoc false
 
   alias Upkeep.Source.Instance

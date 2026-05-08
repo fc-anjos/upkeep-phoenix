@@ -1,9 +1,8 @@
-defmodule Upkeep.Live.Snapshot do
+defmodule Upkeep.Runtime.Snapshot do
   @moduledoc false
 
   alias Upkeep.DAG.{Graph, Store}
-  alias Upkeep.Live.{Ids, Telemetry}
-  alias Upkeep.Runtime.State
+  alias Upkeep.Runtime.{Ids, State, Telemetry}
 
   def build(socket) do
     store = State.store(socket)

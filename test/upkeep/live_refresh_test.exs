@@ -540,7 +540,7 @@ defmodule Upkeep.LiveRefreshTest do
         connected_live_socket(%{user_id: user_id})
         |> Live.watch(:issues, ProjectIssues, project_id: user_id)
 
-      assert_raise Upkeep.ImplicitScopeError, ~r/captures :socket/, fn ->
+      assert_raise Upkeep.Runtime.ImplicitScopeError, ~r/captures :socket/, fn ->
         Live.derive(socket, :captured_scope_label, [:issues], fn %{issues: issues} ->
           bump_load({:loads, :captured_scope_label, user_id})
           {socket.assigns.current_scope.user_id, issues}
@@ -1788,8 +1788,8 @@ defmodule Upkeep.LiveRefreshTest do
     instance = Upkeep.Source.instance(source, params)
 
     source_ids = [
-      Upkeep.Live.Ids.scoped_source_id(instance, nil),
-      Upkeep.Live.Ids.scoped_source_id(instance, component)
+      Upkeep.Runtime.Ids.scoped_source_id(instance, nil),
+      Upkeep.Runtime.Ids.scoped_source_id(instance, component)
     ]
 
     subscribed? =
