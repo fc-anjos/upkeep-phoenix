@@ -5,7 +5,7 @@ defmodule Upkeep.Invalidation.ReadCacheTest do
 
   alias Upkeep.Ecto.Source.QueryDeps
   alias Upkeep.Invalidation.ReadCache, as: ReadCache
-  alias Upkeep.TestSupport.{LiveSocket, TelemetryProbe}
+  alias Upkeep.TestSupport.{LiveSocket, TelemetryMessages}
   alias Upkeep.TestSupport.Repo
 
   defmodule Project do
@@ -115,7 +115,7 @@ defmodule Upkeep.Invalidation.ReadCacheTest do
     ReadCache.invalidate(event)
     assert ReadCache.count() == 0
 
-    TelemetryProbe.assert_event([:upkeep, :read_nodes, :invalidation],
+    TelemetryMessages.assert_event([:upkeep, :read_nodes, :invalidation],
       measurements: %{
         count: 1,
         candidate_key_count: 2,

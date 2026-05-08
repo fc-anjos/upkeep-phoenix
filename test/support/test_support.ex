@@ -4,12 +4,11 @@ defmodule Upkeep.TestSupport do
   use Boundary,
     top_level?: true,
     exports: [
-      BlockingProbe,
       Config,
-      DagProbe,
+      DagMessages,
       LiveRefreshFixture,
       LiveSocket,
-      TelemetryProbe
+      TelemetryMessages
     ],
     check: [out: false]
 

@@ -1,4 +1,4 @@
-defmodule Upkeep.TestSupport.DagProbe do
+defmodule Upkeep.TestSupport.DagMessages do
   @moduledoc false
 
   import ExUnit.Assertions

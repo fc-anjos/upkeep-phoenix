@@ -1,4 +1,4 @@
-defmodule Upkeep.TestSupport.MultiNodeProbe do
+defmodule Upkeep.TestSupport.MultiNodeHarness do
   @moduledoc false
   def notification_group_node_view do
     Upkeep.Coordinator.Graph.group()

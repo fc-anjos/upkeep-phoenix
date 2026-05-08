@@ -3,7 +3,7 @@ defmodule Upkeep.RepoCaptureTest do
 
   alias Ecto.Changeset
   alias Upkeep.Live
-  alias Upkeep.TestSupport.{Config, DagProbe, LiveSocket, TelemetryProbe}
+  alias Upkeep.TestSupport.{Config, DagMessages, LiveSocket, TelemetryMessages}
   import ExUnit.CaptureLog
   import Upkeep.TestSupport, only: [attach_telemetry: 1]
 
@@ -434,7 +434,7 @@ defmodule Upkeep.RepoCaptureTest do
     socket = assert_project_issues_refresh(socket, 9, ["After"])
     assert Enum.map(socket.assigns.issues, & &1.title) == ["After"]
 
-    TelemetryProbe.assert_counted([:upkeep, :repo, :update_all_returning, :deopt],
+    TelemetryMessages.assert_counted([:upkeep, :repo, :update_all_returning, :deopt],
       repo: Repo,
       schema: Issue,
       operation: :update_all,
@@ -595,7 +595,7 @@ defmodule Upkeep.RepoCaptureTest do
   end
 
   defp assert_project_issues_refresh(user_id, titles) do
-    issues = DagProbe.receive_value(project_issues_source_id(user_id))
+    issues = DagMessages.receive_value(project_issues_source_id(user_id))
     assert Enum.map(issues, & &1.title) == titles
     issues
   end
@@ -607,17 +607,17 @@ defmodule Upkeep.RepoCaptureTest do
 
   defp assert_table_project_issues_refresh(socket, user_id, titles) do
     source_id = {TableProjectIssues, %{project_id: 1, user_id: user_id}}
-    issues = DagProbe.receive_value(source_id)
+    issues = DagMessages.receive_value(source_id)
     assert Enum.map(issues, & &1.title) == titles
     Live.apply_dag_value(socket, source_id, issues)
   end
 
   defp refute_project_issues_refresh(user_id) do
-    DagProbe.refute_value(project_issues_source_id(user_id), 0)
+    DagMessages.refute_value(project_issues_source_id(user_id), 0)
   end
 
   defp refute_any_repo_refresh do
-    DagProbe.refute_any()
+    DagMessages.refute_any()
   end
 
   defp project_issues_source_id(user_id) do

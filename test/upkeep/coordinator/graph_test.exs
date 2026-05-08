@@ -8,7 +8,7 @@ defmodule Upkeep.Coordinator.GraphTest do
   alias Upkeep.Coordinator.Graph.Notifier
   alias Upkeep.Invalidation.Bus
   alias Upkeep.InvalidationSurface
-  alias Upkeep.TestSupport.{DagProbe, TelemetryProbe}
+  alias Upkeep.TestSupport.{DagMessages, TelemetryMessages}
 
   defmodule Ev do
     defstruct [:id, :tenant_id]
@@ -75,7 +75,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       assert Group.member_count(Bus.group(), Bus.key()) >= 2
       assert Group.member_count(Graph.group(), "graph/shard/") >= Graph.shard_count()
 
-      :ok = Group.join(Bus.group(), Bus.key(), %{role: :probe})
+      :ok = Group.join(Bus.group(), Bus.key(), %{role: :test_subscriber})
 
       notify(event)
 
@@ -112,7 +112,7 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       :ok = Graph.drain()
 
-      TelemetryProbe.assert_event([:upkeep, :graph, :invalidation],
+      TelemetryMessages.assert_event([:upkeep, :graph, :invalidation],
         measurements: %{
           count: 1,
           candidate_key_count: 1,
@@ -123,7 +123,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       )
 
       {%{duration: flush_duration}, _metadata} =
-        TelemetryProbe.assert_counted([:upkeep, :graph, :notifier, :flush],
+        TelemetryMessages.assert_counted([:upkeep, :graph, :notifier, :flush],
           message_count: 12,
           event_count: 1,
           source_node_count: 1,
@@ -132,17 +132,17 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       assert is_integer(flush_duration)
 
-      assert DagProbe.receive_value(node_id) == :loaded_value
+      assert DagMessages.receive_value(node_id) == :loaded_value
 
       {%{system_time: system_time}, %{shard: shard, pair_count: pair_count}} =
-        TelemetryProbe.assert_event([:upkeep, :graph, :dispatch, :start])
+        TelemetryMessages.assert_event([:upkeep, :graph, :dispatch, :start])
 
       assert is_integer(system_time)
       assert is_integer(shard)
       assert pair_count >= 1
 
       {%{duration: duration}, %{pid_count: pid_count}} =
-        TelemetryProbe.assert_event([:upkeep, :graph, :dispatch, :stop])
+        TelemetryMessages.assert_event([:upkeep, :graph, :dispatch, :stop])
 
       assert is_integer(duration)
       assert pid_count >= 1
@@ -174,14 +174,14 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       :ok = Graph.drain()
 
-      TelemetryProbe.assert_counted([:upkeep, :graph, :notifier, :flush],
+      TelemetryMessages.assert_counted([:upkeep, :graph, :notifier, :flush],
         message_count: 2,
         event_count: 2,
         source_node_count: 1,
         shard_count: 1
       )
 
-      assert DagProbe.receive_value(node_id) == :loaded
+      assert DagMessages.receive_value(node_id) == :loaded
       assert :counters.get(counter, 1) == 1
 
       Graph.unregister(node_id)
@@ -203,7 +203,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       :ok = Graph.drain()
 
       assert :counters.get(counter, 1) == 1
-      assert DagProbe.receive_value(node_id) == :loaded
+      assert DagMessages.receive_value(node_id) == :loaded
 
       Graph.unregister(node_id)
     end
@@ -225,14 +225,14 @@ defmodule Upkeep.Coordinator.GraphTest do
       send(Process.whereis(Notifier), {:upkeep_invalidation, :remote@nohost, event})
       :ok = Graph.drain()
 
-      TelemetryProbe.assert_counted([:upkeep, :graph, :notifier, :flush],
+      TelemetryMessages.assert_counted([:upkeep, :graph, :notifier, :flush],
         message_count: 1,
         event_count: 1,
         source_node_count: 1,
         shard_count: 1
       )
 
-      assert DagProbe.receive_value(node_id) == :loaded
+      assert DagMessages.receive_value(node_id) == :loaded
       assert :counters.get(counter, 1) == 1
 
       Graph.unregister(node_id)
@@ -256,11 +256,11 @@ defmodule Upkeep.Coordinator.GraphTest do
       # First flush: routes via key_a.
       notify(%Ev{id: 1, tenant_id: 1})
       :ok = Graph.drain()
-      assert DagProbe.receive_value(node_id) == :v
+      assert DagMessages.receive_value(node_id) == :v
 
       notify(%Ev{id: 1, tenant_id: 2})
       :ok = Graph.drain()
-      assert DagProbe.receive_value(node_id) == :v
+      assert DagMessages.receive_value(node_id) == :v
 
       Graph.unregister(node_id)
     end
@@ -276,7 +276,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       # No subscribers; notify must not deliver anything.
       notify(%Ev{id: 99, tenant_id: 1})
       :ok = Graph.drain()
-      DagProbe.refute_value(node_id, 0)
+      DagMessages.refute_value(node_id, 0)
     end
 
     test "reset removes shared source state and allows a fresh registration" do
@@ -288,13 +288,13 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       notify(%Ev{id: 100, tenant_id: 1})
       :ok = Graph.drain()
-      DagProbe.refute_value(node_id, 0)
+      DagMessages.refute_value(node_id, 0)
 
       :ok = Graph.register_loader(node_id, surface, fn -> {:new, surface} end)
 
       notify(%Ev{id: 100, tenant_id: 1})
       :ok = Graph.drain()
-      assert DagProbe.receive_value(node_id) == :new
+      assert DagMessages.receive_value(node_id) == :new
 
       Graph.unregister(node_id)
     end
@@ -327,8 +327,8 @@ defmodule Upkeep.Coordinator.GraphTest do
       notify(%Ev{id: 10, tenant_id: 1})
       :ok = Graph.drain()
 
-      assert DagProbe.receive_value(matching_id) == :matched
-      DagProbe.refute_any()
+      assert DagMessages.receive_value(matching_id) == :matched
+      DagMessages.refute_any()
 
       assert :counters.get(matching_loads, 1) == 1
       assert :counters.get(unrelated_loads, 1) == 0
@@ -369,7 +369,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       notify(event)
       :ok = Graph.drain()
 
-      batch = DagProbe.receive_batch()
+      batch = DagMessages.receive_batch()
       assert {node_id, :stable_value} in batch
       assert {derived_id, {:derived, :stable_value}} in batch
       assert :counters.get(loads, 1) == 1
@@ -402,7 +402,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       assert is_integer(retry_delay_ms)
       assert retry_delay_ms >= 0
 
-      batch = DagProbe.receive_batch()
+      batch = DagMessages.receive_batch()
       assert {node_id, :recovered_value} in batch
       assert {derived_id, {:derived, :recovered_value}} in batch
       assert :counters.get(loads, 1) == 3
@@ -442,7 +442,7 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       notify(event)
       :ok = Graph.drain()
-      assert DagProbe.receive_value(node_id) == :stable_value
+      assert DagMessages.receive_value(node_id) == :stable_value
 
       parent = self()
 
@@ -462,13 +462,13 @@ defmodule Upkeep.Coordinator.GraphTest do
       assert %{retry_delay_ms: nil} = List.last(failures)
       assert :counters.get(loads, 1) == 5
 
-      DagProbe.refute_value(node_id, 0)
+      DagMessages.refute_value(node_id, 0)
 
       :ets.insert(table, {:mode, :recover})
       notify(event)
       :ok = Graph.drain()
 
-      assert DagProbe.receive_value(node_id) == :recovered_value
+      assert DagMessages.receive_value(node_id) == :recovered_value
       assert :counters.get(loads, 1) == 6
 
       Graph.unregister(node_id)
@@ -511,7 +511,7 @@ defmodule Upkeep.Coordinator.GraphTest do
                retry_delay_ms: nil
              } = metadata
 
-      DagProbe.refute_value(node_id)
+      DagMessages.refute_value(node_id)
       assert :ets.lookup(table, {:loads, event.id}) == [{{:loads, event.id}, 2}]
 
       Graph.unregister(node_id)
@@ -588,7 +588,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       notify(%Ev{id: 20, tenant_id: 1})
       :ok = Graph.drain()
 
-      batch = DagProbe.receive_batch()
+      batch = DagMessages.receive_batch()
       assert {source_id, [:a, :b]} in batch
       assert {derived_id, 2} in batch
 
@@ -626,7 +626,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       Enum.each(1..12, fn _ -> notify(event) end)
       :ok = Graph.drain()
 
-      batch = DagProbe.receive_batch()
+      batch = DagMessages.receive_batch()
       assert {source_id, :value} in batch
       assert {derived_id, :value} in batch
 
@@ -665,7 +665,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       Enum.each(1..12, fn _ -> notify(%Ev{id: 7, tenant_id: 1}) end)
       :ok = Graph.drain()
 
-      batch = DagProbe.receive_batch()
+      batch = DagMessages.receive_batch()
       assert {source_id, 42} in batch
       assert {derived_id, 84} in batch
 
@@ -785,7 +785,7 @@ defmodule Upkeep.Coordinator.GraphTest do
 
   defp receive_source_load_failure do
     {_measurements, metadata} =
-      TelemetryProbe.assert_counted([:upkeep, :graph, :source_load, :exception])
+      TelemetryMessages.assert_counted([:upkeep, :graph, :source_load, :exception])
 
     metadata
   end

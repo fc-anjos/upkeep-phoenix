@@ -1,4 +1,4 @@
-defmodule Upkeep.TestSupport.TelemetryProbe do
+defmodule Upkeep.TestSupport.TelemetryMessages do
   @moduledoc false
 
   import ExUnit.Assertions
@@ -15,25 +15,6 @@ defmodule Upkeep.TestSupport.TelemetryProbe do
       |> Keyword.put(:metadata, expected_metadata)
 
     assert_event(event, opts)
-  end
-
-  def assert_derive_sharing(assign_name, result, reason, expected_metadata \\ []) do
-    expected_metadata =
-      expected_metadata
-      |> expected_map()
-      |> Map.merge(%{assign_name: assign_name, result: result, reason: reason})
-
-    assert_counted([:upkeep, :derive, :sharing], expected_metadata)
-  end
-
-  def assert_derived_initial(kind, assign_name, expected_metadata \\ [])
-      when kind in [:hit, :miss] do
-    expected_metadata =
-      expected_metadata
-      |> expected_map()
-      |> Map.put(:assign_name, assign_name)
-
-    assert_counted([:upkeep, :graph, :derived_initial, kind], expected_metadata)
   end
 
   def assert_event(event, opts \\ []) do

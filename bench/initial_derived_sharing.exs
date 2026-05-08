@@ -88,8 +88,8 @@ defmodule Bench.InitialDerivedSharing do
 
     {same_us, {same_count_computes, same_label_computes}} =
       Bench.InitialSharingSupport.timed(fn ->
-        count_probe = derived_hit_probe(:issue_count)
-        label_probe = derived_hit_probe(:issue_label)
+        count_counter = derived_hit_counter(:issue_count)
+        label_counter = derived_hit_counter(:issue_label)
 
         {count_pid, tasks} =
           Bench.InitialSharingSupport.start_first_and_joiners(
@@ -99,7 +99,7 @@ defmodule Bench.InitialDerivedSharing do
               Bench.InitialSharingSupport.wait_for_started(:bench_count_started, same_run_id)
             end,
             fn expected ->
-              Bench.InitialSharingSupport.wait_for_probe(count_probe, expected)
+              Bench.InitialSharingSupport.wait_for_counter(count_counter, expected)
             end
           )
 
@@ -109,7 +109,7 @@ defmodule Bench.InitialDerivedSharing do
           label_pid =
             Bench.InitialSharingSupport.wait_for_started(:bench_label_started, same_run_id)
 
-          Bench.InitialSharingSupport.wait_for_probe(label_probe, max(watches - 1, 0))
+          Bench.InitialSharingSupport.wait_for_counter(label_counter, max(watches - 1, 0))
           Bench.InitialSharingSupport.release(label_pid)
 
           Bench.InitialSharingSupport.await_all(tasks)
@@ -119,8 +119,8 @@ defmodule Bench.InitialDerivedSharing do
             Bench.InitialSharingSupport.counter_value(same_label_counter)
           }
         after
-          Bench.InitialSharingSupport.detach_telemetry_probe(count_probe)
-          Bench.InitialSharingSupport.detach_telemetry_probe(label_probe)
+          Bench.InitialSharingSupport.detach_telemetry_counter(count_counter)
+          Bench.InitialSharingSupport.detach_telemetry_counter(label_counter)
         end
       end)
 
@@ -165,8 +165,8 @@ defmodule Bench.InitialDerivedSharing do
     |> Live.derive(:issue_label, [:issue_count], &Compute.label/1)
   end
 
-  defp derived_hit_probe(assign_name) do
-    Bench.InitialSharingSupport.telemetry_probe(
+  defp derived_hit_counter(assign_name) do
+    Bench.InitialSharingSupport.telemetry_counter(
       [[:upkeep, :graph, :derived_initial, :hit]],
       fn _event, _measurements, metadata ->
         metadata.assign_name == assign_name

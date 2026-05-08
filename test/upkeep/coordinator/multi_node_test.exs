@@ -4,7 +4,7 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
 
   We boot a sister BEAM via `:peer.start_link/1`, start the `:upkeep`
   application on it, and let `Group` mesh the two nodes via Erlang
-  distribution. From there we can probe the actual cluster paths
+  distribution. From there we can exercise the actual cluster paths
   rather than the single-node simulation that other tests rely on.
 
   Tests are tagged `:multi_node` so CI can opt out if `:peer` /
@@ -84,7 +84,7 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
       value = {:loaded_on_peer, peer_node}
 
       {:ok, subscriber} =
-        :erpc.call(peer_node, Upkeep.TestSupport.MultiNodeProbe, :start_graph_subscriber, [
+        :erpc.call(peer_node, Upkeep.TestSupport.MultiNodeHarness, :start_graph_subscriber, [
           self(),
           node_id,
           event_name,
@@ -209,19 +209,19 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
     # Wait until both nodes can see *both* nodes in the notification
     # group. Group's pg-based replication is eventually consistent, so
     # we confirm bidirectional visibility before testing notify fanout.
-    probe = Upkeep.TestSupport.MultiNodeProbe
+    harness = Upkeep.TestSupport.MultiNodeHarness
     expected = Enum.sort([Node.self(), peer_node])
 
     diag = fn ->
       "local_nodes=#{inspect(Node.list())} peer_nodes=#{inspect(:erpc.call(peer_node, Node, :list, []))} " <>
-        "local_view=#{inspect(probe.notification_group_node_view())} " <>
-        "peer_view=#{inspect(:erpc.call(peer_node, probe, :notification_group_node_view, []))}"
+        "local_view=#{inspect(harness.notification_group_node_view())} " <>
+        "peer_view=#{inspect(:erpc.call(peer_node, harness, :notification_group_node_view, []))}"
     end
 
     wait_until(
       fn ->
-        Enum.sort(probe.notification_group_node_view()) == expected and
-          Enum.sort(:erpc.call(peer_node, probe, :notification_group_node_view, [])) == expected
+        Enum.sort(harness.notification_group_node_view()) == expected and
+          Enum.sort(:erpc.call(peer_node, harness, :notification_group_node_view, [])) == expected
       end,
       "both nodes should see both watchers in the notification cluster (#{diag.()})",
       10_000

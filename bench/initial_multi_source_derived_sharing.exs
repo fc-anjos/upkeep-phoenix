@@ -92,7 +92,7 @@ defmodule Bench.InitialMultiSourceDerivedSharing do
 
     {same_us, same_dashboard_computes} =
       Bench.InitialSharingSupport.timed(fn ->
-        probe = derived_hit_probe(:dashboard_model)
+        counter = derived_hit_counter(:dashboard_model)
 
         {dashboard_pid, tasks} =
           Bench.InitialSharingSupport.start_first_and_joiners(
@@ -105,7 +105,7 @@ defmodule Bench.InitialMultiSourceDerivedSharing do
               )
             end,
             fn expected ->
-              Bench.InitialSharingSupport.wait_for_probe(probe, expected)
+              Bench.InitialSharingSupport.wait_for_counter(counter, expected)
             end
           )
 
@@ -114,7 +114,7 @@ defmodule Bench.InitialMultiSourceDerivedSharing do
           Bench.InitialSharingSupport.await_all(tasks)
           Bench.InitialSharingSupport.counter_value(same_dashboard_counter)
         after
-          Bench.InitialSharingSupport.detach_telemetry_probe(probe)
+          Bench.InitialSharingSupport.detach_telemetry_counter(counter)
         end
       end)
 
@@ -183,8 +183,8 @@ defmodule Bench.InitialMultiSourceDerivedSharing do
     |> Live.derive(:dashboard_model, [:stats, :activity], &Compute.dashboard/1)
   end
 
-  defp derived_hit_probe(assign_name) do
-    Bench.InitialSharingSupport.telemetry_probe(
+  defp derived_hit_counter(assign_name) do
+    Bench.InitialSharingSupport.telemetry_counter(
       [[:upkeep, :graph, :derived_initial, :hit]],
       fn _event, _measurements, metadata ->
         metadata.assign_name == assign_name

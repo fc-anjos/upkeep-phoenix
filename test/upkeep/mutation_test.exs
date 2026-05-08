@@ -2,7 +2,7 @@ defmodule Upkeep.MutationTest do
   use Upkeep.TestSupport.DataCase, async: false
 
   alias Upkeep.Live
-  alias Upkeep.TestSupport.{DagProbe, LiveSocket}
+  alias Upkeep.TestSupport.{DagMessages, LiveSocket}
   import ExUnit.CaptureLog
 
   defmodule Issue do
@@ -238,11 +238,11 @@ defmodule Upkeep.MutationTest do
   end
 
   defp assert_project_refresh(project_id, issues) do
-    assert DagProbe.receive_value(source_id(project_id)) == issues
+    assert DagMessages.receive_value(source_id(project_id)) == issues
   end
 
   defp refute_project_refresh(project_id) do
-    DagProbe.refute_value(source_id(project_id), 0)
+    DagMessages.refute_value(source_id(project_id), 0)
   end
 
   defp source_id(project_id), do: {ProjectIssues, %{project_id: project_id}}

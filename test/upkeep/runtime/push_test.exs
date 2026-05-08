@@ -2,7 +2,7 @@ defmodule Upkeep.Runtime.PushTest do
   use ExUnit.Case, async: true
 
   import Upkeep.TestSupport, only: [attach_telemetry: 1]
-  alias Upkeep.TestSupport.{LiveSocket, TelemetryProbe}
+  alias Upkeep.TestSupport.{LiveSocket, TelemetryMessages}
 
   defmodule ProjectIssues do
   end
@@ -28,7 +28,7 @@ defmodule Upkeep.Runtime.PushTest do
                {stale_id, :value}
              ])
 
-    TelemetryProbe.assert_event([:upkeep, :live, :dag_values, :apply],
+    TelemetryMessages.assert_event([:upkeep, :live, :dag_values, :apply],
       metadata: %{
         pair_count: 3,
         changed_node_count: 0,
@@ -59,7 +59,7 @@ defmodule Upkeep.Runtime.PushTest do
   end
 
   defp assert_ignored(reason, node_id) do
-    TelemetryProbe.assert_counted([:upkeep, :live, :dag_values, :ignored],
+    TelemetryMessages.assert_counted([:upkeep, :live, :dag_values, :ignored],
       reason: reason,
       node_id: node_id,
       node_ids: [node_id]

@@ -3,7 +3,7 @@ defmodule Upkeep.Runtime.ResultTest do
 
   alias Upkeep.Runtime
   alias Upkeep.Runtime.Specs
-  alias Upkeep.TestSupport.{LiveSocket, TelemetryProbe}
+  alias Upkeep.TestSupport.{LiveSocket, TelemetryMessages}
 
   import Upkeep.TestSupport, only: [attach_telemetry: 1]
 
@@ -49,7 +49,7 @@ defmodule Upkeep.Runtime.ResultTest do
     assert socket.assigns.issues == [:issue]
 
     {%{duration: duration}, _metadata} =
-      TelemetryProbe.assert_counted([:upkeep, :live, :effects, :apply],
+      TelemetryMessages.assert_counted([:upkeep, :live, :effects, :apply],
         effect_count: 2,
         assign_count: 1,
         telemetry_count: 1,

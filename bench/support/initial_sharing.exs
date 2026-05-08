@@ -88,7 +88,7 @@ defmodule Bench.InitialSharingSupport do
     end
   end
 
-  def telemetry_probe(events, predicate) when is_list(events) and is_function(predicate, 3) do
+  def telemetry_counter(events, predicate) when is_list(events) and is_function(predicate, 3) do
     owner = self()
     handler_id = {__MODULE__, owner, make_ref()}
 
@@ -96,32 +96,32 @@ defmodule Bench.InitialSharingSupport do
       :telemetry.attach_many(
         handler_id,
         events,
-        &__MODULE__.handle_telemetry_probe/4,
+        &__MODULE__.handle_telemetry_counter/4,
         %{owner: owner, handler_id: handler_id, predicate: predicate}
       )
 
     handler_id
   end
 
-  def handle_telemetry_probe(event, measurements, metadata, config) do
+  def handle_telemetry_counter(event, measurements, metadata, config) do
     if config.predicate.(event, measurements, metadata) do
-      send(config.owner, {:telemetry_probe, config.handler_id})
+      send(config.owner, {:telemetry_counter, config.handler_id})
     end
   end
 
-  def detach_telemetry_probe(handler_id) do
+  def detach_telemetry_counter(handler_id) do
     :telemetry.detach(handler_id)
   end
 
-  def wait_for_probe(handler_id, count, timeout \\ 5_000)
+  def wait_for_counter(handler_id, count, timeout \\ 5_000)
 
-  def wait_for_probe(_handler_id, 0, _timeout), do: :ok
+  def wait_for_counter(_handler_id, 0, _timeout), do: :ok
 
-  def wait_for_probe(handler_id, count, timeout) when count > 0 do
+  def wait_for_counter(handler_id, count, timeout) when count > 0 do
     receive do
-      {:telemetry_probe, ^handler_id} -> wait_for_probe(handler_id, count - 1, timeout)
+      {:telemetry_counter, ^handler_id} -> wait_for_counter(handler_id, count - 1, timeout)
     after
-      timeout -> raise "benchmark telemetry probe #{inspect(handler_id)} missed #{count} event(s)"
+      timeout -> raise "benchmark telemetry counter #{inspect(handler_id)} missed #{count} event(s)"
     end
   end
 

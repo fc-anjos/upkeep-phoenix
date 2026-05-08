@@ -3,7 +3,7 @@ defmodule Upkeep.SourceEctoTest do
 
   alias Upkeep.InvalidationSurface
   alias Upkeep.Live
-  alias Upkeep.TestSupport.{DagProbe, LiveSocket}
+  alias Upkeep.TestSupport.{DagMessages, LiveSocket}
 
   defmodule Column do
     use Ecto.Schema
@@ -1068,7 +1068,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defp refreshed_source_issues(source, params) do
-    DagProbe.receive_value({source, params})
+    DagMessages.receive_value({source, params})
   end
 
   defp project_issues_source_id(project_id, user_id) do

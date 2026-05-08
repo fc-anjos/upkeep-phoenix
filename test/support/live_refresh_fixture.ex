@@ -31,8 +31,8 @@ defmodule Upkeep.TestSupport.LiveRefreshFixture do
   def setup! do
     reset!()
     table = :ets.new(@table, [:set, :public, :named_table])
-    Enum.each(@default_values, fn {key, value} -> put(key, value) end)
-    Enum.each(@default_loads, fn {source, id} -> put_load(source, id) end)
+    Enum.each(@default_values, fn {{source, id}, value} -> seed_source(source, id, value) end)
+    Enum.each(@default_loads, fn {source, id} -> seed_load_counter(source, id) end)
     table
   end
 
@@ -44,52 +44,47 @@ defmodule Upkeep.TestSupport.LiveRefreshFixture do
     :ok
   end
 
-  def put(key, value) do
-    :ets.insert(@table, {key, value})
+  def set_source_value(source, id, value) do
+    store({source, id}, value)
   end
 
-  def put_value(source, id, value) do
-    put({source, id}, value)
+  def seed_source(source, id, value) do
+    set_source_value(source, id, value)
+    seed_load_counter(source, id)
   end
 
-  def put_loaded_value(source, id, value) do
-    put_value(source, id, value)
-    put_load(source, id)
+  def seed_load_counter(source, id, count \\ 0) do
+    store({:loads, source, id}, count)
   end
 
-  def put_load(source, id, count \\ 0) do
-    put({:loads, source, id}, count)
+  def seed_load_counters(loads, id) do
+    Enum.each(loads, &seed_load_counter(&1, id))
   end
 
-  def value(key) do
-    [{^key, value}] = :ets.lookup(@table, key)
-    value
-  end
-
-  def load_value(source, id) do
+  def load_source_value(source, id) do
     bump_load({:loads, source, id})
-    value({source, id})
+    fetch({source, id})
   end
 
   def bump_load(key) do
     :ets.update_counter(@table, key, 1)
   end
 
-  def load_count(source, id \\ 1), do: value({:loads, source, id})
+  def load_count(source, id \\ 1), do: fetch({:loads, source, id})
 
-  def put_scoped_user(user_id, issues) do
-    put_loaded_value(:scoped_issues, user_id, issues)
+  def seed_scoped_issues(user_id, issues) do
+    seed_source(:scoped_issues, user_id, issues)
   end
 
-  def put_scoped_activity(user_id, activity) do
-    put_loaded_value(:scoped_activity, user_id, activity)
+  def seed_scoped_activity(user_id, activity) do
+    seed_source(:scoped_activity, user_id, activity)
   end
 
-  def put_derive_test_pid(user_id, test_pid) do
-    put({:derive_test_pid, user_id}, test_pid)
+  def block_derives_for(user_id, test_pid) do
+    store({:derive_test_pid, user_id}, test_pid)
   end
 
-  def derive_test_pid(user_id) do
+  def derive_blocker(user_id) do
     case :ets.lookup(@table, {:derive_test_pid, user_id}) do
       [{_, test_pid}] -> {:ok, test_pid}
       [] -> :error
@@ -101,5 +96,14 @@ defmodule Upkeep.TestSupport.LiveRefreshFixture do
       [[id] | _] -> {:ok, id}
       [] -> :error
     end
+  end
+
+  defp store(key, value) do
+    :ets.insert(@table, {key, value})
+  end
+
+  defp fetch(key) do
+    [{^key, value}] = :ets.lookup(@table, key)
+    value
   end
 end

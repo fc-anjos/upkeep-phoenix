@@ -2,7 +2,7 @@ defmodule Upkeep.ObservabilityTest do
   use ExUnit.Case, async: false
 
   alias Upkeep.Live
-  alias Upkeep.TestSupport.{DagProbe, LiveSocket}
+  alias Upkeep.TestSupport.{DagMessages, LiveSocket}
 
   defmodule Issue do
     defstruct [:project_id]
@@ -189,7 +189,7 @@ defmodule Upkeep.ObservabilityTest do
   end
 
   defp assert_project_graph_refresh(socket, project_id, issues) do
-    pairs = DagProbe.assert_values([{{ProjectIssues, %{project_id: project_id}}, issues}])
+    pairs = DagMessages.assert_values([{{ProjectIssues, %{project_id: project_id}}, issues}])
     Live.apply_dag_values(socket, pairs)
   end
 

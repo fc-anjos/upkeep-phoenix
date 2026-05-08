@@ -45,8 +45,8 @@ defmodule Bench.InitialSourceSharing do
 
     {same_us, same_loads} =
       Bench.InitialSharingSupport.timed(fn ->
-        probe =
-          Bench.InitialSharingSupport.telemetry_probe(
+        counter =
+          Bench.InitialSharingSupport.telemetry_counter(
             [[:upkeep, :source, :initial_load, :coalesced]],
             fn _event, _measurements, metadata ->
               match?({Source, %{run_id: ^run_id}}, metadata.node_id)
@@ -58,7 +58,7 @@ defmodule Bench.InitialSourceSharing do
             watches,
             fn -> watch_same(run_id, same_counter, test_pid) end,
             fn -> Bench.InitialSharingSupport.wait_for_started(:bench_load_started, run_id) end,
-            fn expected -> Bench.InitialSharingSupport.wait_for_probe(probe, expected) end
+            fn expected -> Bench.InitialSharingSupport.wait_for_counter(counter, expected) end
           )
 
         try do
@@ -66,7 +66,7 @@ defmodule Bench.InitialSourceSharing do
           Bench.InitialSharingSupport.await_all(tasks)
           Bench.InitialSharingSupport.counter_value(same_counter)
         after
-          Bench.InitialSharingSupport.detach_telemetry_probe(probe)
+          Bench.InitialSharingSupport.detach_telemetry_counter(counter)
         end
       end)
 

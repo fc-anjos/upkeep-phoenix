@@ -3,7 +3,7 @@ defmodule Upkeep.SourceTest do
 
   alias Upkeep.InvalidationSurface
   alias Upkeep.Live
-  alias Upkeep.TestSupport.{DagProbe, LiveSocket}
+  alias Upkeep.TestSupport.{DagMessages, LiveSocket}
 
   defmodule Issue do
     defstruct [:id, :project_id, :assignee_id, :column_id]
@@ -376,16 +376,16 @@ defmodule Upkeep.SourceTest do
   end
 
   defp assert_board_columns_refresh(project_id, columns) do
-    assert DagProbe.receive_value(board_columns_source_id(project_id)) == columns
+    assert DagMessages.receive_value(board_columns_source_id(project_id)) == columns
   end
 
   defp assert_my_issues_refresh(project_id, user_id, issues) do
-    assert DagProbe.receive_value({MyIssues, %{project_id: project_id, user_id: user_id}}) ==
+    assert DagMessages.receive_value({MyIssues, %{project_id: project_id, user_id: user_id}}) ==
              issues
   end
 
   defp refute_source_refresh do
-    DagProbe.refute_any()
+    DagMessages.refute_any()
   end
 
   defp board_columns_source_id(project_id), do: {BoardColumns, %{project_id: project_id}}
