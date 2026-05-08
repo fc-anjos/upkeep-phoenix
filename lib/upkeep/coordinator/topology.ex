@@ -1,7 +1,7 @@
 defmodule Upkeep.Coordinator.Topology do
   @moduledoc false
 
-  alias Upkeep.ReactiveSurface
+  alias Upkeep.InvalidationSurface
   alias Upkeep.Source.Identity, as: SourceIdentity
 
   @nodes_table :upkeep_topology_nodes
@@ -35,8 +35,8 @@ defmodule Upkeep.Coordinator.Topology do
 
   ## Mutations
 
-  def register_source(node_id, shard_idx, %ReactiveSurface{} = surface) do
-    index_keys = ReactiveSurface.index_keys(surface)
+  def register_source(node_id, shard_idx, %InvalidationSurface{} = surface) do
+    index_keys = InvalidationSurface.index_keys(surface)
 
     :ets.insert(@nodes_table, {node_id, shard_idx, %{kind: :source, surface: surface, deps: []}})
     Enum.each(index_keys, &:ets.insert(@index_table, {&1, node_id}))
@@ -46,15 +46,15 @@ defmodule Upkeep.Coordinator.Topology do
   def register_derived(node_id, shard_idx, deps) do
     :ets.insert(
       @nodes_table,
-      {node_id, shard_idx, %{kind: :derived, interest_keys: [], deps: deps}}
+      {node_id, shard_idx, %{kind: :derived, surface_keys: [], deps: deps}}
     )
 
     :ok
   end
 
   def reconcile_source(node_id, shard_idx, old_surface, new_surface) do
-    old_set = old_surface |> ReactiveSurface.index_keys() |> MapSet.new()
-    new_set = new_surface |> ReactiveSurface.index_keys() |> MapSet.new()
+    old_set = old_surface |> InvalidationSurface.index_keys() |> MapSet.new()
+    new_set = new_surface |> InvalidationSurface.index_keys() |> MapSet.new()
 
     Enum.each(MapSet.difference(old_set, new_set), fn key ->
       :ets.delete_object(@index_table, {key, node_id})
@@ -76,7 +76,7 @@ defmodule Upkeep.Coordinator.Topology do
     case lookup(node_id) do
       {:ok, %{kind: :source, surface: surface}} ->
         surface
-        |> ReactiveSurface.index_keys()
+        |> InvalidationSurface.index_keys()
         |> Enum.each(&:ets.delete_object(@index_table, {&1, node_id}))
 
         :ets.delete(@nodes_table, node_id)
@@ -99,7 +99,7 @@ defmodule Upkeep.Coordinator.Topology do
         {:ok,
          node
          |> Map.put(:shard_idx, shard_idx)
-         |> Map.put(:interest_keys, ReactiveSurface.index_keys(surface))}
+         |> Map.put(:surface_keys, InvalidationSurface.index_keys(surface))}
 
       [{^node_id, shard_idx, node}] ->
         {:ok, Map.put(node, :shard_idx, shard_idx)}
@@ -114,7 +114,7 @@ defmodule Upkeep.Coordinator.Topology do
   end
 
   def affected_source_node_ids(event) when is_struct(event) do
-    candidate_keys = ReactiveSurface.candidate_keys(event)
+    candidate_keys = InvalidationSurface.candidate_keys(event)
 
     candidate_node_ids =
       candidate_keys
@@ -209,7 +209,7 @@ defmodule Upkeep.Coordinator.Topology do
 
   defp source_node_matches?(node_id, event) do
     case lookup(node_id) do
-      {:ok, %{kind: :source, surface: surface}} -> ReactiveSurface.matches?(surface, event)
+      {:ok, %{kind: :source, surface: surface}} -> InvalidationSurface.matches?(surface, event)
       _ -> false
     end
   end

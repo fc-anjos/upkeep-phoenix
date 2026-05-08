@@ -2,13 +2,15 @@ defmodule Upkeep.Runtime.Subscriptions do
   @moduledoc false
 
   alias Upkeep.Coordinator.Graph
+  alias Upkeep.InvalidationSurface
+  alias Upkeep.Source.Instance
 
-  def register(source_id, interest_keys, source, params, deps \\ []) do
-    :ok = Graph.register_source(source_id, interest_keys, source, params, deps)
+  def register(source_id, %InvalidationSurface{} = surface, %Instance{} = instance) do
+    :ok = Graph.register_source(source_id, surface, instance)
   end
 
-  def register_and_load(source_id, interest_keys, source, params) do
-    Graph.register_source_and_load(source_id, interest_keys, source, params)
+  def register_and_load(source_id, %InvalidationSurface{} = surface, %Instance{} = instance) do
+    Graph.register_source_and_load(source_id, surface, instance)
   end
 
   def register_derived_and_compute(node_id, dep_node_ids, dep_values, compute_fn, metadata) do

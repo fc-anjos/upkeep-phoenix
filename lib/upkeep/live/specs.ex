@@ -1,18 +1,19 @@
 defmodule Upkeep.Live.Specs do
   @moduledoc false
 
+  alias Upkeep.Runtime.Dependencies
   alias Upkeep.Live.Ids
-  alias Upkeep.Runtime.DAGOperations
   alias Upkeep.Runtime.NodeSpec
   alias Upkeep.Runtime.Materializer
   alias Upkeep.Runtime.Producer
   alias Upkeep.Runtime.ScopeCapture
   alias Upkeep.Runtime.State
-  alias Upkeep.Source.Identity, as: Source
+  alias Upkeep.Source.Instance
 
   def source(assign_name, source, params, component, source_location \\ nil)
       when is_atom(assign_name) and is_map(params) do
-    source_id = Ids.scoped_source_id(source, params, component)
+    instance = Instance.build(source, params)
+    source_id = Ids.scoped_source_id(instance, component)
     node_id = Ids.source_node_id(source_id)
 
     %NodeSpec{
@@ -20,8 +21,7 @@ defmodule Upkeep.Live.Specs do
       kind: :source,
       deps: Ids.source_deps(component),
       producer: %Producer.Source{
-        source: source,
-        params: params,
+        instance: instance,
         source_id: source_id,
         component: component
       },
@@ -32,10 +32,10 @@ defmodule Upkeep.Live.Specs do
       metadata: %{
         assign_name: assign_name,
         source_id: source_id,
-        source: source,
-        params: params,
+        source: instance.source,
+        params: instance.params,
         component: component,
-        sharing_partition: Source.sharing_partition(source, params)
+        sharing_partition: instance.sharing_partition
       },
       source_location: source_location
     }
@@ -43,7 +43,7 @@ defmodule Upkeep.Live.Specs do
 
   def component(socket, component_id, deps, fun, source_location \\ nil)
       when not is_nil(component_id) and is_list(deps) and is_function(fun, 1) do
-    {dep_node_ids, dep_pairs} = DAGOperations.dependency_nodes(socket, deps, source_location)
+    {dep_node_ids, dep_pairs} = Dependencies.dependency_nodes(socket, deps, source_location)
     node_id = Ids.component_node_id(component_id)
 
     %NodeSpec{
@@ -62,7 +62,7 @@ defmodule Upkeep.Live.Specs do
       when is_atom(assign_name) and is_list(deps) and is_function(fun, 1) do
     identity = external_fun_identity(fun)
     deps = maybe_add_implicit_scope_dep(socket, deps, identity)
-    {dep_node_ids, dep_pairs} = DAGOperations.dependency_nodes(socket, deps, source_location)
+    {dep_node_ids, dep_pairs} = Dependencies.dependency_nodes(socket, deps, source_location)
     node_id = Ids.derived_node_id(assign_name)
 
     %NodeSpec{

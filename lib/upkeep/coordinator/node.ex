@@ -4,8 +4,8 @@ defmodule Upkeep.Coordinator.Node do
   defstruct [
     :loader,
     :encoded_key,
-    registered_keys: [],
-    reactive_surface: nil,
+    surface_keys: [],
+    surface: nil,
     tracked_deps: [],
     loaded?: false,
     retry: :default

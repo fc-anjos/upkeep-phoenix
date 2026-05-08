@@ -1,0 +1,183 @@
+defmodule Upkeep.InvalidationSurface do
+  @moduledoc false
+
+  use Boundary,
+    top_level?: true,
+    exports: [],
+    deps: [
+      Upkeep.Change
+    ],
+    type: :strict
+
+  defstruct keys: [],
+            index_keys: [],
+            matcher: nil
+
+  def empty, do: %__MODULE__{}
+
+  def manual(keys, matcher) when is_list(keys) do
+    unless is_function(matcher, 1) or valid_matcher?(matcher) do
+      raise ArgumentError, "invalid invalidation surface matcher"
+    end
+
+    %__MODULE__{
+      keys: Enum.uniq(keys),
+      index_keys: build_index_keys(keys),
+      matcher: matcher
+    }
+  end
+
+  def merge(%__MODULE__{} = left, %__MODULE__{} = right) do
+    %__MODULE__{
+      keys: Enum.uniq(left.keys ++ right.keys),
+      index_keys: Enum.uniq(left.index_keys ++ right.index_keys),
+      matcher: merge_matchers(left.matcher, right.matcher)
+    }
+  end
+
+  def merge_all(surfaces) when is_list(surfaces) do
+    Enum.reduce(surfaces, empty(), &merge/2)
+  end
+
+  def keys(%__MODULE__{keys: keys}), do: keys
+  def index_keys(%__MODULE__{index_keys: keys}), do: keys
+
+  def candidate_keys(%Upkeep.Change{} = change) do
+    [
+      notification_key(%{name: change.name, schema: change.schema}),
+      notification_key(%{name: change.name, schema: :_})
+    ]
+    |> Enum.uniq()
+  end
+
+  def candidate_keys(event) when is_struct(event) do
+    [notification_key(%{event: event.__struct__})]
+  end
+
+  def matches?(%__MODULE__{} = surface, event) when is_struct(event) do
+    manual_match?(surface.matcher, event)
+  end
+
+  def matches_notification?(%Upkeep.Change{} = change, %{name: name, schema: schema}) do
+    change.name == name and schema_matches?(change.schema, schema)
+  end
+
+  def matches_notification?(event, %{event: event_module}) when is_struct(event) do
+    event.__struct__ == event_module
+  end
+
+  def matches_notification?(_event, _notification), do: false
+
+  def equal_fields?(%Upkeep.Change{} = change, params, event_fields, source_fields) do
+    cond do
+      Upkeep.Change.partial_update?(change) ->
+        change
+        |> Upkeep.Change.field_sets()
+        |> Enum.any?(fn fields ->
+          partial_equal_field_set?(change, fields, params, event_fields, source_fields)
+        end)
+
+      Upkeep.Change.broad_update?(change) ->
+        true
+
+      true ->
+        change
+        |> Upkeep.Change.field_sets()
+        |> Enum.any?(fn fields ->
+          equal_field_set?(fields, params, event_fields, source_fields)
+        end)
+    end
+  end
+
+  def equal_fields?(event, params, event_fields, source_fields) when is_struct(event) do
+    event
+    |> Map.from_struct()
+    |> equal_field_set?(params, event_fields, source_fields)
+  end
+
+  def field_key(notification, event_fields, source_fields, params) do
+    values =
+      Enum.zip(event_fields, source_fields)
+      |> Enum.map(fn {event_field, source_field} ->
+        {event_field, Map.fetch!(params, source_field)}
+      end)
+      |> Enum.sort()
+
+    notification_key(notification, values)
+  end
+
+  def notification_key(%{event: event}), do: {:upkeep_event, event}
+  def notification_key(%{name: name, schema: schema}), do: {:upkeep_change, name, schema}
+  def notification_key(%{event: event}, values), do: {:upkeep_event, event, values}
+
+  def notification_key(%{name: name, schema: schema}, values),
+    do: {:upkeep_change, name, schema, values}
+
+  def event_keys(%Upkeep.Change{} = change) do
+    [
+      notification_key(%{name: change.name, schema: change.schema}),
+      notification_key(%{name: change.name, schema: :_})
+    ]
+  end
+
+  def event_keys(event) when is_struct(event) do
+    [notification_key(%{event: event.__struct__})]
+  end
+
+  defp build_index_keys(keys) do
+    keys
+    |> Enum.flat_map(&coarse_key/1)
+    |> Enum.uniq()
+  end
+
+  defp coarse_key({:upkeep_change, name, schema}), do: [{:upkeep_change, name, schema}]
+  defp coarse_key({:upkeep_change, name, schema, _values}), do: [{:upkeep_change, name, schema}]
+  defp coarse_key({:upkeep_event, event}), do: [{:upkeep_event, event}]
+  defp coarse_key({:upkeep_event, event, _values}), do: [{:upkeep_event, event}]
+  defp coarse_key({action, schema}) when is_atom(action), do: [{:upkeep_change, action, schema}]
+  defp coarse_key(_key), do: []
+
+  defp equal_field_set?(fields, params, event_fields, source_fields) do
+    Enum.zip(event_fields, source_fields)
+    |> Enum.all?(fn {event_field, source_field} ->
+      Map.fetch!(fields, event_field) == Map.fetch!(params, source_field)
+    end)
+  end
+
+  defp partial_equal_field_set?(change, fields, params, event_fields, source_fields) do
+    Enum.zip(event_fields, source_fields)
+    |> Enum.all?(fn {event_field, source_field} ->
+      Upkeep.Change.field_change(change, event_field) == :changed or
+        Map.fetch!(fields, event_field) == Map.fetch!(params, source_field)
+    end)
+  end
+
+  defp schema_matches?(_actual, :_), do: true
+  defp schema_matches?(schema, schema), do: true
+  defp schema_matches?(_actual, _expected), do: false
+
+  defp merge_matchers(nil, matcher), do: matcher
+  defp merge_matchers(matcher, nil), do: matcher
+
+  defp merge_matchers(left, right) do
+    {__MODULE__, :any_match?, [[left, right]]}
+  end
+
+  def any_match?(matchers, event) when is_list(matchers) do
+    Enum.any?(matchers, &manual_match?(&1, event))
+  end
+
+  defp manual_match?(nil, _event), do: false
+  defp manual_match?(matcher, event) when is_function(matcher, 1), do: matcher.(event)
+
+  defp manual_match?({module, function, args}, event)
+       when is_atom(module) and is_atom(function) and is_list(args) do
+    apply(module, function, args ++ [event])
+  end
+
+  defp valid_matcher?({module, function, args})
+       when is_atom(module) and is_atom(function) and is_list(args),
+       do: true
+
+  defp valid_matcher?(_matcher), do: false
+end

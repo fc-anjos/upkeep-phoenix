@@ -23,10 +23,11 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
 
         task =
           Task.Supervisor.async_nolink(Shards.task_sup(), fn ->
-            {value, current_keys, tracked_deps, reactive_surface} =
-              Loaders.run_with_deps(node.loader, load_metadata)
-
-            {node_id, value, current_keys, tracked_deps, reactive_surface, node}
+            %{
+              node_id: node_id,
+              loaded: Loaders.run_with_deps(node.loader, load_metadata),
+              node: node
+            }
           end)
 
         source_loads = SingleFlight.start(state.source_loads, node_id, task.ref, from, node)
@@ -65,21 +66,23 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
         state,
         ref,
         node_id,
-        value,
-        current_keys,
-        tracked_deps,
-        reactive_surface,
+        loaded,
         %Node{} = node
       ) do
     case SingleFlight.pop(state.source_loads, ref) do
       {:ok, ^node_id, load, source_loads} ->
         Process.demonitor(ref, [:flush])
 
-        if reactive_surface != node.reactive_surface do
-          Topology.reconcile_source(node_id, state.idx, node.reactive_surface, reactive_surface)
+        if loaded.surface != node.surface do
+          Topology.reconcile_source(
+            node_id,
+            state.idx,
+            node.surface,
+            loaded.surface
+          )
         end
 
-        {store, _changed?} = Store.put_source(state.store, node_id, value, [])
+        {store, _changed?} = Store.put_source(state.store, node_id, loaded.value, [])
 
         store =
           Store.put_metadata(
@@ -87,14 +90,14 @@ defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
             node_id,
             %Node{
               node
-              | registered_keys: current_keys,
-                reactive_surface: reactive_surface,
-                tracked_deps: tracked_deps,
+              | surface_keys: loaded.surface_keys,
+                surface: loaded.surface,
+                tracked_deps: loaded.tracked_deps,
                 loaded?: true
             }
           )
 
-        SingleFlight.reply_all(load, {:ok, value, tracked_deps})
+        SingleFlight.reply_all(load, {:ok, loaded.source_result})
 
         %{state | store: store, source_loads: source_loads}
 

@@ -80,11 +80,11 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
     "#{mode} query on #{schemas}#{if(filters == [], do: "", else: " filtered by #{Enum.join(filters, ", ")}")}"
   end
 
-  def interest_keys(query_or_deps)
+  def keys(query_or_deps)
 
-  def interest_keys(%Ecto.Query{} = query), do: query |> from_query() |> interest_keys()
+  def keys(%Ecto.Query{} = query), do: query |> from_query() |> keys()
 
-  def interest_keys(%__MODULE__{} = deps) do
+  def keys(%__MODULE__{} = deps) do
     deps.schemas
     |> Enum.flat_map(fn schema ->
       value_sets = interest_values(deps, schema)
@@ -93,23 +93,28 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
         notification = %{name: action, schema: schema}
 
         if values == :broad do
-          Upkeep.Source.Keys.notification_key(notification)
+          Upkeep.InvalidationSurface.notification_key(notification)
         else
-          Upkeep.Source.Keys.notification_key(notification, values)
+          Upkeep.InvalidationSurface.notification_key(notification, values)
         end
       end
     end)
   end
 
-  def interest_keys(_query), do: []
+  def keys(_query), do: []
 
-  def coarse_keys(%__MODULE__{schemas: schemas}) do
-    for schema <- schemas, action <- @actions do
-      {action, schema}
-    end
+  def surface(query_or_deps)
+
+  def surface(%Ecto.Query{} = query), do: query |> from_query() |> surface()
+
+  def surface(%__MODULE__{} = deps) do
+    Upkeep.InvalidationSurface.manual(
+      keys(deps),
+      {__MODULE__, :matches_change?, [deps]}
+    )
   end
 
-  def coarse_keys(_deps), do: []
+  def surface(_query), do: Upkeep.InvalidationSurface.empty()
 
   def matches_change?(query_or_deps, event)
 

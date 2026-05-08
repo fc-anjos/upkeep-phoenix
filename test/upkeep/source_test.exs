@@ -1,8 +1,8 @@
 defmodule Upkeep.SourceTest do
   use ExUnit.Case, async: false
 
+  alias Upkeep.InvalidationSurface
   alias Upkeep.Live
-  alias Upkeep.ReactiveSurface
 
   defmodule Issue do
     defstruct [:id, :project_id, :assignee_id, :column_id]
@@ -90,17 +90,45 @@ defmodule Upkeep.SourceTest do
     %{table: table}
   end
 
-  test "source invalidators produce field-indexed interest keys" do
-    assert BoardColumns.__upkeep_interest_keys__(%{project_id: 123}) == [
+  test "source invalidators produce field-indexed invalidation surfaces" do
+    assert surface_keys(BoardColumns, %{project_id: 123}) == [
              {:upkeep_change, :issue_moved, :_, [project_id: 123]},
              {:upkeep_change, :inserted, Issue, [project_id: 123]},
              {:upkeep_change, :updated, Issue, [project_id: 123]}
            ]
 
-    assert MyIssues.__upkeep_interest_keys__(%{project_id: 123, user_id: 9}) == [
+    assert surface_keys(MyIssues, %{project_id: 123, user_id: 9}) == [
              {:upkeep_change, :updated, Issue, [assignee_id: 9, project_id: 123]},
              {:upkeep_change, :issue_assigned, :_}
            ]
+  end
+
+  test "source instance captures identity and static source facts" do
+    instance = Upkeep.Source.instance(BoardColumns, project_id: 123)
+
+    assert instance.source == BoardColumns
+    assert instance.params == %{project_id: 123}
+    assert instance.id == {BoardColumns, %{project_id: 123}}
+    assert instance.repo == Application.get_env(:upkeep, :repo)
+    assert instance.retry == :default
+    assert instance.sharing_partition == %{project_id: 123}
+
+    assert InvalidationSurface.keys(instance.surface) == [
+             {:upkeep_change, :issue_moved, :_, [project_id: 123]},
+             {:upkeep_change, :inserted, Issue, [project_id: 123]},
+             {:upkeep_change, :updated, Issue, [project_id: 123]}
+           ]
+  end
+
+  test "source load result captures value, observed deps, surface, and coverage" do
+    result = Upkeep.Source.Loader.load_result(BoardColumns, %{project_id: 123})
+
+    assert result.instance == Upkeep.Source.instance(BoardColumns, %{project_id: 123})
+    assert result.value == [:todo]
+    assert result.tracked_deps == []
+    assert result.surface == result.instance.surface
+    assert result.coverage.source == BoardColumns
+    assert result.coverage.params == %{project_id: 123}
   end
 
   test "change event keys stay bounded by action and schema" do
@@ -112,26 +140,24 @@ defmodule Upkeep.SourceTest do
         from: %Issue{id: 1, project_id: 123, assignee_id: 9, column_id: 1}
       )
 
-    assert Upkeep.Source.Keys.event_keys(change) == [
+    assert InvalidationSurface.event_keys(change) == [
              {:upkeep_change, :updated, Issue},
              {:upkeep_change, :updated, :_}
            ]
   end
 
-  test "reactive surfaces index coarsely and match through exact source data" do
+  test "invalidation surfaces index coarsely and match through exact source data" do
     params = %{project_id: 123}
+    surface = BoardColumns.__upkeep_surface__(params)
 
-    surface =
-      ReactiveSurface.source(BoardColumns, params, BoardColumns.__upkeep_interest_keys__(params))
-
-    assert ReactiveSurface.index_keys(surface) == [
+    assert InvalidationSurface.index_keys(surface) == [
              {:upkeep_change, :issue_moved, :_},
              {:upkeep_change, :inserted, Issue},
              {:upkeep_change, :updated, Issue}
            ]
 
-    assert ReactiveSurface.matches?(surface, inserted_issue(project_id: 123))
-    refute ReactiveSurface.matches?(surface, inserted_issue(project_id: 456))
+    assert InvalidationSurface.matches?(surface, inserted_issue(project_id: 123))
+    refute InvalidationSurface.matches?(surface, inserted_issue(project_id: 456))
   end
 
   test "declarative invalidators and custom reactors decide whether a source reacts" do
@@ -182,7 +208,7 @@ defmodule Upkeep.SourceTest do
     assert Upkeep.Change.broad_update?(change)
     assert BoardColumns.reacts_to?(change, %{project_id: 123})
 
-    assert Upkeep.Source.Keys.event_keys(change) == [
+    assert InvalidationSurface.event_keys(change) == [
              {:upkeep_change, :updated, Issue},
              {:upkeep_change, :updated, :_}
            ]
@@ -264,16 +290,15 @@ defmodule Upkeep.SourceTest do
   end
 
   test "sources expose retry configuration" do
-    assert NoRetryLoad.__upkeep_retry__() == false
-    assert Upkeep.Source.Identity.retry_config(NoRetryLoad) == false
+    assert Upkeep.Source.instance(NoRetryLoad, %{}).retry == false
 
-    assert CustomRetryLoad.__upkeep_retry__() == [
+    assert Upkeep.Source.instance(CustomRetryLoad, %{}).retry == [
              max_attempts: 1,
              base_delay_ms: 0,
              max_delay_ms: 0
            ]
 
-    assert Upkeep.Source.Identity.retry_config(BoardColumns) == :default
+    assert Upkeep.Source.instance(BoardColumns, %{project_id: 123}).retry == :default
   end
 
   test "watch joins source interest and notify dispatches through the coordinator", %{
@@ -364,6 +389,12 @@ defmodule Upkeep.SourceTest do
           flunk("expected DAG values #{inspect(expected)}, got #{inspect(received)}")
       end
     end
+  end
+
+  defp surface_keys(source, params) do
+    source
+    |> apply(:__upkeep_surface__, [params])
+    |> InvalidationSurface.keys()
   end
 
   defp inserted_issue(attrs) do

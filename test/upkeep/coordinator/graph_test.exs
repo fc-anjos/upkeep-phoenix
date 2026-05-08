@@ -7,7 +7,7 @@ defmodule Upkeep.Coordinator.GraphTest do
   alias Upkeep.Coordinator.Graph
   alias Upkeep.Coordinator.Graph.Notifier
   alias Upkeep.Invalidation.Bus
-  alias Upkeep.ReactiveSurface
+  alias Upkeep.InvalidationSurface
 
   defmodule Ev do
     defstruct [:id, :tenant_id]
@@ -59,7 +59,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       |> Enum.map(fn %Ev{id: id, tenant_id: tenant_id} -> {id, tenant_id} end)
       |> MapSet.new()
 
-    ReactiveSurface.manual([{:upkeep_event, Ev}], fn
+    InvalidationSurface.manual([{:upkeep_event, Ev}], fn
       %Ev{id: id, tenant_id: tenant_id} -> MapSet.member?(matching_events, {id, tenant_id})
       _event -> false
     end)
@@ -481,11 +481,14 @@ defmodule Upkeep.Coordinator.GraphTest do
       table = :ets.new(:no_retry_source, [:set, :public])
       event = %Ev{id: 13, tenant_id: 1}
       params = %{id: event.id, tenant_id: event.tenant_id, table: table}
-      node_id = {NoRetrySource, params}
-      interest_keys = NoRetrySource.__upkeep_interest_keys__(params)
+      instance = Upkeep.Source.instance(NoRetrySource, params)
+      node_id = instance.id
 
-      assert {:ok, :stable_value, []} =
-               Graph.register_source_and_load(node_id, interest_keys, NoRetrySource, params)
+      assert {:ok, result} =
+               Graph.register_source_and_load(node_id, instance.surface, instance)
+
+      assert result.value == :stable_value
+      assert result.tracked_deps == []
 
       log =
         capture_log(fn ->
@@ -522,11 +525,14 @@ defmodule Upkeep.Coordinator.GraphTest do
       table = :ets.new(:one_retry_source, [:set, :public])
       event = %Ev{id: 14, tenant_id: 1}
       params = %{id: event.id, tenant_id: event.tenant_id, table: table}
-      node_id = {OneRetrySource, params}
-      interest_keys = OneRetrySource.__upkeep_interest_keys__(params)
+      instance = Upkeep.Source.instance(OneRetrySource, params)
+      node_id = instance.id
 
-      assert {:ok, :stable_value, []} =
-               Graph.register_source_and_load(node_id, interest_keys, OneRetrySource, params)
+      assert {:ok, result} =
+               Graph.register_source_and_load(node_id, instance.surface, instance)
+
+      assert result.value == :stable_value
+      assert result.tracked_deps == []
 
       parent = self()
 

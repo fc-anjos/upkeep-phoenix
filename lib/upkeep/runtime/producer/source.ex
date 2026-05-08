@@ -1,6 +1,6 @@
 defmodule Upkeep.Runtime.Producer.Source do
   @moduledoc false
 
-  @enforce_keys [:source, :params, :source_id, :component]
-  defstruct [:source, :params, :source_id, :component]
+  @enforce_keys [:instance, :source_id, :component]
+  defstruct [:instance, :source_id, :component]
 end

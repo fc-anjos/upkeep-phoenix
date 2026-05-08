@@ -1,7 +1,7 @@
 defmodule Upkeep.Live.Ids do
   @moduledoc false
 
-  alias Upkeep.Source.Identity, as: Source
+  alias Upkeep.Source.Instance
 
   def source_node_id(source_id), do: {:source, source_id}
   def derived_node_id(assign_name), do: {:derived, assign_name}
@@ -14,9 +14,9 @@ defmodule Upkeep.Live.Ids do
   def source_deps(nil), do: []
   def source_deps(component), do: [component_node_id(component)]
 
-  def scoped_source_id(source, params, nil), do: Source.source_id(source, params)
+  def scoped_source_id(%Instance{id: source_id}, nil), do: source_id
 
-  def scoped_source_id(source, params, component) when not is_nil(component) do
-    {:scoped, component, Source.source_id(source, params)}
+  def scoped_source_id(%Instance{id: source_id}, component) when not is_nil(component) do
+    {:scoped, component, source_id}
   end
 end

@@ -13,12 +13,13 @@ defmodule Upkeep.Source do
       Coverage,
       Dependency,
       Identity,
-      Keys,
-      Loader,
-      Reactivity
+      Instance,
+      LoadResult,
+      Loader
     ],
     deps: [
       Upkeep.Change,
+      Upkeep.InvalidationSurface,
       Logger
     ],
     type: :strict
@@ -57,5 +58,18 @@ defmodule Upkeep.Source do
   def coverage(source, params, deps), do: Upkeep.Source.Loader.coverage(source, params, deps)
 
   @doc false
+  def instance(source, params), do: Upkeep.Source.Instance.build(source, params)
+
+  @doc false
   def dependency_label(deps), do: Upkeep.Source.Dependency.label(deps)
+
+  @doc false
+  def dependency_surface([]), do: Upkeep.InvalidationSurface.empty()
+
+  @doc false
+  def dependency_surface(deps) when is_list(deps) do
+    deps
+    |> Enum.map(&Upkeep.Source.Dependency.surface/1)
+    |> Upkeep.InvalidationSurface.merge_all()
+  end
 end

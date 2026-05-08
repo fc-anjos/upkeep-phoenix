@@ -230,10 +230,8 @@ defmodule Upkeep.Runtime.Execution.Shared do
         :ok =
           Subscriptions.register(
             source_id,
-            watch.interest_keys,
-            watch.source,
-            watch.params,
-            Map.get(watch, :tracked_deps, [])
+            watch.surface,
+            watch.instance
           )
 
       _graph_dep_id ->

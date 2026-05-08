@@ -75,10 +75,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
           node = Store.fetch_metadata!(state.store, node_id)
           metadata = source_load_metadata(node, state, node_id)
 
-          {value, current_keys, tracked_deps, reactive_surface} =
-            Loaders.run_with_deps(node.loader, metadata)
-
-          {node_id, value, current_keys, tracked_deps, reactive_surface, node}
+          %{node_id: node_id, loaded: Loaders.run_with_deps(node.loader, metadata), node: node}
         end,
         ordered: true,
         timeout: 30_000,
@@ -89,11 +86,15 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
       node_ids
       |> Stream.zip(stream)
       |> Enum.reduce({[], state}, fn
-        {_node_id,
-         {:ok, {node_id, value, current_keys, tracked_deps, reactive_surface, %Node{} = node}}},
+        {_node_id, {:ok, %{node_id: node_id, loaded: loaded, node: %Node{} = node}}},
         {results, state} ->
-          if reactive_surface != node.reactive_surface do
-            Topology.reconcile_source(node_id, state.idx, node.reactive_surface, reactive_surface)
+          if loaded.surface != node.surface do
+            Topology.reconcile_source(
+              node_id,
+              state.idx,
+              node.surface,
+              loaded.surface
+            )
           end
 
           state = Retries.clear(state, node_id)
@@ -101,13 +102,13 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
           store =
             Store.put_metadata(state.store, node_id, %Node{
               node
-              | registered_keys: current_keys,
-                reactive_surface: reactive_surface,
-                tracked_deps: tracked_deps,
+              | surface_keys: loaded.surface_keys,
+                surface: loaded.surface,
+                tracked_deps: loaded.tracked_deps,
                 loaded?: true
             })
 
-          {[{node_id, value} | results], %{state | store: store}}
+          {[{node_id, loaded.value} | results], %{state | store: store}}
 
         {node_id, {:exit, reason}}, {results, state} ->
           node = Store.fetch_metadata!(state.store, node_id)

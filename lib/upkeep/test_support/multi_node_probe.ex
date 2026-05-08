@@ -9,7 +9,7 @@ defmodule Upkeep.TestSupport.MultiNodeProbe do
 
   def start_graph_subscriber(parent, node_id, event_name, value) do
     surface =
-      Upkeep.ReactiveSurface.manual([{:upkeep_change, event_name, nil}], fn
+      Upkeep.InvalidationSurface.manual([{:upkeep_change, event_name, nil}], fn
         %Upkeep.Change{name: ^event_name} -> true
         _event -> false
       end)

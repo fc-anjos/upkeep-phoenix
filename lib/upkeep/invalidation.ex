@@ -7,7 +7,8 @@ defmodule Upkeep.Invalidation do
     deps: [
       Group,
       Upkeep.Change,
-      Upkeep.ReactiveSurface,
+      Upkeep.InvalidationSurface,
+      Upkeep.Source,
       Upkeep.SingleFlight
     ],
     type: :strict

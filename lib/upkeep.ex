@@ -60,9 +60,9 @@ defmodule Upkeep do
       Upkeep.DAG,
       Upkeep.Ecto,
       Upkeep.Ecto.Source,
+      Upkeep.InvalidationSurface,
       Upkeep.Invalidation,
       Upkeep.Mutation,
-      Upkeep.ReactiveSurface,
       Upkeep.SingleFlight,
       Upkeep.Source,
       {Mix, :compile}

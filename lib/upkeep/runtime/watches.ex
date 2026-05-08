@@ -1,15 +1,13 @@
 defmodule Upkeep.Runtime.Watches do
   @moduledoc false
 
-  alias Upkeep.DAG.{Graph, Store}
   alias Upkeep.Live.{Ids, Telemetry}
-  alias Upkeep.Runtime.DAGOperations
+  alias Upkeep.Runtime.Patch
   alias Upkeep.Runtime.State
 
   def remove_component(socket, component_id) when not is_nil(component_id) do
     node_id = Ids.component_node_id(component_id)
-    remove_plan = Graph.subgraph_plan(Store.graph(State.store(socket)), node_id)
-    removed_node_ids = remove_plan.selected_node_ids
+    removed_node_ids = Patch.subgraph_node_ids(socket, node_id)
 
     {socket, effects} =
       socket
@@ -22,15 +20,12 @@ defmodule Upkeep.Runtime.Watches do
         {socket, effects ++ remove_effects}
       end)
 
-    store =
+    patch =
       socket
-      |> State.store()
-      |> Store.remove_subgraph(node_id)
+      |> Patch.new()
+      |> Patch.remove_subgraph(node_id)
 
-    removed_node_ids
-    |> Enum.flat_map(&State.assign_names_for_node(socket, &1))
-    |> Enum.reduce(State.put_store(socket, store), &State.delete_assign_node(&2, &1))
-    |> then(fn socket -> {:ok, socket, effects} end)
+    {:ok, Patch.socket(patch), effects ++ Patch.effects(patch)}
   end
 
   def unwatch_assign(socket, assign_name) when is_atom(assign_name) do
@@ -48,7 +43,7 @@ defmodule Upkeep.Runtime.Watches do
     socket
     |> State.watches()
     |> Enum.filter(fn {_source_id, watch} ->
-      watch.source == source and watch.params == params
+      watch.instance.source == source and watch.instance.params == params
     end)
     |> Enum.reduce({socket, []}, fn {source_id, _watch}, {socket, effects} ->
       {socket, remove_effects} = remove_watch(socket, source_id)
@@ -72,18 +67,19 @@ defmodule Upkeep.Runtime.Watches do
 
         Upkeep.Invalidation.release_read_holder(source_id)
 
-        watch.assign_names
-        |> Enum.reduce(socket, &State.delete_assign_node(&2, &1))
-        |> DAGOperations.remove_source(source_id)
-        |> then(fn socket ->
-          effects =
-            maybe_unregister_effect(watch, source_id) ++
-              [
-                {:telemetry, [:source, :unwatch], %{count: 1}, Telemetry.watch_metadata(watch)}
-              ]
+        patch =
+          socket
+          |> Patch.new()
+          |> Patch.remove_subgraph(Ids.source_node_id(source_id))
 
-          {socket, effects}
-        end)
+        effects =
+          Patch.effects(patch) ++
+            maybe_unregister_effect(watch, source_id) ++
+            [
+              {:telemetry, [:source, :unwatch], %{count: 1}, Telemetry.watch_metadata(watch)}
+            ]
+
+        {Patch.socket(patch), effects}
 
       :error ->
         {socket, []}

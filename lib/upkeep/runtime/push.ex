@@ -1,96 +1,64 @@
 defmodule Upkeep.Runtime.Push do
   @moduledoc false
 
-  alias Upkeep.Live.Ids
-  alias Upkeep.Runtime.DAGOperations
-  alias Upkeep.Runtime.Effects
+  alias Upkeep.Runtime.Patch
   alias Upkeep.Runtime.State
   alias Upkeep.Runtime.Watches
 
   def apply_dag_values(socket, pairs) when is_list(pairs) do
     started_at = System.monotonic_time()
 
-    {socket, changed_nodes, shared_nodes, effects, ignored} =
-      Enum.reduce(pairs, {socket, [], [], [], []}, fn {node_id, value},
-                                                      {socket, changed, shared, effects, ignored} ->
-        case put_pushed_value(socket, node_id, value) do
-          {:source, socket, local_node_id, true, assign_effects} ->
-            {socket, [local_node_id | changed], shared, effects ++ assign_effects, ignored}
-
-          {:source, socket, _local_node_id, false, assign_effects} ->
-            {socket, changed, shared, effects ++ assign_effects, ignored}
-
-          {:shared, socket, local_node_id, true, assign_effects} ->
-            {socket, [local_node_id | changed], [local_node_id | shared],
-             effects ++ assign_effects, ignored}
-
-          {:shared, socket, local_node_id, false, assign_effects} ->
-            {socket, changed, [local_node_id | shared], effects ++ assign_effects, ignored}
-
-          {:ignored, reason, node_id} ->
-            {socket, changed, shared, effects, [%{reason: reason, node_id: node_id} | ignored]}
-        end
+    patch =
+      pairs
+      |> Enum.reduce(Patch.new(socket), fn {node_id, value}, patch ->
+        put_pushed_value(patch, node_id, value)
       end)
-
-    {socket, recompute_effects} =
-      recompute_derived(socket, changed_nodes, skip: shared_nodes)
-
-    effects = effects ++ recompute_effects
+      |> Patch.recompute(&Watches.remove_watch/2)
 
     emit_apply_dag_values(
       pairs,
-      changed_nodes,
-      shared_nodes,
-      effects,
-      recompute_effects,
-      ignored,
+      Patch.changed_nodes(patch),
+      Patch.shared_nodes(patch),
+      Patch.effects(patch),
+      Patch.recompute_effects(patch),
+      Patch.ignored(patch),
       started_at
     )
 
-    emit_ignored_dag_values(ignored)
+    emit_ignored_dag_values(Patch.ignored(patch))
 
-    {:ok, socket, effects}
+    Patch.result(patch)
   end
 
   def apply_dag_value(socket, source_id, value) do
-    case put_pushed_value(socket, source_id, value) do
-      {_kind, socket, local_node_id, true, assign_effects} ->
-        {socket, recompute_effects} = recompute_derived(socket, [local_node_id])
-        {:ok, socket, assign_effects ++ recompute_effects}
+    patch =
+      socket
+      |> Patch.new()
+      |> put_pushed_value(source_id, value)
+      |> Patch.recompute(&Watches.remove_watch/2)
 
-      {_kind, socket, _local_node_id, false, assign_effects} ->
-        {:ok, socket, assign_effects}
+    emit_ignored_dag_values(Patch.ignored(patch))
 
-      {:ignored, reason, node_id} ->
-        emit_ignored_dag_values([%{reason: reason, node_id: node_id}])
-        {:ok, socket, []}
-    end
+    Patch.result(patch)
   end
 
-  defp put_pushed_value(socket, source_id, value) do
-    case Map.fetch(State.watches(socket), source_id) do
+  defp put_pushed_value(%Patch{} = patch, source_id, value) do
+    case Map.fetch(State.watches(Patch.socket(patch)), source_id) do
       {:ok, watch} ->
-        {socket, changed?} =
-          DAGOperations.put_value(socket, source_id, value, Ids.source_deps(watch.component))
-
-        {:source, socket, Ids.source_node_id(source_id), changed?,
-         Effects.assign_watch(watch, value)}
+        Patch.put_watch_value(patch, watch, value)
 
       :error ->
-        put_pushed_shared_value(socket, source_id, value)
+        put_pushed_shared_value(patch, source_id, value)
     end
   end
 
-  defp put_pushed_shared_value(socket, graph_node_id, value) do
-    case State.local_shared_derived_node(socket, graph_node_id) do
+  defp put_pushed_shared_value(%Patch{} = patch, graph_node_id, value) do
+    case State.local_shared_derived_node(Patch.socket(patch), graph_node_id) do
       nil ->
-        {:ignored, ignored_reason(graph_node_id), graph_node_id}
+        Patch.ignore(patch, ignored_reason(graph_node_id), graph_node_id)
 
       local_node_id ->
-        {socket, changed?} = DAGOperations.put_derived_value(socket, local_node_id, value)
-
-        {:shared, socket, local_node_id, changed?,
-         Effects.assign_shared_derived(socket, local_node_id, value)}
+        Patch.put_shared_derived_value(patch, local_node_id, value)
     end
   end
 
@@ -103,14 +71,6 @@ defmodule Upkeep.Runtime.Push do
     do: :unknown_shared_derived
 
   defp ignored_reason(_node_id), do: :stale_push
-
-  defp recompute_derived(socket, changed_source_nodes, opts \\ [])
-
-  defp recompute_derived(socket, [], _opts), do: {socket, []}
-
-  defp recompute_derived(socket, changed_source_nodes, opts) do
-    DAGOperations.recompute_derived(socket, changed_source_nodes, &Watches.remove_watch/2, opts)
-  end
 
   defp emit_apply_dag_values(
          pairs,

@@ -1,6 +1,7 @@
 defmodule Upkeep.SourceEctoTest do
   use Upkeep.TestSupport.DataCase, async: false
 
+  alias Upkeep.InvalidationSurface
   alias Upkeep.Live
 
   defmodule Column do
@@ -439,9 +440,9 @@ defmodule Upkeep.SourceEctoTest do
     Repo.insert!(issue(id: 2, project_id: 1, assignee_id: 10, title: "Other", position: 1))
     Repo.insert!(issue(id: 3, project_id: 1, assignee_id: 9, title: "First", position: 1))
 
-    {issues, _deps} = Upkeep.Source.Loader.load(ProjectIssues, %{project_id: 1, user_id: 9})
+    result = Upkeep.Source.Loader.load_result(ProjectIssues, %{project_id: 1, user_id: 9})
 
-    assert Enum.map(issues, & &1.title) == ["First", "Mine"]
+    assert Enum.map(result.value, & &1.title) == ["First", "Mine"]
   end
 
   defmodule RepeatingReadSource do
@@ -477,8 +478,8 @@ defmodule Upkeep.SourceEctoTest do
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
-    {{first, second}, _deps} =
-      Upkeep.Source.Loader.load(RepeatingReadSource, %{project_id: 1})
+    result = Upkeep.Source.Loader.load_result(RepeatingReadSource, %{project_id: 1})
+    {first, second} = result.value
 
     assert first == second
     # The two Upkeep.read calls share one underlying repo.all
@@ -491,28 +492,29 @@ defmodule Upkeep.SourceEctoTest do
     Repo.insert!(issue(id: 1, project_id: 1, column_id: 1, title: "Open", position: 1))
     Repo.insert!(issue(id: 2, project_id: 1, column_id: 1, status: "archived", title: "Archived"))
 
-    {board, deps} = Upkeep.Source.Loader.load(BoardViewModel, %{project_id: 1})
+    result = Upkeep.Source.Loader.load_result(BoardViewModel, %{project_id: 1})
 
-    assert [%{column: "Backlog", issues: [%Issue{title: "Open"}]}] = board
+    assert [%{column: "Backlog", issues: [%Issue{title: "Open"}]}] = result.value
 
-    interest_keys = Upkeep.Source.Reactivity.deps_interest_keys(deps)
+    result_keys = InvalidationSurface.keys(result.surface)
 
-    assert {:upkeep_change, :inserted, Column, [project_id: 1]} in interest_keys
-    assert {:upkeep_change, :updated, Issue, [project_id: 1, status: "open"]} in interest_keys
+    assert {:upkeep_change, :inserted, Column, [project_id: 1]} in result_keys
 
-    assert Upkeep.Source.Reactivity.deps_react_to?(
-             deps,
+    assert {:upkeep_change, :updated, Issue, [project_id: 1, status: "open"]} in result_keys
+
+    assert InvalidationSurface.matches?(
+             Upkeep.Source.dependency_surface(result.tracked_deps),
              issue(project_id: 1, column_id: 1, status: "open") |> Upkeep.Change.inserted()
            )
 
-    refute Upkeep.Source.Reactivity.deps_react_to?(
-             deps,
+    refute InvalidationSurface.matches?(
+             Upkeep.Source.dependency_surface(result.tracked_deps),
              issue(project_id: 1, column_id: 1, status: "archived") |> Upkeep.Change.inserted()
            )
   end
 
-  test "plain query/1 sources infer field-indexed interest keys from Ecto where clauses" do
-    assert ProjectIssues.__upkeep_interest_keys__(%{project_id: 1, user_id: 9}) == [
+  test "plain query/1 sources infer field-indexed surfaces from Ecto where clauses" do
+    assert surface_keys(ProjectIssues, %{project_id: 1, user_id: 9}) == [
              {:upkeep_change, :inserted, Issue, [assignee_id: 9, project_id: 1, status: "open"]},
              {:upkeep_change, :updated, Issue, [assignee_id: 9, project_id: 1, status: "open"]},
              {:upkeep_change, :deleted, Issue, [assignee_id: 9, project_id: 1, status: "open"]}
@@ -619,7 +621,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   test "simple or query shapes infer precise alternative invalidation keys" do
-    assert BroadProjectIssues.__upkeep_interest_keys__(%{project_id: 1, user_id: 9})
+    assert surface_keys(BroadProjectIssues, %{project_id: 1, user_id: 9})
            |> sort_terms() ==
              [
                {:upkeep_change, :inserted, Issue, [assignee_id: 9]},
@@ -652,7 +654,7 @@ defmodule Upkeep.SourceEctoTest do
              %{project_id: 1, user_id: 9}
            )
 
-    assert TernaryOrProjectIssues.__upkeep_interest_keys__(%{
+    assert surface_keys(TernaryOrProjectIssues, %{
              project_id: 1,
              user_id: 9,
              status: "open"
@@ -675,7 +677,7 @@ defmodule Upkeep.SourceEctoTest do
   test "unsupported or query branches fall back to broad schema invalidation with reasons" do
     params = %{project_id: 1, term: "issue"}
 
-    assert UnsupportedOrProjectIssues.__upkeep_interest_keys__(params) == [
+    assert surface_keys(UnsupportedOrProjectIssues, params) == [
              {:upkeep_change, :inserted, Issue},
              {:upkeep_change, :updated, Issue},
              {:upkeep_change, :deleted, Issue}
@@ -696,7 +698,7 @@ defmodule Upkeep.SourceEctoTest do
   test "field-to-field comparisons deopt with a value-expression reason" do
     coverage = Upkeep.Source.coverage(FieldComparisonIssues, %{})
 
-    assert FieldComparisonIssues.__upkeep_interest_keys__(%{}) == [
+    assert surface_keys(FieldComparisonIssues, %{}) == [
              {:upkeep_change, :inserted, Issue},
              {:upkeep_change, :updated, Issue},
              {:upkeep_change, :deleted, Issue}
@@ -718,7 +720,7 @@ defmodule Upkeep.SourceEctoTest do
   test "joined queries infer dependencies for every schema with equality filters" do
     params = %{project_id: 1, statuses: ["open", "blocked"]}
 
-    assert JoinedIssueCards.__upkeep_interest_keys__(params) |> sort_terms() ==
+    assert surface_keys(JoinedIssueCards, params) |> sort_terms() ==
              [
                {:upkeep_change, :inserted, Column, [project_id: 1]},
                {:upkeep_change, :updated, Column, [project_id: 1]},
@@ -757,7 +759,7 @@ defmodule Upkeep.SourceEctoTest do
   test "assoc joins infer the related schema from Ecto association metadata" do
     params = %{project_id: 1}
 
-    assert AssocJoinedIssueCards.__upkeep_interest_keys__(params) |> sort_terms() ==
+    assert surface_keys(AssocJoinedIssueCards, params) |> sort_terms() ==
              [
                {:upkeep_change, :inserted, Column, [project_id: 1]},
                {:upkeep_change, :updated, Column, [project_id: 1]},
@@ -772,7 +774,7 @@ defmodule Upkeep.SourceEctoTest do
   test "joined preload edge shapes add broad associated dependencies" do
     params = %{project_id: 1}
 
-    assert NestedJoinedPreloadedComments.__upkeep_interest_keys__(params) |> sort_terms() ==
+    assert surface_keys(NestedJoinedPreloadedComments, params) |> sort_terms() ==
              [
                {:upkeep_change, :inserted, Column},
                {:upkeep_change, :updated, Column},
@@ -804,7 +806,7 @@ defmodule Upkeep.SourceEctoTest do
   test "joined projections without equality filters fall back only for that schema" do
     params = %{project_id: 1}
 
-    assert JoinedColumnProjection.__upkeep_interest_keys__(params) |> sort_terms() ==
+    assert surface_keys(JoinedColumnProjection, params) |> sort_terms() ==
              [
                {:upkeep_change, :inserted, Column},
                {:upkeep_change, :updated, Column},
@@ -819,7 +821,7 @@ defmodule Upkeep.SourceEctoTest do
   test "dynamic filters and in-list filters are treated as precise memberships" do
     params = %{project_id: 1, statuses: ["open", "blocked"]}
 
-    assert DynamicIssues.__upkeep_interest_keys__(params) |> sort_terms() ==
+    assert surface_keys(DynamicIssues, params) |> sort_terms() ==
              [
                {:upkeep_change, :inserted, Issue, [project_id: 1, status: "blocked"]},
                {:upkeep_change, :inserted, Issue, [project_id: 1, status: "open"]},
@@ -845,7 +847,7 @@ defmodule Upkeep.SourceEctoTest do
   test "subqueries add dependencies for their inner schemas" do
     params = %{project_id: 1}
 
-    assert CommentedIssues.__upkeep_interest_keys__(params) |> sort_terms() ==
+    assert surface_keys(CommentedIssues, params) |> sort_terms() ==
              [
                {:upkeep_change, :inserted, Comment, [project_id: 1]},
                {:upkeep_change, :updated, Comment, [project_id: 1]},
@@ -870,7 +872,7 @@ defmodule Upkeep.SourceEctoTest do
   test "preloads add broad dependencies for associated schemas" do
     params = %{project_id: 1}
 
-    assert PreloadedProjectIssues.__upkeep_interest_keys__(params) |> sort_terms() ==
+    assert surface_keys(PreloadedProjectIssues, params) |> sort_terms() ==
              [
                {:upkeep_change, :inserted, Column},
                {:upkeep_change, :updated, Column},
@@ -913,7 +915,7 @@ defmodule Upkeep.SourceEctoTest do
   test "string many-to-many preloads add broad table dependencies" do
     params = %{project_id: 1}
 
-    assert StringManyToManyPreloadedIssues.__upkeep_interest_keys__(params) |> sort_terms() ==
+    assert surface_keys(StringManyToManyPreloadedIssues, params) |> sort_terms() ==
              [
                {:upkeep_change, :inserted, "upkeep_source_ecto_test_issue_tags"},
                {:upkeep_change, :updated, "upkeep_source_ecto_test_issue_tags"},
@@ -996,7 +998,7 @@ defmodule Upkeep.SourceEctoTest do
   test "fragment broad fallback is scoped to the schema referenced by the fragment" do
     params = %{project_id: 1, term: "backlog"}
 
-    assert JoinedFragmentIssues.__upkeep_interest_keys__(params) |> sort_terms() ==
+    assert surface_keys(JoinedFragmentIssues, params) |> sort_terms() ==
              [
                {:upkeep_change, :inserted, Column},
                {:upkeep_change, :updated, Column},
@@ -1016,7 +1018,7 @@ defmodule Upkeep.SourceEctoTest do
   test "schemaless query sources infer table-keyed interest from field filters" do
     params = %{project_id: 1, user_id: 9}
 
-    assert SchemalessProjectIssues.__upkeep_interest_keys__(params) == [
+    assert surface_keys(SchemalessProjectIssues, params) == [
              {:upkeep_change, :inserted, "upkeep_source_ecto_test_issues",
               [assignee_id: 9, project_id: 1, status: "open"]},
              {:upkeep_change, :updated, "upkeep_source_ecto_test_issues",
@@ -1060,6 +1062,12 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defp new_socket, do: %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+
+  defp surface_keys(source, params) do
+    source
+    |> apply(:__upkeep_surface__, [params])
+    |> InvalidationSurface.keys()
+  end
 
   defp sort_terms(terms), do: Enum.sort_by(terms, &inspect/1)
 end

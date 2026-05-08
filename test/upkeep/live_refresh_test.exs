@@ -1785,11 +1785,11 @@ defmodule Upkeep.LiveRefreshTest do
   end
 
   defp member_count(source, params, component \\ :issue_detail) do
-    params = Map.new(params)
+    instance = Upkeep.Source.instance(source, params)
 
     source_ids = [
-      Upkeep.Live.Ids.scoped_source_id(source, params, nil),
-      Upkeep.Live.Ids.scoped_source_id(source, params, component)
+      Upkeep.Live.Ids.scoped_source_id(instance, nil),
+      Upkeep.Live.Ids.scoped_source_id(instance, component)
     ]
 
     subscribed? =

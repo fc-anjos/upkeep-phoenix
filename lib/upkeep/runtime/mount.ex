@@ -2,18 +2,13 @@ defmodule Upkeep.Runtime.Mount do
   @moduledoc false
 
   alias Upkeep.DAG.Store
+  alias Upkeep.Live.Telemetry
 
-  alias Upkeep.Live.{
-    Components,
-    Ids,
-    Telemetry
-  }
-
-  alias Upkeep.Runtime.DAGOperations
   alias Upkeep.Runtime.Effects
   alias Upkeep.Runtime.Execution.Shared
   alias Upkeep.Runtime.Materializer
   alias Upkeep.Runtime.NodeSpec
+  alias Upkeep.Runtime.Patch
   alias Upkeep.Runtime.Producer
   alias Upkeep.Runtime.SourceLoads
   alias Upkeep.Runtime.State
@@ -39,6 +34,7 @@ defmodule Upkeep.Runtime.Mount do
         {:ok, socket, effects}
 
       :error ->
+        instance = producer.instance
         policy = Subscriptions.tracking_policy(socket)
         tracked? = policy == :auto
 
@@ -53,38 +49,34 @@ defmodule Upkeep.Runtime.Mount do
           :ok = Subscriptions.join_local_notifications()
         end
 
-        {value, tracked_deps} =
+        result =
           SourceLoads.load_coalesced(
-            producer.source,
-            producer.params,
+            instance,
             source_id,
             producer.component,
             :watch
           )
 
-        interest_keys = SourceLoads.interest_keys(producer.source, producer.params, tracked_deps)
-
-        socket =
+        patch =
           socket
           |> State.put_watch(source_id, %{
             assign_names: MapSet.new([assign_name]),
-            source: producer.source,
-            params: producer.params,
+            instance: instance,
             component: producer.component,
             registered?: registered?,
             subscribed?: tracked?,
-            interest_keys: interest_keys,
-            tracked_deps: tracked_deps
+            surface: result.surface,
+            tracked_deps: result.tracked_deps
           })
-          |> DAGOperations.put_source(source_id, value, spec.deps, spec.metadata)
-          |> State.put_assign_node(assign_name, spec.id)
+          |> Patch.new()
+          |> Patch.put_source(source_id, result.value, spec.deps, metadata: spec.metadata)
+          |> Patch.put_assign_node(assign_name, spec.id)
 
         effects =
           Effects.maybe_register_source(
             registered?,
             source_id,
-            interest_keys,
-            tracked_deps,
+            result.surface,
             producer
           ) ++
             [
@@ -93,11 +85,11 @@ defmodule Upkeep.Runtime.Mount do
                |> Map.put(:node_id, spec.id)
                |> Map.put(:kind, :new)
                |> Map.put(:registered?, registered?)
-               |> Map.put(:interest_keys, interest_keys)}
+               |> Map.put(:surface_keys, Upkeep.InvalidationSurface.keys(result.surface))}
             ] ++
-            Effects.assign_source(assign_name, value, source_id)
+            Effects.assign_source(assign_name, result.value, source_id)
 
-        {:ok, socket, effects}
+        {:ok, Patch.socket(patch), effects}
     end
   end
 
@@ -108,19 +100,10 @@ defmodule Upkeep.Runtime.Mount do
     %Materializer.Component{component_id: component_id} = single_materializer(spec)
     compute = compute_fun(producer)
 
-    store =
-      socket
-      |> State.store()
-      |> Store.put_component(spec.id, spec.deps, compute)
-      |> DAGOperations.put_runtime_metadata(spec.id, spec.metadata)
-
-    value = Store.fetch!(store, spec.id)
-    store = Components.put_assign_nodes(store, component_id, value)
-
     socket
-    |> State.put_store(store)
-    |> put_component_assign_nodes(component_id, value)
-    |> then(fn socket -> {:ok, socket, Effects.component_assigns(value)} end)
+    |> Patch.new()
+    |> Patch.put_component(spec.id, spec.deps, compute, spec.metadata, component_id)
+    |> Patch.result()
   end
 
   def dispatch(socket, %NodeSpec{kind: :derived, producer: %Producer.Compute{} = producer} = spec) do
@@ -142,20 +125,17 @@ defmodule Upkeep.Runtime.Mount do
     sharing_plan = Shared.sharing_plan(socket, spec.deps, public_sharing_metadata)
     public_sharing_metadata = Map.put(public_sharing_metadata, :shareable_plan, sharing_plan)
 
-    store =
+    patch =
       socket
-      |> State.store()
-      |> Store.register_derived(spec.id, spec.deps, compute)
-      |> DAGOperations.put_runtime_metadata(spec.id, spec.metadata)
-      |> seed_initial_value(spec.id, initial_value)
+      |> Patch.new()
+      |> Patch.register_derived(spec.id, spec.deps, compute, initial_value, spec.metadata)
+      |> Patch.put_assign_node(assign_name, spec.id)
+      |> Patch.put_derive_sharing(spec.id, public_sharing_metadata)
+      |> Patch.put_shared_derived_node(spec.id, graph_node_id)
 
-    value = Store.fetch!(store, spec.id)
+    value = Store.fetch!(State.store(Patch.socket(patch)), spec.id)
 
-    socket
-    |> State.put_store(store)
-    |> State.put_assign_node(assign_name, spec.id)
-    |> State.put_derive_sharing(spec.id, public_sharing_metadata)
-    |> put_shared_derived_node(spec.id, graph_node_id)
+    Patch.socket(patch)
     |> then(fn socket ->
       effects =
         [
@@ -178,31 +158,4 @@ defmodule Upkeep.Runtime.Mount do
   end
 
   def single_materializer(%NodeSpec{materializers: [materializer]}), do: materializer
-
-  defp put_component_assign_nodes(socket, component_id, value) when is_map(value) do
-    Enum.reduce(value, socket, fn
-      {assign_name, _assign_value}, socket when is_atom(assign_name) ->
-        State.put_assign_node(
-          socket,
-          assign_name,
-          Ids.component_assign_node_id(component_id, assign_name)
-        )
-
-      {_assign_name, _assign_value}, socket ->
-        socket
-    end)
-  end
-
-  defp put_component_assign_nodes(socket, _component_id, _value), do: socket
-
-  defp put_shared_derived_node(socket, _node_id, nil), do: socket
-
-  defp put_shared_derived_node(socket, node_id, graph_node_id) do
-    State.put_shared_derived_node(socket, node_id, graph_node_id)
-  end
-
-  defp seed_initial_value(store, id, value) do
-    {store, _changed?} = Store.seed(store, id, value)
-    store
-  end
 end

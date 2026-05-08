@@ -22,11 +22,8 @@ defmodule Upkeep.Live.RuntimeResult do
     socket
   end
 
-  defp apply_one(
-         {:register_source, source_id, interest_keys, tracked_deps, source, params},
-         socket
-       ) do
-    Subscriptions.register(source_id, interest_keys, source, params, tracked_deps)
+  defp apply_one({:register_source, source_id, surface, instance}, socket) do
+    Subscriptions.register(source_id, surface, instance)
     socket
   end
 
@@ -61,10 +58,8 @@ defmodule Upkeep.Live.RuntimeResult do
   defp effect_kind({:unregister, _source_id}), do: :unregister
   defp effect_kind({:telemetry, _event, _measurements, _metadata}), do: :telemetry
 
-  defp effect_kind(
-         {:register_source, _source_id, _interest_keys, _tracked_deps, _source, _params}
-       ),
-       do: :register_source
+  defp effect_kind({:register_source, _source_id, _surface, _instance}),
+    do: :register_source
 
   defp effect_kind({:register_derived, _node_id, _dep_node_ids, _compute_fn}),
     do: :register_derived

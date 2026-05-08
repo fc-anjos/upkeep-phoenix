@@ -1,13 +1,11 @@
 defmodule Upkeep.Runtime do
   @moduledoc false
 
-  alias Upkeep.DAG.Store
   alias Upkeep.Live.Ids
-  alias Upkeep.Runtime.DAGOperations
   alias Upkeep.Runtime.Mount
+  alias Upkeep.Runtime.Patch
   alias Upkeep.Runtime.Push
   alias Upkeep.Runtime.Refresh
-  alias Upkeep.Runtime.State
   alias Upkeep.Runtime.Watches
 
   def sync_current_scope(socket) do
@@ -15,22 +13,14 @@ defmodule Upkeep.Runtime do
       {:ok, current_scope} ->
         node_id = Ids.scope_node_id(:current_scope)
 
-        {store, changed?} =
+        patch =
           socket
-          |> State.store()
-          |> Store.put_source(node_id, current_scope, [])
+          |> Patch.new()
+          |> Patch.put_source_node(node_id, current_scope, [], track_change?: true)
+          |> Patch.put_assign_node(:current_scope, node_id)
+          |> Patch.recompute(&Watches.remove_watch/2)
 
-        socket =
-          socket
-          |> State.put_store(store)
-          |> State.put_assign_node(:current_scope, node_id)
-
-        if changed? do
-          {socket, effects} = recompute_derived(socket, [node_id])
-          {:ok, socket, effects}
-        else
-          {:ok, socket, []}
-        end
+        Patch.result(patch)
 
       :error ->
         {:ok, socket, []}
@@ -62,6 +52,12 @@ defmodule Upkeep.Runtime do
     do: Push.apply_dag_value(socket, source_id, value)
 
   def recompute_derived(socket, changed_source_nodes, opts \\ []) do
-    DAGOperations.recompute_derived(socket, changed_source_nodes, &Watches.remove_watch/2, opts)
+    patch =
+      socket
+      |> Patch.new()
+      |> Patch.mark_changed(changed_source_nodes)
+      |> Patch.recompute(&Watches.remove_watch/2, opts)
+
+    {Patch.socket(patch), Patch.effects(patch)}
   end
 end

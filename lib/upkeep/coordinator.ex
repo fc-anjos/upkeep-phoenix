@@ -8,7 +8,7 @@ defmodule Upkeep.Coordinator do
       Upkeep.Change,
       Upkeep.DAG,
       Upkeep.Invalidation,
-      Upkeep.ReactiveSurface,
+      Upkeep.InvalidationSurface,
       Upkeep.Source,
       Upkeep.SingleFlight,
       Group

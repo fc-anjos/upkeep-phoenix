@@ -1,15 +1,17 @@
 defmodule Upkeep.Ecto.Source.RepoCaptureGuard do
   @moduledoc false
 
+  alias Upkeep.Source.Instance
+
   @warn_dedup_key {__MODULE__, :repo_capture_warned}
   @default_repo_capture_policy if(Mix.env() in [:dev, :test], do: :raise, else: :warn)
 
   def verify_source!(source, params, opts \\ []) when is_atom(source) and is_map(params) do
+    instance = Instance.build(source, params)
+
     cond do
-      query_source?(source) or explicit_repo?(source) ->
-        source
-        |> repo()
-        |> ensure_repo_capture!(source, params, opts)
+      instance.query_source? or instance.repo_explicit? ->
+        ensure_repo_capture!(instance.repo, instance.source, instance.params, opts)
 
       true ->
         :ok
@@ -30,19 +32,6 @@ defmodule Upkeep.Ecto.Source.RepoCaptureGuard do
       {:error, reason} ->
         handle_repo_capture_misconfiguration(repo, source, params, reason, source_location)
     end
-  end
-
-  defp repo(source) do
-    source.__upkeep_repo__() || Application.get_env(:upkeep, :repo)
-  end
-
-  defp query_source?(source) do
-    function_exported?(source, :__upkeep_query_source__?, 0) and source.__upkeep_query_source__?()
-  end
-
-  defp explicit_repo?(source) do
-    function_exported?(source, :__upkeep_repo_explicit__?, 0) and
-      source.__upkeep_repo_explicit__?()
   end
 
   defp repo_capture_status(nil), do: {:error, :missing_repo}

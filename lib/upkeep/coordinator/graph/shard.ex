@@ -35,13 +35,13 @@ defmodule Upkeep.Coordinator.Graph.Shard do
   end
 
   @impl true
-  def handle_call({:register_source, node_id, reactive_surface, loader}, _from, state) do
-    {:reply, :ok, Nodes.register_source(state, node_id, reactive_surface, loader)}
+  def handle_call({:register_source, node_id, surface, loader}, _from, state) do
+    {:reply, :ok, Nodes.register_source(state, node_id, surface, loader)}
   end
 
   @impl true
-  def handle_call({:register_source_and_load, node_id, reactive_surface, loader}, from, state) do
-    state = Nodes.register_source(state, node_id, reactive_surface, loader)
+  def handle_call({:register_source_and_load, node_id, surface, loader}, from, state) do
+    state = Nodes.register_source(state, node_id, surface, loader)
     InitialLoads.register_source_and_load(state, node_id, from)
   end
 
@@ -128,19 +128,13 @@ defmodule Upkeep.Coordinator.Graph.Shard do
   end
 
   @impl true
-  def handle_info(
-        {ref, {node_id, value, current_keys, tracked_deps, reactive_surface, node}},
-        state
-      ) do
+  def handle_info({ref, %{node_id: node_id, loaded: loaded, node: node}}, state) do
     {:noreply,
      InitialLoads.handle_source_result(
        state,
        ref,
        node_id,
-       value,
-       current_keys,
-       tracked_deps,
-       reactive_surface,
+       loaded,
        node
      )}
   end

@@ -4,11 +4,12 @@ defmodule Upkeep.Runtime.Effects do
   alias Upkeep.Live.Ids
   alias Upkeep.Runtime.State
 
-  def maybe_register_source(true, source_id, interest_keys, tracked_deps, producer) do
-    [{:register_source, source_id, interest_keys, tracked_deps, producer.source, producer.params}]
+  def maybe_register_source(true, source_id, surface, producer) do
+    instance = producer.instance
+    [{:register_source, source_id, surface, instance}]
   end
 
-  def maybe_register_source(false, _source_id, _interest_keys, _tracked_deps, _producer), do: []
+  def maybe_register_source(false, _source_id, _surface, _producer), do: []
 
   def assign_source(assign_name, value, source_id) do
     [

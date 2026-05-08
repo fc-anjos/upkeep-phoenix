@@ -5,6 +5,7 @@ defmodule Upkeep.Live.SpecsTest do
   alias Upkeep.Live.Specs
   alias Upkeep.Runtime.Materializer
   alias Upkeep.Runtime.Producer
+  alias Upkeep.Source.Instance
 
   defmodule Issue do
     defstruct [:project_id]
@@ -26,6 +27,7 @@ defmodule Upkeep.Live.SpecsTest do
     spec = Specs.source(:issues, ProjectIssues, %{project_id: 1}, nil)
 
     source_id = {ProjectIssues, %{project_id: 1}}
+    instance = Instance.build(ProjectIssues, %{project_id: 1})
 
     assert spec.id == {:source, source_id}
     assert spec.kind == :source
@@ -33,8 +35,7 @@ defmodule Upkeep.Live.SpecsTest do
     assert spec.scope == :shared
 
     assert spec.producer == %Producer.Source{
-             source: ProjectIssues,
-             params: %{project_id: 1},
+             instance: instance,
              source_id: source_id,
              component: nil
            }

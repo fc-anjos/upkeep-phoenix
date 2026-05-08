@@ -5,6 +5,8 @@ defmodule Upkeep.Coordinator.Graph do
   alias Upkeep.Coordinator.Shards
   alias Upkeep.Coordinator.Subscriptions
   alias Upkeep.Coordinator.Topology
+  alias Upkeep.InvalidationSurface
+  alias Upkeep.Source.Instance
 
   ## Public API
 
@@ -23,20 +25,18 @@ defmodule Upkeep.Coordinator.Graph do
 
   defdelegate group, to: Subscriptions
 
-  def register_source(node_id, interest_keys, source, params, deps \\ [])
-      when is_list(interest_keys) and is_atom(source) and is_map(params) and is_list(deps) do
-    :ok = Shards.register_source(node_id, interest_keys, source, params, deps)
+  def register_source(node_id, %InvalidationSurface{} = surface, %Instance{} = instance) do
+    :ok = Shards.register_source(node_id, surface, instance)
     Subscriptions.subscribe(node_id)
   end
 
-  def register_source_and_load(node_id, interest_keys, source, params)
-      when is_list(interest_keys) and is_atom(source) and is_map(params) do
-    {:ok, value, deps} = Shards.register_source_and_load(node_id, interest_keys, source, params)
+  def register_source_and_load(node_id, %InvalidationSurface{} = surface, %Instance{} = instance) do
+    {:ok, result} = Shards.register_source_and_load(node_id, surface, instance)
     Subscriptions.subscribe(node_id)
-    {:ok, value, deps}
+    {:ok, result}
   end
 
-  def register_loader(node_id, %Upkeep.ReactiveSurface{} = surface, load_fn)
+  def register_loader(node_id, %InvalidationSurface{} = surface, load_fn)
       when is_function(load_fn, 0) do
     :ok = Shards.register_loader(node_id, surface, load_fn)
     Subscriptions.subscribe(node_id)

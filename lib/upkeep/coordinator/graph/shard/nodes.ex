@@ -7,12 +7,12 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
   alias Upkeep.Coordinator.Topology
   alias Upkeep.DAG.Store
 
-  def register_source(state, node_id, reactive_surface, loader) do
+  def register_source(state, node_id, surface, loader) do
     if Store.has_node?(state.store, node_id) do
       state
     else
       encoded_key = Subscriptions.source_key(node_id)
-      Topology.register_source(node_id, state.idx, reactive_surface)
+      Topology.register_source(node_id, state.idx, surface)
 
       {store, _changed?} = Store.put_source(state.store, node_id, nil, [])
 
@@ -20,8 +20,8 @@ defmodule Upkeep.Coordinator.Graph.Shard.Nodes do
         Store.put_metadata(store, node_id, %Node{
           loader: loader,
           encoded_key: encoded_key,
-          registered_keys: Upkeep.ReactiveSurface.index_keys(reactive_surface),
-          reactive_surface: reactive_surface,
+          surface_keys: Upkeep.InvalidationSurface.index_keys(surface),
+          surface: surface,
           retry: Loaders.retry_config(loader)
         })
 

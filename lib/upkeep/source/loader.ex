@@ -1,65 +1,58 @@
 defmodule Upkeep.Source.Loader do
   @moduledoc false
 
+  alias Upkeep.Source.{Instance, LoadResult}
+
   @context_key {__MODULE__, :read_context}
   @warn_dedup_key {__MODULE__, :no_invalidation_warned}
 
   def verify_source!(source, params, opts \\ []) when is_atom(source) and is_map(params) do
-    if function_exported?(source, :__upkeep_verify__!, 2) do
-      source.__upkeep_verify__!(params, opts)
-    else
-      :ok
-    end
+    source
+    |> Instance.build(params)
+    |> Instance.verify!(opts)
   end
 
-  def load(source, params) when is_atom(source) do
-    repo = source.__upkeep_repo__() || Application.get_env(:upkeep, :repo)
+  def load_result(source, params) when is_atom(source) do
+    source
+    |> Instance.build(params)
+    |> load_result()
+  end
 
-    {value, deps} =
-      with_read_context(
-        repo,
-        Upkeep.Source.Identity.source_id(source, params),
-        source,
-        params,
-        fn ->
-          value = source.load(params)
-          {value, tracked_deps()}
-        end
-      )
+  def load_result(%Instance{} = instance) do
+    {value, deps} = execute(instance)
+    coverage = coverage(instance, deps)
+    result = LoadResult.new(instance, value, deps, coverage)
 
-    coverage = coverage(source, params, deps)
+    emit_coverage(result.coverage)
+    warn_if_no_invalidation_surface(result.coverage)
 
-    emit_coverage(coverage)
-    warn_if_no_invalidation_surface(coverage)
-
-    {value, deps}
+    result
   end
 
   def read(value), do: value
 
   def coverage(source, params) when is_atom(source) and is_map(params) do
-    repo = source.__upkeep_repo__() || Application.get_env(:upkeep, :repo)
+    source
+    |> Instance.build(params)
+    |> coverage()
+  end
 
-    {_value, deps} =
-      with_read_context(
-        repo,
-        Upkeep.Source.Identity.source_id(source, params),
-        source,
-        params,
-        fn ->
-          value = source.load(params)
-          {value, tracked_deps()}
-        end
-      )
+  def coverage(%Instance{} = instance, deps) when is_list(deps) do
+    deps
+    |> Enum.map(&Upkeep.Source.Dependency.coverage/1)
+    |> Enum.reduce(base_coverage(instance), &Upkeep.Source.Coverage.merge/2)
+    |> attach_unknown_if_empty()
+  end
 
-    coverage(source, params, deps)
+  def coverage(%Instance{} = instance) do
+    {_value, deps} = execute(instance)
+    coverage(instance, deps)
   end
 
   def coverage(source, params, deps) when is_atom(source) and is_map(params) and is_list(deps) do
-    deps
-    |> Enum.map(&Upkeep.Source.Dependency.coverage/1)
-    |> Enum.reduce(base_coverage(source, params), &Upkeep.Source.Coverage.merge/2)
-    |> attach_unknown_if_empty()
+    source
+    |> Instance.build(params)
+    |> coverage(deps)
   end
 
   def read_context, do: Process.get(@context_key)
@@ -89,6 +82,19 @@ defmodule Upkeep.Source.Loader do
         Process.put(@context_key, Map.put(ctx, :reads, Map.put(cache, fingerprint, value)))
         value
     end
+  end
+
+  defp execute(%Instance{} = instance) do
+    with_read_context(
+      instance.repo,
+      instance.id,
+      instance.source,
+      instance.params,
+      fn ->
+        value = instance.source.load(instance.params)
+        {value, tracked_deps()}
+      end
+    )
   end
 
   defp with_read_context(repo, holder, source, params, fun) do
@@ -126,13 +132,10 @@ defmodule Upkeep.Source.Loader do
     )
   end
 
-  defp base_coverage(source, params) do
-    explicit =
-      if function_exported?(source, :__upkeep_explicit_interest_keys__, 1),
-        do: source.__upkeep_explicit_interest_keys__(params),
-        else: []
-
-    Upkeep.Source.Coverage.new(source, params, explicit: explicit)
+  defp base_coverage(%Instance{} = instance) do
+    Upkeep.Source.Coverage.new(instance.source, instance.params,
+      explicit: Upkeep.InvalidationSurface.keys(instance.explicit_surface)
+    )
   end
 
   defp attach_unknown_if_empty(%Upkeep.Source.Coverage{} = coverage) do

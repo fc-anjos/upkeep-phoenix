@@ -70,24 +70,30 @@ defmodule Upkeep.Source.Spec do
     invalidator_checks =
       Enum.map(invalidators, fn {notification, on, as} ->
         quote do
-          Upkeep.Source.Keys.matches?(event, unquote(Macro.escape(notification))) and
-            Upkeep.Source.Keys.equal_fields?(event, params, unquote(on), unquote(as))
+          Upkeep.InvalidationSurface.matches_notification?(
+            event,
+            unquote(Macro.escape(notification))
+          ) and
+            Upkeep.InvalidationSurface.equal_fields?(event, params, unquote(on), unquote(as))
         end
       end)
 
     reactor_checks =
       Enum.map(reactors, fn {notification, fun} ->
         quote do
-          Upkeep.Source.Keys.matches?(event, unquote(Macro.escape(notification))) and
+          Upkeep.InvalidationSurface.matches_notification?(
+            event,
+            unquote(Macro.escape(notification))
+          ) and
             (Upkeep.Change.broad_update?(event) or Upkeep.Change.partial_update?(event) or
                unquote(fun).(event, params))
         end
       end)
 
-    interest_keys =
+    explicit_keys =
       Enum.map(invalidators, fn {notification, on, as} ->
         quote do
-          Upkeep.Source.Keys.interest_key(
+          Upkeep.InvalidationSurface.field_key(
             unquote(Macro.escape(notification)),
             unquote(on),
             unquote(as),
@@ -97,12 +103,20 @@ defmodule Upkeep.Source.Spec do
       end) ++
         Enum.map(reactors, fn {notification, _fun} ->
           quote do
-            Upkeep.Source.Keys.notification_key(unquote(Macro.escape(notification)))
+            Upkeep.InvalidationSurface.notification_key(unquote(Macro.escape(notification)))
           end
         end)
 
+    explicit_checks = invalidator_checks ++ reactor_checks
+
+    explicit_match_body =
+      case explicit_checks do
+        [] -> false
+        checks -> Enum.reduce(checks, &{:or, [], [&1, &2]})
+      end
+
     reacts_to_body =
-      case invalidator_checks ++ reactor_checks do
+      case explicit_checks do
         [] ->
           if defines_query? and query_adapter do
             quote do
@@ -148,13 +162,31 @@ defmodule Upkeep.Source.Spec do
           end
       end
 
-    query_interest_keys =
+    explicit_surface =
+      case explicit_keys do
+        [] ->
+          quote do
+            Upkeep.InvalidationSurface.empty()
+          end
+
+        _keys ->
+          quote do
+            Upkeep.InvalidationSurface.manual(
+              [unquote_splicing(explicit_keys)],
+              {__MODULE__, :__upkeep_explicit_surface_matches__?, [params]}
+            )
+          end
+      end
+
+    query_surface =
       if defines_query? and query_adapter do
         quote do
-          unquote(query_adapter).query_interest_keys(__MODULE__, params)
+          unquote(query_adapter).query_surface(__MODULE__, params)
         end
       else
-        []
+        quote do
+          Upkeep.InvalidationSurface.empty()
+        end
       end
 
     sharing_partition_definition =
@@ -202,12 +234,17 @@ defmodule Upkeep.Source.Spec do
 
       def reacts_to?(event, params), do: unquote(reacts_to_body)
 
-      def __upkeep_interest_keys__(params) do
-        [unquote_splicing(interest_keys)] ++ unquote(query_interest_keys)
+      def __upkeep_explicit_surface_matches__?(params, event), do: unquote(explicit_match_body)
+
+      def __upkeep_surface__(params) do
+        Upkeep.InvalidationSurface.merge(
+          __upkeep_explicit_surface__(params),
+          unquote(query_surface)
+        )
       end
 
-      def __upkeep_explicit_interest_keys__(params) do
-        [unquote_splicing(interest_keys)]
+      def __upkeep_explicit_surface__(params) do
+        unquote(explicit_surface)
       end
     end
   end
@@ -226,7 +263,7 @@ defmodule Upkeep.Source.Spec do
   end
 
   defp normalize_notification(name, _caller) when is_atom(name), do: %{name: name, schema: :_}
-  defp normalize_notification(event, caller), do: %{legacy: Macro.expand(event, caller)}
+  defp normalize_notification(event, caller), do: %{event: Macro.expand(event, caller)}
 
   defp normalize_notification(schema, action, caller) when is_atom(action) do
     %{name: action, schema: Macro.expand(schema, caller)}

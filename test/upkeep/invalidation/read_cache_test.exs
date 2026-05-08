@@ -204,11 +204,7 @@ defmodule Upkeep.Invalidation.ReadCacheTest do
 
           try do
             Upkeep.SingleFlight.Registry.coalesce(ReadCache.coalescer_name(), bad_node, fn ->
-              if i == 1 do
-                raise "boom"
-              else
-                :unreachable
-              end
+              raise "boom"
             end)
 
             send(parent, {:done, i, :ok})
@@ -304,9 +300,6 @@ defmodule Upkeep.Invalidation.ReadCacheTest do
         )
       end
 
-      def reacts_to?(_event, _params), do: false
-      def __upkeep_interest_keys__(_params), do: []
-      def __upkeep_explicit_interest_keys__(_params), do: []
       def __upkeep_sharing_partition__(params), do: params
     end
 

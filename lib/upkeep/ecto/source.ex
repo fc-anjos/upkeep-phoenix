@@ -30,6 +30,7 @@ defmodule Upkeep.Ecto.Source do
       Ecto.SubQuery,
       Logger,
       Upkeep.Change,
+      Upkeep.InvalidationSurface,
       Upkeep.Invalidation,
       Upkeep.Source,
       {Mix, :compile}
@@ -87,10 +88,10 @@ defmodule Upkeep.Ecto.Source do
   end
 
   @doc false
-  def query_interest_keys(source, params) when is_atom(source) do
+  def query_surface(source, params) when is_atom(source) do
     source
     |> source_query(params)
-    |> Upkeep.Ecto.Source.QueryDeps.interest_keys()
+    |> Upkeep.Ecto.Source.QueryDeps.surface()
   end
 
   @doc false

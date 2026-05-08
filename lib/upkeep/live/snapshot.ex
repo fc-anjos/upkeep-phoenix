@@ -4,7 +4,6 @@ defmodule Upkeep.Live.Snapshot do
   alias Upkeep.DAG.{Graph, Store}
   alias Upkeep.Live.{Ids, Telemetry}
   alias Upkeep.Runtime.State
-  alias Upkeep.Source.Identity, as: Source
 
   def build(socket) do
     store = State.store(socket)
@@ -52,15 +51,18 @@ defmodule Upkeep.Live.Snapshot do
     socket
     |> State.watches()
     |> Enum.map(fn {source_id, watch} ->
+      instance = watch.instance
+
       %{
         source_id: source_id,
         node_id: Ids.source_node_id(source_id),
-        source: watch.source,
-        params: watch.params,
-        sharing_partition: Source.sharing_partition(watch.source, watch.params),
+        source: instance.source,
+        params: instance.params,
+        sharing_partition: instance.sharing_partition,
         component: watch.component,
         assign_names: watch.assign_names |> MapSet.to_list() |> Telemetry.sort_terms(),
-        interest_keys: Telemetry.sort_terms(watch.interest_keys),
+        surface_keys:
+          watch.surface |> Upkeep.InvalidationSurface.keys() |> Telemetry.sort_terms(),
         registered?: watch.registered?,
         tracked_deps: Map.get(watch, :tracked_deps, [])
       }

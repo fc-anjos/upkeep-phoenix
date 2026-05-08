@@ -36,9 +36,9 @@ defmodule Upkeep.Invalidation.ReadCache do
               [] ->
                 value = load.()
                 :ets.insert(@values, {node_id, value})
-                surface = Upkeep.ReactiveSurface.deps(List.wrap(deps))
+                surface = Upkeep.Source.dependency_surface(List.wrap(deps))
 
-                Enum.each(Upkeep.ReactiveSurface.index_keys(surface), fn key ->
+                Enum.each(Upkeep.InvalidationSurface.index_keys(surface), fn key ->
                   :ets.insert(@index, {key, {node_id, surface}})
                 end)
 
@@ -82,7 +82,7 @@ defmodule Upkeep.Invalidation.ReadCache do
   end
 
   def invalidate(event) when is_struct(event) do
-    candidate_keys = Upkeep.ReactiveSurface.candidate_keys(event)
+    candidate_keys = Upkeep.InvalidationSurface.candidate_keys(event)
 
     candidates =
       candidate_keys
@@ -91,7 +91,7 @@ defmodule Upkeep.Invalidation.ReadCache do
 
     evicted_count =
       Enum.reduce(candidates, 0, fn {_key, {node_id, surface}}, acc ->
-        if Upkeep.ReactiveSurface.matches?(surface, event) do
+        if Upkeep.InvalidationSurface.matches?(surface, event) do
           evict(node_id, surface)
           acc + 1
         else
@@ -119,7 +119,7 @@ defmodule Upkeep.Invalidation.ReadCache do
   defp evict(node_id, surface) do
     :ets.delete(@values, node_id)
 
-    Enum.each(Upkeep.ReactiveSurface.index_keys(surface), fn key ->
+    Enum.each(Upkeep.InvalidationSurface.index_keys(surface), fn key ->
       :ets.match_delete(@index, {key, {node_id, :_}})
     end)
 
