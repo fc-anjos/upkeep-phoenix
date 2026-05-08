@@ -5,11 +5,34 @@ config :upkeep,
   repo: Upkeep.TestSupport.Repo,
   graph_retry: [base_delay_ms: 0, max_delay_ms: 0]
 
-config :upkeep, Upkeep.TestSupport.Repo,
-  database: Path.expand("../upkeep_test.db", __DIR__),
-  telemetry_prefix: [:upkeep, :repo],
-  pool_size: 5,
-  pool: Ecto.Adapters.SQL.Sandbox
+{test_adapter, repo_config} =
+  case System.get_env("UPKEEP_TEST_ADAPTER") do
+    "postgres" ->
+      {Ecto.Adapters.Postgres,
+       [
+         database: System.get_env("UPKEEP_TEST_DATABASE", "upkeep_test"),
+         username: System.get_env("PGUSER", System.get_env("USER", "postgres")),
+         password: System.get_env("PGPASSWORD"),
+         hostname: System.get_env("PGHOST", "localhost"),
+         port: String.to_integer(System.get_env("PGPORT", "5432"))
+       ]}
+
+    _sqlite ->
+      {Ecto.Adapters.SQLite3,
+       [
+         database: Path.expand("../upkeep_test.db", __DIR__)
+       ]}
+  end
+
+config :upkeep, :test_adapter, test_adapter
+
+config :upkeep,
+       Upkeep.TestSupport.Repo,
+       Keyword.merge(repo_config,
+         telemetry_prefix: [:upkeep, :repo],
+         pool_size: 5,
+         pool: Ecto.Adapters.SQL.Sandbox
+       )
 
 config :logger, level: :warning
 

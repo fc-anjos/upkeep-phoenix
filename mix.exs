@@ -77,6 +77,7 @@ defmodule Upkeep.MixProject do
       {:phoenix_live_view, "~> 1.1.0"},
       {:lazy_html, ">= 0.1.0", only: :test},
       {:ecto_sqlite3, ">= 0.0.0", only: :test},
+      {:postgrex, ">= 0.0.0", only: :test},
       {:telemetry, "~> 1.0"},
       {:group, "~> 0.1"},
       {:boundary, "~> 0.10.4", runtime: false},

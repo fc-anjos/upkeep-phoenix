@@ -375,7 +375,7 @@ defmodule Upkeep.RepoCaptureTest do
 
   test "update_all capture refreshes sources when records enter and leave filters" do
     Repo.insert!(issue(id: 1, assignee_id: 10, title: "Moved"), upkeep: false)
-    Repo.insert!(issue(id: 2, assignee_id: 9, title: "Mine"), upkeep: false)
+    Repo.insert!(issue(id: 2, assignee_id: 9, title: "Mine", position: 2), upkeep: false)
 
     mine = watch_project(user_id: 9)
     theirs = watch_project(user_id: 10)
@@ -444,7 +444,7 @@ defmodule Upkeep.RepoCaptureTest do
 
   test "update_all capture supports schemaless table queries" do
     Repo.insert!(issue(id: 1, assignee_id: 10, title: "Moved"), upkeep: false)
-    Repo.insert!(issue(id: 2, assignee_id: 9, title: "Mine"), upkeep: false)
+    Repo.insert!(issue(id: 2, assignee_id: 9, title: "Mine", position: 2), upkeep: false)
 
     mine = watch_table_project(user_id: 9)
     theirs = watch_table_project(user_id: 10)
