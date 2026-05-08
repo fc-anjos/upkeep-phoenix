@@ -3,7 +3,15 @@ defmodule Upkeep.TestSupport do
 
   use Boundary,
     top_level?: true,
-    check: [in: false, out: false]
+    exports: [
+      BlockingProbe,
+      Config,
+      DagProbe,
+      LiveRefreshFixture,
+      LiveSocket,
+      TelemetryProbe
+    ],
+    check: [out: false]
 
   def attach_telemetry(events) do
     test_pid = self()

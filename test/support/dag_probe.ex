@@ -21,10 +21,6 @@ defmodule Upkeep.TestSupport.DagProbe do
     end
   end
 
-  def apply_value(socket, source_id, timeout \\ @default_timeout) do
-    Upkeep.Live.apply_dag_value(socket, source_id, receive_value(source_id, timeout))
-  end
-
   def assert_values(expected, timeout \\ @default_timeout) when is_list(expected) do
     do_assert_values(expected, [], timeout)
   end

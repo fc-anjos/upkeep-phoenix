@@ -2,7 +2,7 @@ defmodule Upkeep.Runtime.PushTest do
   use ExUnit.Case, async: true
 
   import Upkeep.TestSupport, only: [attach_telemetry: 1]
-  alias Upkeep.TestSupport.LiveSocket
+  alias Upkeep.TestSupport.{LiveSocket, TelemetryProbe}
 
   defmodule ProjectIssues do
   end
@@ -28,18 +28,19 @@ defmodule Upkeep.Runtime.PushTest do
                {stale_id, :value}
              ])
 
-    assert_receive {:telemetry, [:upkeep, :live, :dag_values, :apply], _measurements,
-                    %{
-                      pair_count: 3,
-                      changed_node_count: 0,
-                      effect_count: 0,
-                      ignored_count: 3,
-                      ignored_reason_counts: %{
-                        unwatched_source: 1,
-                        unknown_shared_derived: 1,
-                        stale_push: 1
-                      }
-                    }}
+    TelemetryProbe.assert_event([:upkeep, :live, :dag_values, :apply],
+      metadata: %{
+        pair_count: 3,
+        changed_node_count: 0,
+        effect_count: 0,
+        ignored_count: 3,
+        ignored_reason_counts: %{
+          unwatched_source: 1,
+          unknown_shared_derived: 1,
+          stale_push: 1
+        }
+      }
+    )
 
     assert_ignored(:unwatched_source, source_id)
     assert_ignored(:unknown_shared_derived, shared_id)
@@ -58,7 +59,10 @@ defmodule Upkeep.Runtime.PushTest do
   end
 
   defp assert_ignored(reason, node_id) do
-    assert_receive {:telemetry, [:upkeep, :live, :dag_values, :ignored], %{count: 1},
-                    %{reason: ^reason, node_id: ^node_id, node_ids: [^node_id]}}
+    TelemetryProbe.assert_counted([:upkeep, :live, :dag_values, :ignored],
+      reason: reason,
+      node_id: node_id,
+      node_ids: [node_id]
+    )
   end
 end

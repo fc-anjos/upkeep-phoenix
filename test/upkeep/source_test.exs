@@ -317,10 +317,9 @@ defmodule Upkeep.SourceTest do
     assert :ok = Upkeep.notify(change)
     :ok = Upkeep.Test.drain()
 
-    source_id = {BoardColumns, %{project_id: 123}}
-    assert DagProbe.receive_value(source_id) == [:todo, :doing]
+    assert_board_columns_refresh(123, [:todo, :doing])
 
-    refreshed = Live.apply_dag_value(socket, source_id, [:todo, :doing])
+    refreshed = Live.apply_dag_value(socket, board_columns_source_id(123), [:todo, :doing])
     assert refreshed.assigns.columns == [:todo, :doing]
   end
 
@@ -338,7 +337,7 @@ defmodule Upkeep.SourceTest do
     assert :ok = Upkeep.notify(change)
     :ok = Upkeep.Test.drain()
 
-    DagProbe.refute_any()
+    refute_source_refresh()
   end
 
   test "coordinator dispatches field-indexed watchers broadly when update old state is missing" do
@@ -351,7 +350,7 @@ defmodule Upkeep.SourceTest do
     assert :ok = Upkeep.notify(change)
     :ok = Upkeep.Test.drain()
 
-    assert DagProbe.receive_value({BoardColumns, %{project_id: 123}}) == [:todo]
+    assert_board_columns_refresh(123, [:todo])
   end
 
   test "coordinator sends one event when a process watches overlapping source keys" do
@@ -371,13 +370,25 @@ defmodule Upkeep.SourceTest do
 
     assert :ok = Upkeep.notify(change)
 
-    DagProbe.assert_values([
-      {{BoardColumns, %{project_id: project_id}}, [:todo]},
-      {{MyIssues, %{project_id: project_id, user_id: user_id}}, [:mine]}
-    ])
+    assert_board_columns_refresh(project_id, [:todo])
+    assert_my_issues_refresh(project_id, user_id, [:mine])
+    refute_source_refresh()
+  end
 
+  defp assert_board_columns_refresh(project_id, columns) do
+    assert DagProbe.receive_value(board_columns_source_id(project_id)) == columns
+  end
+
+  defp assert_my_issues_refresh(project_id, user_id, issues) do
+    assert DagProbe.receive_value({MyIssues, %{project_id: project_id, user_id: user_id}}) ==
+             issues
+  end
+
+  defp refute_source_refresh do
     DagProbe.refute_any()
   end
+
+  defp board_columns_source_id(project_id), do: {BoardColumns, %{project_id: project_id}}
 
   defp surface_keys(source, params) do
     source

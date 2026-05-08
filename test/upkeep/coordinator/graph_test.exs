@@ -8,7 +8,7 @@ defmodule Upkeep.Coordinator.GraphTest do
   alias Upkeep.Coordinator.Graph.Notifier
   alias Upkeep.Invalidation.Bus
   alias Upkeep.InvalidationSurface
-  alias Upkeep.TestSupport.DagProbe
+  alias Upkeep.TestSupport.{DagProbe, TelemetryProbe}
 
   defmodule Ev do
     defstruct [:id, :tenant_id]
@@ -112,35 +112,37 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       :ok = Graph.drain()
 
-      assert_receive {:telemetry, [:upkeep, :graph, :invalidation],
-                      %{
-                        count: 1,
-                        candidate_key_count: 1,
-                        candidate_count: 1,
-                        matched_count: 1
-                      }, %{kind: :event, event_module: Ev}}
+      TelemetryProbe.assert_event([:upkeep, :graph, :invalidation],
+        measurements: %{
+          count: 1,
+          candidate_key_count: 1,
+          candidate_count: 1,
+          matched_count: 1
+        },
+        metadata: %{kind: :event, event_module: Ev}
+      )
 
-      assert_receive {:telemetry, [:upkeep, :graph, :notifier, :flush],
-                      %{count: 1, duration: flush_duration},
-                      %{
-                        message_count: 12,
-                        event_count: 1,
-                        source_node_count: 1,
-                        shard_count: 1
-                      }}
+      {%{duration: flush_duration}, _metadata} =
+        TelemetryProbe.assert_counted([:upkeep, :graph, :notifier, :flush],
+          message_count: 12,
+          event_count: 1,
+          source_node_count: 1,
+          shard_count: 1
+        )
 
       assert is_integer(flush_duration)
 
       assert DagProbe.receive_value(node_id) == :loaded_value
 
-      assert_receive {:telemetry, [:upkeep, :graph, :dispatch, :start], %{system_time: _},
-                      %{shard: shard, pair_count: pair_count}}
+      {%{system_time: system_time}, %{shard: shard, pair_count: pair_count}} =
+        TelemetryProbe.assert_event([:upkeep, :graph, :dispatch, :start])
 
+      assert is_integer(system_time)
       assert is_integer(shard)
       assert pair_count >= 1
 
-      assert_receive {:telemetry, [:upkeep, :graph, :dispatch, :stop], %{duration: duration},
-                      %{pid_count: pid_count}}
+      {%{duration: duration}, %{pid_count: pid_count}} =
+        TelemetryProbe.assert_event([:upkeep, :graph, :dispatch, :stop])
 
       assert is_integer(duration)
       assert pid_count >= 1
@@ -172,13 +174,12 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       :ok = Graph.drain()
 
-      assert_receive {:telemetry, [:upkeep, :graph, :notifier, :flush], %{count: 1},
-                      %{
-                        message_count: 2,
-                        event_count: 2,
-                        source_node_count: 1,
-                        shard_count: 1
-                      }}
+      TelemetryProbe.assert_counted([:upkeep, :graph, :notifier, :flush],
+        message_count: 2,
+        event_count: 2,
+        source_node_count: 1,
+        shard_count: 1
+      )
 
       assert DagProbe.receive_value(node_id) == :loaded
       assert :counters.get(counter, 1) == 1
@@ -224,13 +225,12 @@ defmodule Upkeep.Coordinator.GraphTest do
       send(Process.whereis(Notifier), {:upkeep_invalidation, :remote@nohost, event})
       :ok = Graph.drain()
 
-      assert_receive {:telemetry, [:upkeep, :graph, :notifier, :flush], %{count: 1},
-                      %{
-                        message_count: 1,
-                        event_count: 1,
-                        source_node_count: 1,
-                        shard_count: 1
-                      }}
+      TelemetryProbe.assert_counted([:upkeep, :graph, :notifier, :flush],
+        message_count: 1,
+        event_count: 1,
+        source_node_count: 1,
+        shard_count: 1
+      )
 
       assert DagProbe.receive_value(node_id) == :loaded
       assert :counters.get(counter, 1) == 1
@@ -784,9 +784,8 @@ defmodule Upkeep.Coordinator.GraphTest do
   end
 
   defp receive_source_load_failure do
-    assert_receive {:telemetry, [:upkeep, :graph, :source_load, :exception], %{count: 1},
-                    metadata},
-                   1_000
+    {_measurements, metadata} =
+      TelemetryProbe.assert_counted([:upkeep, :graph, :source_load, :exception])
 
     metadata
   end

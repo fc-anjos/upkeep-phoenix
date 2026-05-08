@@ -59,10 +59,7 @@ defmodule Upkeep.MutationTest do
     assert {:ok, :moved} = result
     drain_graph()
 
-    source_id = source_id(777)
-    assert DagProbe.receive_value(source_id) == [:after]
-
-    refreshed = Live.apply_dag_value(socket, source_id, [:after])
+    refreshed = assert_project_refreshed(socket, 777, [:after])
     assert refreshed.assigns.issues == [:after]
   end
 
@@ -77,7 +74,7 @@ defmodule Upkeep.MutationTest do
 
     assert {:error, :cancelled} = result
     drain_graph()
-    DagProbe.refute_value(source_id(778), 0)
+    refute_project_refresh(778)
   end
 
   test "mutate discards notifications when the mutation raises" do
@@ -91,7 +88,7 @@ defmodule Upkeep.MutationTest do
     end
 
     drain_graph()
-    DagProbe.refute_value(source_id(779), 0)
+    refute_project_refresh(779)
   end
 
   test "mutate preserves notification order after commit" do
@@ -107,8 +104,8 @@ defmodule Upkeep.MutationTest do
     assert {:ok, :ok} = result
     drain_graph()
 
-    assert DagProbe.receive_value(source_id(780)) == [:before]
-    DagProbe.refute_value(source_id(780), 0)
+    assert_project_refresh(780, [:before])
+    refute_project_refresh(780)
   end
 
   test "nested mutate joins the outer journal and flushes once" do
@@ -122,14 +119,14 @@ defmodule Upkeep.MutationTest do
                    :inner
                  end)
 
-        DagProbe.refute_value(source_id(777), 0)
+        refute_project_refresh(777)
         :outer
       end)
 
     assert {:ok, :outer} = result
     drain_graph()
 
-    assert DagProbe.receive_value(source_id(777)) == [:before]
+    assert_project_refresh(777, [:before])
   end
 
   test "Ecto.Multi flushes notifications after commit" do
@@ -145,7 +142,7 @@ defmodule Upkeep.MutationTest do
     assert {:ok, %{move: :moved}} = Upkeep.mutate(multi)
     drain_graph()
 
-    assert DagProbe.receive_value(source_id(777)) == [:before]
+    assert_project_refresh(777, [:before])
   end
 
   test "Ecto.Multi discards notifications on rollback" do
@@ -161,7 +158,7 @@ defmodule Upkeep.MutationTest do
     assert {:error, :move, :cancelled, %{}} = Upkeep.mutate(multi)
     drain_graph()
 
-    DagProbe.refute_value(source_id(778), 0)
+    refute_project_refresh(778)
   end
 
   test "Ecto.Multi preserves notification order after commit" do
@@ -181,8 +178,8 @@ defmodule Upkeep.MutationTest do
     assert {:ok, %{first: :first, second: :second}} = Upkeep.mutate(multi)
     drain_graph()
 
-    assert DagProbe.receive_value(source_id(779)) == [:before]
-    DagProbe.refute_value(source_id(779), 0)
+    assert_project_refresh(779, [:before])
+    refute_project_refresh(779)
   end
 
   test "nested Ecto.Multi rollback rolls back the outer mutation and discards all events" do
@@ -206,7 +203,7 @@ defmodule Upkeep.MutationTest do
     assert {:error, :rollback} = result
     drain_graph()
 
-    DagProbe.refute_value(source_id(780), 0)
+    refute_project_refresh(780)
   end
 
   test "updates without old state emit a broad-invalidation diagnostic" do
@@ -233,6 +230,19 @@ defmodule Upkeep.MutationTest do
   defp watch_project(project_id) do
     LiveSocket.socket()
     |> Live.watch(:issues, ProjectIssues, project_id: project_id)
+  end
+
+  defp assert_project_refreshed(socket, project_id, issues) do
+    assert_project_refresh(project_id, issues)
+    Live.apply_dag_value(socket, source_id(project_id), issues)
+  end
+
+  defp assert_project_refresh(project_id, issues) do
+    assert DagProbe.receive_value(source_id(project_id)) == issues
+  end
+
+  defp refute_project_refresh(project_id) do
+    DagProbe.refute_value(source_id(project_id), 0)
   end
 
   defp source_id(project_id), do: {ProjectIssues, %{project_id: project_id}}

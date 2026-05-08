@@ -101,9 +101,7 @@ defmodule Upkeep.ObservabilityTest do
 
     :ok = Upkeep.Test.drain()
 
-    pairs = DagProbe.assert_values([{{ProjectIssues, %{project_id: project_id}}, [:after]}])
-
-    socket = Live.apply_dag_values(socket, pairs)
+    socket = assert_project_graph_refresh(socket, project_id, [:after])
     assert socket.assigns.issues == [:after]
 
     events = recent_events_after_observability_flush()
@@ -188,6 +186,11 @@ defmodule Upkeep.ObservabilityTest do
   defp recent_events_after_observability_flush do
     _ = :sys.get_state(Upkeep.Observability)
     Upkeep.recent_events()
+  end
+
+  defp assert_project_graph_refresh(socket, project_id, issues) do
+    pairs = DagProbe.assert_values([{{ProjectIssues, %{project_id: project_id}}, issues}])
+    Live.apply_dag_values(socket, pairs)
   end
 
   def issue_count(%{issues: issues}), do: length(issues)

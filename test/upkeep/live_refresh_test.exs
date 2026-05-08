@@ -13,7 +13,8 @@ defmodule Upkeep.LiveRefreshTest do
       socket: 0
     ]
 
-  alias Upkeep.TestSupport.{Config, DagProbe}
+  alias Upkeep.TestSupport.{BlockingProbe, Config, DagProbe, TelemetryProbe}
+  alias Upkeep.TestSupport.LiveRefreshFixture, as: Fixture
 
   defmodule Issue do
     defstruct [:project_id, :issue_id]
@@ -25,10 +26,10 @@ defmodule Upkeep.LiveRefreshTest do
 
   defmodule ProjectIssues do
     use Upkeep.Source
+    alias Upkeep.TestSupport.LiveRefreshFixture, as: Fixture
 
     def load(s) do
-      Upkeep.LiveRefreshTest.bump_load({:loads, :issues, s.project_id})
-      Upkeep.LiveRefreshTest.table_value({:issues, s.project_id})
+      Fixture.load_value(:issues, s.project_id)
     end
 
     invalidated_by(Issue, :updated, on: :project_id)
@@ -36,10 +37,10 @@ defmodule Upkeep.LiveRefreshTest do
 
   defmodule ProjectActivity do
     use Upkeep.Source
+    alias Upkeep.TestSupport.LiveRefreshFixture, as: Fixture
 
     def load(s) do
-      Upkeep.LiveRefreshTest.bump_load({:loads, :activity, s.project_id})
-      Upkeep.LiveRefreshTest.table_value({:activity, s.project_id})
+      Fixture.load_value(:activity, s.project_id)
     end
 
     invalidated_by(Issue, :updated, on: :project_id)
@@ -48,11 +49,10 @@ defmodule Upkeep.LiveRefreshTest do
 
   defmodule FailingIssues do
     use Upkeep.Source
+    alias Upkeep.TestSupport.LiveRefreshFixture, as: Fixture
 
     def load(s) do
-      Upkeep.LiveRefreshTest.bump_load({:loads, :failing, s.project_id})
-
-      case Upkeep.LiveRefreshTest.table_value({:failing, s.project_id}) do
+      case Fixture.load_value(:failing, s.project_id) do
         :raise -> raise "source failed"
         value -> value
       end
@@ -63,10 +63,10 @@ defmodule Upkeep.LiveRefreshTest do
 
   defmodule IssueComments do
     use Upkeep.Source
+    alias Upkeep.TestSupport.LiveRefreshFixture, as: Fixture
 
     def load(s) do
-      Upkeep.LiveRefreshTest.bump_load({:loads, :comments, s.issue_id})
-      Upkeep.LiveRefreshTest.table_value({:comments, s.issue_id})
+      Fixture.load_value(:comments, s.issue_id)
     end
 
     invalidated_by(Comment, :inserted, on: :issue_id)
@@ -74,10 +74,10 @@ defmodule Upkeep.LiveRefreshTest do
 
   defmodule ScopedIssues do
     use Upkeep.Source
+    alias Upkeep.TestSupport.LiveRefreshFixture, as: Fixture
 
     def load(s) do
-      Upkeep.LiveRefreshTest.bump_load({:loads, :scoped_issues, s.user_id})
-      Upkeep.LiveRefreshTest.table_value({:scoped_issues, s.user_id})
+      Fixture.load_value(:scoped_issues, s.user_id)
     end
 
     invalidated_by(Issue, :updated, on: :issue_id, as: :user_id)
@@ -85,10 +85,10 @@ defmodule Upkeep.LiveRefreshTest do
 
   defmodule ScopedActivity do
     use Upkeep.Source
+    alias Upkeep.TestSupport.LiveRefreshFixture, as: Fixture
 
     def load(s) do
-      Upkeep.LiveRefreshTest.bump_load({:loads, :scoped_activity, s.user_id})
-      Upkeep.LiveRefreshTest.table_value({:scoped_activity, s.user_id})
+      Fixture.load_value(:scoped_activity, s.user_id)
     end
 
     invalidated_by(Comment, :inserted, on: :issue_id, as: :user_id)
@@ -96,18 +96,12 @@ defmodule Upkeep.LiveRefreshTest do
 
   defmodule BlockingScopedIssues do
     use Upkeep.Source
+    alias Upkeep.TestSupport.{BlockingProbe, LiveRefreshFixture}
 
     def load(s) do
-      send(s.test_pid, {:blocking_load_started, self()})
+      BlockingProbe.block(s.test_pid, :blocking_load_started, "blocking source was not released")
 
-      receive do
-        :continue -> :ok
-      after
-        1_000 -> raise "blocking source was not released"
-      end
-
-      Upkeep.LiveRefreshTest.bump_load({:loads, :scoped_issues, s.user_id})
-      Upkeep.LiveRefreshTest.table_value({:scoped_issues, s.user_id})
+      LiveRefreshFixture.load_value(:scoped_issues, s.user_id)
     end
 
     invalidated_by(Issue, :updated, on: :issue_id, as: :user_id)
@@ -116,48 +110,19 @@ defmodule Upkeep.LiveRefreshTest do
   setup do
     Upkeep.Test.reset_graph()
 
-    if :ets.info(__MODULE__) != :undefined do
-      :ets.delete(__MODULE__)
-    end
-
-    table = :ets.new(__MODULE__, [:set, :public, :named_table])
-    :ets.insert(table, {{:issues, 1}, [:issue_a]})
-    :ets.insert(table, {{:activity, 1}, [:activity_a]})
-    :ets.insert(table, {{:failing, 1}, [:stable]})
-    :ets.insert(table, {{:comments, 1}, [:comment_a]})
-    :ets.insert(table, {{:comments, 2}, [:comment_b]})
-    :ets.insert(table, {{:scoped_issues, 1}, [:user_1_issue]})
-    :ets.insert(table, {{:scoped_issues, 2}, [:user_2_issue]})
-    :ets.insert(table, {{:loads, :issues, 1}, 0})
-    :ets.insert(table, {{:loads, :activity, 1}, 0})
-    :ets.insert(table, {{:loads, :failing, 1}, 0})
-    :ets.insert(table, {{:loads, :comments, 1}, 0})
-    :ets.insert(table, {{:loads, :comments, 2}, 0})
-    :ets.insert(table, {{:loads, :scoped_issues, 1}, 0})
-    :ets.insert(table, {{:loads, :scoped_issues, 2}, 0})
-    :ets.insert(table, {{:loads, :scoped_activity, 1}, 0})
-    :ets.insert(table, {{:loads, :scoped_activity, 2}, 0})
-    :ets.insert(table, {{:loads, :visible, 1}, 0})
-    :ets.insert(table, {{:loads, :issue_count, 1}, 0})
-    :ets.insert(table, {{:loads, :issue_label, 1}, 0})
-
-    on_exit(fn ->
-      if :ets.info(__MODULE__) != :undefined do
-        :ets.delete(__MODULE__)
-      end
-    end)
-
-    %{table: table}
+    Fixture.setup!()
+    on_exit(&Fixture.reset!/0)
+    :ok
   end
 
-  test "many changes for one source reload once per flush", %{table: table} do
+  test "many changes for one source reload once per flush" do
     socket =
       socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
 
-    assert load_count(:issues) == 1
+    assert Fixture.load_count(:issues) == 1
 
-    :ets.insert(table, {{:issues, 1}, [:issue_b]})
+    Fixture.put_value(:issues, 1, [:issue_b])
 
     socket =
       socket
@@ -167,20 +132,20 @@ defmodule Upkeep.LiveRefreshTest do
       |> Live.flush_refreshes()
 
     assert socket.assigns.issues == [:issue_b]
-    assert load_count(:issues) == 2
+    assert Fixture.load_count(:issues) == 2
   end
 
-  test "different affected sources each reload once", %{table: table} do
+  test "different affected sources each reload once" do
     socket =
       socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
       |> Live.watch(:activity, ProjectActivity, project_id: 1)
 
-    assert load_count(:issues) == 1
-    assert load_count(:activity) == 1
+    assert Fixture.load_count(:issues) == 1
+    assert Fixture.load_count(:activity) == 1
 
-    :ets.insert(table, {{:issues, 1}, [:issue_b]})
-    :ets.insert(table, {{:activity, 1}, [:activity_b]})
+    Fixture.put_value(:issues, 1, [:issue_b])
+    Fixture.put_value(:activity, 1, [:activity_b])
 
     socket =
       socket
@@ -190,18 +155,18 @@ defmodule Upkeep.LiveRefreshTest do
 
     assert socket.assigns.issues == [:issue_b]
     assert socket.assigns.activity == [:activity_b]
-    assert load_count(:issues) == 2
-    assert load_count(:activity) == 2
+    assert Fixture.load_count(:issues) == 2
+    assert Fixture.load_count(:activity) == 2
   end
 
-  test "failed source load raises", %{table: table} do
+  test "failed source load raises" do
     socket =
       socket()
       |> Live.watch(:issues, FailingIssues, project_id: 1)
 
-    assert load_count(:failing) == 1
+    assert Fixture.load_count(:failing) == 1
 
-    :ets.insert(table, {{:failing, 1}, :raise})
+    Fixture.put_value(:failing, 1, :raise)
 
     assert_raise RuntimeError, "source failed", fn ->
       socket
@@ -209,14 +174,14 @@ defmodule Upkeep.LiveRefreshTest do
       |> Live.flush_refreshes()
     end
 
-    assert load_count(:failing) == 2
+    assert Fixture.load_count(:failing) == 2
   end
 
-  test "queues are per socket process state", %{table: table} do
+  test "queues are per socket process state" do
     socket_a = Live.watch(socket(), :issues, ProjectIssues, project_id: 1)
     socket_b = Live.watch(socket(), :issues, ProjectIssues, project_id: 1)
 
-    :ets.insert(table, {{:issues, 1}, [:issue_b]})
+    Fixture.put_value(:issues, 1, [:issue_b])
 
     socket_a =
       socket_a
@@ -227,15 +192,12 @@ defmodule Upkeep.LiveRefreshTest do
     assert socket_b.assigns.issues == [:issue_a]
   end
 
-  test "concurrent connected watches share the in-flight initial load for the same source identity",
-       %{
-         table: table
-       } do
+  test "concurrent connected watches share the in-flight initial load for the same source identity" do
     attach_telemetry([[:upkeep, :source, :initial_load, :coalesced]])
 
     test_pid = self()
     user_id = System.unique_integer([:positive])
-    put_scoped_user(table, user_id, [:user_issue])
+    Fixture.put_scoped_user(user_id, [:user_issue])
     source_id = {BlockingScopedIssues, %{test_pid: test_pid, user_id: user_id}}
 
     task_a =
@@ -244,7 +206,7 @@ defmodule Upkeep.LiveRefreshTest do
         |> Live.watch(:issues, BlockingScopedIssues, user_id: user_id, test_pid: test_pid)
       end)
 
-    assert_receive {:blocking_load_started, loader_pid}
+    loader_pid = BlockingProbe.await(:blocking_load_started)
 
     task_b =
       Task.async(fn ->
@@ -252,26 +214,25 @@ defmodule Upkeep.LiveRefreshTest do
         |> Live.watch(:issues, BlockingScopedIssues, user_id: user_id, test_pid: test_pid)
       end)
 
-    assert_receive {:telemetry, [:upkeep, :source, :initial_load, :coalesced], %{count: 1},
-                    %{node_id: ^source_id}}
+    TelemetryProbe.assert_counted([:upkeep, :source, :initial_load, :coalesced],
+      node_id: source_id
+    )
 
-    send(loader_pid, :continue)
+    BlockingProbe.continue(loader_pid)
 
     socket_a = Task.await(task_a)
     socket_b = Task.await(task_b)
 
     assert socket_a.assigns.issues == [:user_issue]
     assert socket_b.assigns.issues == [:user_issue]
-    assert load_count(:scoped_issues, user_id) == 1
+    assert Fixture.load_count(:scoped_issues, user_id) == 1
   end
 
-  test "connected watches do not share initial values across different source params", %{
-    table: table
-  } do
+  test "connected watches do not share initial values across different source params" do
     user_a = System.unique_integer([:positive])
     user_b = System.unique_integer([:positive])
-    put_scoped_user(table, user_a, [:user_a_issue])
-    put_scoped_user(table, user_b, [:user_b_issue])
+    Fixture.put_scoped_user(user_a, [:user_a_issue])
+    Fixture.put_scoped_user(user_b, [:user_b_issue])
 
     socket_a =
       connected_socket()
@@ -283,11 +244,11 @@ defmodule Upkeep.LiveRefreshTest do
 
     assert socket_a.assigns.issues == [:user_a_issue]
     assert socket_b.assigns.issues == [:user_b_issue]
-    assert load_count(:scoped_issues, user_a) == 1
-    assert load_count(:scoped_issues, user_b) == 1
+    assert Fixture.load_count(:scoped_issues, user_a) == 1
+    assert Fixture.load_count(:scoped_issues, user_b) == 1
   end
 
-  test "connected source sharing emits initial-load miss and coalesced telemetry", %{table: table} do
+  test "connected source sharing emits initial-load miss and coalesced telemetry" do
     attach_telemetry([
       [:upkeep, :source, :initial_load, :miss],
       [:upkeep, :source, :initial_load, :coalesced]
@@ -295,7 +256,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     test_pid = self()
     user_id = System.unique_integer([:positive])
-    put_scoped_user(table, user_id, [:user_issue])
+    Fixture.put_scoped_user(user_id, [:user_issue])
     source_id = {BlockingScopedIssues, %{test_pid: test_pid, user_id: user_id}}
 
     task_a =
@@ -304,7 +265,7 @@ defmodule Upkeep.LiveRefreshTest do
         |> Live.watch(:issues, BlockingScopedIssues, user_id: user_id, test_pid: test_pid)
       end)
 
-    assert_receive {:blocking_load_started, loader_pid}
+    loader_pid = BlockingProbe.await(:blocking_load_started)
 
     task_b =
       Task.async(fn ->
@@ -312,27 +273,24 @@ defmodule Upkeep.LiveRefreshTest do
         |> Live.watch(:issues, BlockingScopedIssues, user_id: user_id, test_pid: test_pid)
       end)
 
-    assert_receive {:telemetry, [:upkeep, :source, :initial_load, :coalesced], %{count: 1},
-                    %{node_id: ^source_id}}
+    TelemetryProbe.assert_counted([:upkeep, :source, :initial_load, :coalesced],
+      node_id: source_id
+    )
 
-    send(loader_pid, :continue)
+    BlockingProbe.continue(loader_pid)
 
     Task.await(task_a)
     Task.await(task_b)
 
-    assert_receive {:telemetry, [:upkeep, :source, :initial_load, :miss], %{count: 1},
-                    %{
-                      node_id: {:source, ^source_id},
-                      source: BlockingScopedIssues,
-                      params: %{test_pid: _, user_id: ^user_id},
-                      sharing_partition: %{user_id: ^user_id}
-                    }}
+    TelemetryProbe.assert_counted([:upkeep, :source, :initial_load, :miss],
+      node_id: {:source, source_id},
+      source: BlockingScopedIssues,
+      params: %{user_id: user_id},
+      sharing_partition: %{user_id: user_id}
+    )
   end
 
-  test "concurrent connected derives share the in-flight initial compute for the same source identity",
-       %{
-         table: table
-       } do
+  test "concurrent connected derives share the in-flight initial compute for the same source identity" do
     attach_telemetry([
       [:upkeep, :graph, :derived_initial, :miss],
       [:upkeep, :graph, :derived_initial, :hit]
@@ -340,9 +298,9 @@ defmodule Upkeep.LiveRefreshTest do
 
     test_pid = self()
     user_id = System.unique_integer([:positive])
-    put_scoped_user(table, user_id, [{user_id, :user_issue}])
-    :ets.insert(table, {{:loads, :shared_issue_count, user_id}, 0})
-    :ets.insert(table, {{:derive_test_pid, user_id}, test_pid})
+    Fixture.put_scoped_user(user_id, [{user_id, :user_issue}])
+    Fixture.put_load(:shared_issue_count, user_id)
+    Fixture.put_derive_test_pid(user_id, test_pid)
     source_id = {ScopedIssues, %{user_id: user_id}}
 
     graph_node_id =
@@ -356,7 +314,7 @@ defmodule Upkeep.LiveRefreshTest do
         |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
       end)
 
-    assert_receive {:derived_compute_started, loader_pid, ^user_id}
+    loader_pid = BlockingProbe.await_with(:derived_compute_started, user_id)
 
     task_b =
       Task.async(fn ->
@@ -365,45 +323,41 @@ defmodule Upkeep.LiveRefreshTest do
         |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
       end)
 
-    assert_receive {:telemetry, [:upkeep, :graph, :derived_initial, :hit], %{count: 1},
-                    %{
-                      node_id: ^graph_node_id,
-                      assign_name: :issue_count,
-                      view: UpkeepWeb.KanbanLive,
-                      dep_node_ids: [^source_id],
-                      sharing_partition: %{user_id: ^user_id},
-                      dep_partitions: [{^source_id, %{user_id: ^user_id}}],
-                      fun: {__MODULE__, :shared_issue_count, 1}
-                    }}
+    TelemetryProbe.assert_derived_initial(:hit, :issue_count,
+      node_id: graph_node_id,
+      view: UpkeepWeb.KanbanLive,
+      dep_node_ids: [source_id],
+      sharing_partition: %{user_id: user_id},
+      dep_partitions: [{source_id, %{user_id: user_id}}],
+      fun: {__MODULE__, :shared_issue_count, 1}
+    )
 
-    send(loader_pid, :continue)
+    BlockingProbe.continue(loader_pid)
 
     socket_a = Task.await(task_a)
     socket_b = Task.await(task_b)
 
     assert socket_a.assigns.issue_count == 1
     assert socket_b.assigns.issue_count == 1
-    assert load_count(:shared_issue_count, user_id) == 1
+    assert Fixture.load_count(:shared_issue_count, user_id) == 1
 
-    assert_receive {:telemetry, [:upkeep, :graph, :derived_initial, :miss], %{count: 1},
-                    %{
-                      node_id: ^graph_node_id,
-                      assign_name: :issue_count,
-                      view: UpkeepWeb.KanbanLive,
-                      dep_node_ids: [^source_id],
-                      sharing_partition: %{user_id: ^user_id},
-                      dep_partitions: [{^source_id, %{user_id: ^user_id}}],
-                      fun: {__MODULE__, :shared_issue_count, 1}
-                    }}
+    TelemetryProbe.assert_derived_initial(:miss, :issue_count,
+      node_id: graph_node_id,
+      view: UpkeepWeb.KanbanLive,
+      dep_node_ids: [source_id],
+      sharing_partition: %{user_id: user_id},
+      dep_partitions: [{source_id, %{user_id: user_id}}],
+      fun: {__MODULE__, :shared_issue_count, 1}
+    )
   end
 
-  test "connected derived sharing does not leak values across source params", %{table: table} do
+  test "connected derived sharing does not leak values across source params" do
     user_a = System.unique_integer([:positive])
     user_b = System.unique_integer([:positive])
-    put_scoped_user(table, user_a, [{user_a, :user_a_issue}])
-    put_scoped_user(table, user_b, [{user_b, :user_b_issue}])
-    :ets.insert(table, {{:loads, :shared_issue_names, user_a}, 0})
-    :ets.insert(table, {{:loads, :shared_issue_names, user_b}, 0})
+    Fixture.put_scoped_user(user_a, [{user_a, :user_a_issue}])
+    Fixture.put_scoped_user(user_b, [{user_b, :user_b_issue}])
+    Fixture.put_load(:shared_issue_names, user_a)
+    Fixture.put_load(:shared_issue_names, user_b)
 
     socket_a =
       connected_socket()
@@ -417,16 +371,16 @@ defmodule Upkeep.LiveRefreshTest do
 
     assert socket_a.assigns.issue_names == [:user_a_issue]
     assert socket_b.assigns.issue_names == [:user_b_issue]
-    assert load_count(:shared_issue_names, user_a) == 1
-    assert load_count(:shared_issue_names, user_b) == 1
+    assert Fixture.load_count(:shared_issue_names, user_a) == 1
+    assert Fixture.load_count(:shared_issue_names, user_b) == 1
   end
 
-  test "derive sharing emits diagnostics for shared and local decisions", %{table: table} do
+  test "derive sharing emits diagnostics for shared and local decisions" do
     attach_telemetry([[:upkeep, :derive, :sharing]])
 
     user_id = System.unique_integer([:positive])
-    put_scoped_user(table, user_id, [{user_id, :user_issue}])
-    :ets.insert(table, {{:loads, :shared_issue_count, user_id}, 0})
+    Fixture.put_scoped_user(user_id, [{user_id, :user_issue}])
+    Fixture.put_load(:shared_issue_count, user_id)
 
     shared_source_id = {ScopedIssues, %{user_id: user_id}}
 
@@ -438,29 +392,20 @@ defmodule Upkeep.LiveRefreshTest do
     |> Live.watch(:issues, ScopedIssues, user_id: user_id)
     |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
 
-    assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
-                    %{
-                      assign_name: :issue_count,
-                      result: :shared,
-                      reason: :shareable,
-                      graph_node_id: ^shared_graph_id,
-                      dep_node_ids: [{:source, ^shared_source_id}],
-                      graph_dep_node_ids: [^shared_source_id],
-                      sharing_partition: %{user_id: ^user_id},
-                      dep_partitions: [{^shared_source_id, %{user_id: ^user_id}}],
-                      fun: {__MODULE__, :shared_issue_count, 1}
-                    }}
+    TelemetryProbe.assert_derive_sharing(:issue_count, :shared, :shareable,
+      graph_node_id: shared_graph_id,
+      dep_node_ids: [{:source, shared_source_id}],
+      graph_dep_node_ids: [shared_source_id],
+      sharing_partition: %{user_id: user_id},
+      dep_partitions: [{shared_source_id, %{user_id: user_id}}],
+      fun: {__MODULE__, :shared_issue_count, 1}
+    )
 
     disconnected_socket()
     |> Live.watch(:issues, ScopedIssues, user_id: user_id)
     |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
 
-    assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
-                    %{
-                      assign_name: :issue_count,
-                      result: :local,
-                      reason: :disconnected_socket
-                    }}
+    TelemetryProbe.assert_derive_sharing(:issue_count, :local, :disconnected_socket)
 
     issue_count_fn = fn %{issues: issues} -> length(issues) + user_id end
 
@@ -468,24 +413,14 @@ defmodule Upkeep.LiveRefreshTest do
     |> Live.watch(:issues, ScopedIssues, user_id: user_id)
     |> Live.derive(:issue_count, [:issues], issue_count_fn)
 
-    assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
-                    %{
-                      assign_name: :issue_count,
-                      result: :local,
-                      reason: :captured_fun
-                    }}
+    TelemetryProbe.assert_derive_sharing(:issue_count, :local, :captured_fun)
 
     connected_socket()
     |> Live.component(:issue_detail, [], fn %{} -> %{issue_id: user_id} end)
     |> Live.watch(:issues, ScopedIssues, [user_id: user_id], under: :issue_detail)
     |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
 
-    assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
-                    %{
-                      assign_name: :issue_count,
-                      result: :local,
-                      reason: :component_scoped_dep
-                    }}
+    TelemetryProbe.assert_derive_sharing(:issue_count, :local, :component_scoped_dep)
 
     local_marker = :local
 
@@ -496,28 +431,15 @@ defmodule Upkeep.LiveRefreshTest do
     end)
     |> Live.derive(:issue_count, [:local_issues], &__MODULE__.shared_local_issue_count/1)
 
-    assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
-                    %{
-                      assign_name: :local_issues,
-                      result: :local,
-                      reason: :local_fun
-                    }}
+    TelemetryProbe.assert_derive_sharing(:local_issues, :local, :local_fun)
 
-    assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
-                    %{
-                      assign_name: :issue_count,
-                      result: :local,
-                      reason: :local_only_dep
-                    }}
+    TelemetryProbe.assert_derive_sharing(:issue_count, :local, :local_only_dep)
   end
 
-  test "private derives receive current_scope implicitly and recompute when it changes", %{
-    table: table
-  } do
+  test "private derives receive current_scope implicitly and recompute when it changes" do
     user_a = System.unique_integer([:positive])
     user_b = System.unique_integer([:positive])
-    :ets.insert(table, {{:issues, user_a}, [:user_a_issue]})
-    :ets.insert(table, {{:loads, :issues, user_a}, 0})
+    Fixture.put_loaded_value(:issues, user_a, [:user_a_issue])
 
     socket =
       scoped_connected_socket(%{user_id: user_a})
@@ -539,12 +461,11 @@ defmodule Upkeep.LiveRefreshTest do
     assert socket.assigns.viewer_issue_count == {user_b, 1}
   end
 
-  test "capturing socket scope raises under strict policy before sharing data", %{table: table} do
+  test "capturing socket scope raises under strict policy before sharing data" do
     Config.with_upkeep(:captured_scope_policy, :raise, fn ->
       user_id = System.unique_integer([:positive])
-      :ets.insert(table, {{:issues, user_id}, [:user_issue]})
-      :ets.insert(table, {{:loads, :issues, user_id}, 0})
-      :ets.insert(table, {{:loads, :captured_scope_label, user_id}, 0})
+      Fixture.put_loaded_value(:issues, user_id, [:user_issue])
+      Fixture.put_load(:captured_scope_label, user_id)
 
       socket =
         scoped_connected_socket(%{user_id: user_id})
@@ -552,27 +473,24 @@ defmodule Upkeep.LiveRefreshTest do
 
       assert_raise Upkeep.Runtime.ImplicitScopeError, ~r/captures :socket/, fn ->
         Live.derive(socket, :captured_scope_label, [:issues], fn %{issues: issues} ->
-          bump_load({:loads, :captured_scope_label, user_id})
+          Fixture.bump_load({:loads, :captured_scope_label, user_id})
           {socket.assigns.current_scope.user_id, issues}
         end)
       end
 
-      assert load_count(:captured_scope_label, user_id) == 0
+      assert Fixture.load_count(:captured_scope_label, user_id) == 0
     end)
   end
 
-  test "capturing socket scope stays local with error telemetry in production policy", %{
-    table: table
-  } do
+  test "capturing socket scope stays local with error telemetry in production policy" do
     Config.with_upkeep(:captured_scope_policy, :telemetry, fn ->
       attach_telemetry([[:upkeep, :derive, :sharing]])
 
       user_a = System.unique_integer([:positive])
       user_b = System.unique_integer([:positive])
-      :ets.insert(table, {{:issues, user_a}, [:shared_project_issue]})
-      :ets.insert(table, {{:loads, :issues, user_a}, 0})
-      :ets.insert(table, {{:loads, :captured_scope_label, user_a}, 0})
-      :ets.insert(table, {{:loads, :captured_scope_label, user_b}, 0})
+      Fixture.put_loaded_value(:issues, user_a, [:shared_project_issue])
+      Fixture.put_load(:captured_scope_label, user_a)
+      Fixture.put_load(:captured_scope_label, user_b)
 
       base_a =
         scoped_connected_socket(%{user_id: user_a})
@@ -585,46 +503,38 @@ defmodule Upkeep.LiveRefreshTest do
       socket_a =
         Live.derive(base_a, :captured_scope_label, [:issues], fn %{issues: issues} ->
           current_user_id = base_a.assigns.current_scope.user_id
-          bump_load({:loads, :captured_scope_label, current_user_id})
+          Fixture.bump_load({:loads, :captured_scope_label, current_user_id})
           {current_user_id, issues}
         end)
 
       socket_b =
         Live.derive(base_b, :captured_scope_label, [:issues], fn %{issues: issues} ->
           current_user_id = base_b.assigns.current_scope.user_id
-          bump_load({:loads, :captured_scope_label, current_user_id})
+          Fixture.bump_load({:loads, :captured_scope_label, current_user_id})
           {current_user_id, issues}
         end)
 
       assert socket_a.assigns.captured_scope_label == {user_a, [:shared_project_issue]}
       assert socket_b.assigns.captured_scope_label == {user_b, [:shared_project_issue]}
-      assert load_count(:captured_scope_label, user_a) == 1
-      assert load_count(:captured_scope_label, user_b) == 1
+      assert Fixture.load_count(:captured_scope_label, user_a) == 1
+      assert Fixture.load_count(:captured_scope_label, user_b) == 1
 
-      assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
-                      %{
-                        assign_name: :captured_scope_label,
-                        result: :local,
-                        reason: :captured_scope,
-                        severity: :error,
-                        scope_capture: :socket
-                      }}
+      TelemetryProbe.assert_derive_sharing(:captured_scope_label, :local, :captured_scope,
+        severity: :error,
+        scope_capture: :socket
+      )
 
-      assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
-                      %{
-                        assign_name: :captured_scope_label,
-                        result: :local,
-                        reason: :captured_scope,
-                        severity: :error,
-                        scope_capture: :socket
-                      }}
+      TelemetryProbe.assert_derive_sharing(:captured_scope_label, :local, :captured_scope,
+        severity: :error,
+        scope_capture: :socket
+      )
     end)
   end
 
-  test "graph snapshot exposes derive sharing diagnostics", %{table: table} do
+  test "graph snapshot exposes derive sharing diagnostics" do
     user_id = System.unique_integer([:positive])
-    put_scoped_user(table, user_id, [{user_id, :user_issue}])
-    :ets.insert(table, {{:loads, :shared_issue_count, user_id}, 0})
+    Fixture.put_scoped_user(user_id, [{user_id, :user_issue}])
+    Fixture.put_load(:shared_issue_count, user_id)
 
     source_id = {ScopedIssues, %{user_id: user_id}}
 
@@ -669,15 +579,15 @@ defmodule Upkeep.LiveRefreshTest do
            } = Enum.find(snapshot.assigns, &(&1.assign == :visible_count))
   end
 
-  test "concurrent connected derives share a chain of initial computes", %{table: table} do
+  test "concurrent connected derives share a chain of initial computes" do
     attach_telemetry([[:upkeep, :graph, :derived_initial, :hit]])
 
     test_pid = self()
     user_id = System.unique_integer([:positive])
-    put_scoped_user(table, user_id, [{user_id, :user_issue}])
-    :ets.insert(table, {{:loads, :shared_issue_stats, user_id}, 0})
-    :ets.insert(table, {{:loads, :shared_issue_label, user_id}, 0})
-    :ets.insert(table, {{:derive_test_pid, user_id}, test_pid})
+    Fixture.put_scoped_user(user_id, [{user_id, :user_issue}])
+    Fixture.put_load(:shared_issue_stats, user_id)
+    Fixture.put_load(:shared_issue_label, user_id)
+    Fixture.put_derive_test_pid(user_id, test_pid)
 
     task_a =
       Task.async(fn ->
@@ -687,7 +597,7 @@ defmodule Upkeep.LiveRefreshTest do
         |> Live.derive(:issue_label, [:issue_stats], &__MODULE__.shared_issue_label/1)
       end)
 
-    assert_receive {:derived_compute_started, count_pid, ^user_id}
+    count_pid = BlockingProbe.await_with(:derived_compute_started, user_id)
 
     task_b =
       Task.async(fn ->
@@ -697,17 +607,15 @@ defmodule Upkeep.LiveRefreshTest do
         |> Live.derive(:issue_label, [:issue_stats], &__MODULE__.shared_issue_label/1)
       end)
 
-    assert_receive {:telemetry, [:upkeep, :graph, :derived_initial, :hit], %{count: 1},
-                    %{assign_name: :issue_stats}}
+    TelemetryProbe.assert_derived_initial(:hit, :issue_stats)
 
-    send(count_pid, :continue)
+    BlockingProbe.continue(count_pid)
 
-    assert_receive {:derived_label_started, label_pid, ^user_id}
+    label_pid = BlockingProbe.await_with(:derived_label_started, user_id)
 
-    assert_receive {:telemetry, [:upkeep, :graph, :derived_initial, :hit], %{count: 1},
-                    %{assign_name: :issue_label}}
+    TelemetryProbe.assert_derived_initial(:hit, :issue_label)
 
-    send(label_pid, :continue)
+    BlockingProbe.continue(label_pid)
 
     socket_a = Task.await(task_a)
     socket_b = Task.await(task_b)
@@ -716,21 +624,19 @@ defmodule Upkeep.LiveRefreshTest do
     assert socket_a.assigns.issue_label == "1 issue"
     assert socket_b.assigns.issue_stats == %{user_id: user_id, count: 1}
     assert socket_b.assigns.issue_label == "1 issue"
-    assert load_count(:shared_issue_stats, user_id) == 1
-    assert load_count(:shared_issue_label, user_id) == 1
+    assert Fixture.load_count(:shared_issue_stats, user_id) == 1
+    assert Fixture.load_count(:shared_issue_label, user_id) == 1
   end
 
-  test "connected chained derived sharing does not leak values across source params", %{
-    table: table
-  } do
+  test "connected chained derived sharing does not leak values across source params" do
     user_a = System.unique_integer([:positive])
     user_b = System.unique_integer([:positive])
-    put_scoped_user(table, user_a, [{user_a, :user_a_issue}])
-    put_scoped_user(table, user_b, [{user_b, :user_b_issue}])
-    :ets.insert(table, {{:loads, :shared_issue_stats, user_a}, 0})
-    :ets.insert(table, {{:loads, :shared_issue_stats, user_b}, 0})
-    :ets.insert(table, {{:loads, :shared_user_label, user_a}, 0})
-    :ets.insert(table, {{:loads, :shared_user_label, user_b}, 0})
+    Fixture.put_scoped_user(user_a, [{user_a, :user_a_issue}])
+    Fixture.put_scoped_user(user_b, [{user_b, :user_b_issue}])
+    Fixture.put_load(:shared_issue_stats, user_a)
+    Fixture.put_load(:shared_issue_stats, user_b)
+    Fixture.put_load(:shared_user_label, user_a)
+    Fixture.put_load(:shared_user_label, user_b)
 
     socket_a =
       connected_socket()
@@ -746,21 +652,21 @@ defmodule Upkeep.LiveRefreshTest do
 
     assert socket_a.assigns.user_label == "user #{user_a}: 1 issue"
     assert socket_b.assigns.user_label == "user #{user_b}: 1 issue"
-    assert load_count(:shared_issue_stats, user_a) == 1
-    assert load_count(:shared_issue_stats, user_b) == 1
-    assert load_count(:shared_user_label, user_a) == 1
-    assert load_count(:shared_user_label, user_b) == 1
+    assert Fixture.load_count(:shared_issue_stats, user_a) == 1
+    assert Fixture.load_count(:shared_issue_stats, user_b) == 1
+    assert Fixture.load_count(:shared_user_label, user_a) == 1
+    assert Fixture.load_count(:shared_user_label, user_b) == 1
   end
 
-  test "concurrent connected derives share a multi-source initial compute", %{table: table} do
+  test "concurrent connected derives share a multi-source initial compute" do
     attach_telemetry([[:upkeep, :graph, :derived_initial, :hit]])
 
     test_pid = self()
     user_id = System.unique_integer([:positive])
-    put_scoped_user(table, user_id, [{user_id, :user_issue}])
-    put_scoped_activity(table, user_id, [{user_id, :user_activity}])
-    :ets.insert(table, {{:loads, :shared_dashboard_model, user_id}, 0})
-    :ets.insert(table, {{:derive_test_pid, user_id}, test_pid})
+    Fixture.put_scoped_user(user_id, [{user_id, :user_issue}])
+    Fixture.put_scoped_activity(user_id, [{user_id, :user_activity}])
+    Fixture.put_load(:shared_dashboard_model, user_id)
+    Fixture.put_derive_test_pid(user_id, test_pid)
 
     task_a =
       Task.async(fn ->
@@ -774,7 +680,7 @@ defmodule Upkeep.LiveRefreshTest do
         )
       end)
 
-    assert_receive {:dashboard_model_started, loader_pid, ^user_id}
+    loader_pid = BlockingProbe.await_with(:dashboard_model_started, user_id)
 
     task_b =
       Task.async(fn ->
@@ -788,10 +694,9 @@ defmodule Upkeep.LiveRefreshTest do
         )
       end)
 
-    assert_receive {:telemetry, [:upkeep, :graph, :derived_initial, :hit], %{count: 1},
-                    %{assign_name: :dashboard_model}}
+    TelemetryProbe.assert_derived_initial(:hit, :dashboard_model)
 
-    send(loader_pid, :continue)
+    BlockingProbe.continue(loader_pid)
 
     socket_a = Task.await(task_a)
     socket_b = Task.await(task_b)
@@ -803,18 +708,16 @@ defmodule Upkeep.LiveRefreshTest do
            }
 
     assert socket_b.assigns.dashboard_model == socket_a.assigns.dashboard_model
-    assert load_count(:shared_dashboard_model, user_id) == 1
+    assert Fixture.load_count(:shared_dashboard_model, user_id) == 1
   end
 
-  test "same-param source modules are colocated for shared multi-source derives", %{table: table} do
+  test "same-param source modules are colocated for shared multi-source derives" do
     attach_telemetry([[:upkeep, :derive, :sharing]])
 
     project_id = System.unique_integer([:positive])
-    :ets.insert(table, {{:issues, project_id}, [:project_issue]})
-    :ets.insert(table, {{:activity, project_id}, [:project_activity]})
-    :ets.insert(table, {{:loads, :issues, project_id}, 0})
-    :ets.insert(table, {{:loads, :activity, project_id}, 0})
-    :ets.insert(table, {{:loads, :shared_project_dashboard_model, project_id}, 0})
+    Fixture.put_loaded_value(:issues, project_id, [:project_issue])
+    Fixture.put_loaded_value(:activity, project_id, [:project_activity])
+    Fixture.put_load(:shared_project_dashboard_model, project_id)
 
     source_ids = [
       {ProjectIssues, %{project_id: project_id}},
@@ -841,39 +744,31 @@ defmodule Upkeep.LiveRefreshTest do
              activity: [:project_activity]
            }
 
-    assert load_count(:shared_project_dashboard_model, project_id) == 1
+    assert Fixture.load_count(:shared_project_dashboard_model, project_id) == 1
 
-    assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
-                    %{
-                      assign_name: :project_dashboard_model,
-                      result: :shared,
-                      reason: :shareable,
-                      graph_node_id: ^graph_node_id,
-                      graph_dep_node_ids: ^source_ids,
-                      sharing_partition: %{project_id: ^project_id},
-                      dep_partitions: [
-                        {{ProjectIssues, %{project_id: ^project_id}}, %{project_id: ^project_id}},
-                        {{ProjectActivity, %{project_id: ^project_id}},
-                         %{project_id: ^project_id}}
-                      ]
-                    }}
+    TelemetryProbe.assert_derive_sharing(:project_dashboard_model, :shared, :shareable,
+      graph_node_id: graph_node_id,
+      graph_dep_node_ids: source_ids,
+      sharing_partition: %{project_id: project_id},
+      dep_partitions: [
+        {{ProjectIssues, %{project_id: project_id}}, %{project_id: project_id}},
+        {{ProjectActivity, %{project_id: project_id}}, %{project_id: project_id}}
+      ]
+    )
   end
 
-  test "cross-partition multi-source derives fall back locally without leaking values", %{
-    table: table
-  } do
+  test "cross-partition multi-source derives fall back locally without leaking values" do
     attach_telemetry([[:upkeep, :derive, :sharing]])
 
     project_id = System.unique_integer([:positive])
     user_a = System.unique_integer([:positive])
     user_b = System.unique_integer([:positive])
 
-    :ets.insert(table, {{:activity, project_id}, [:project_activity]})
-    :ets.insert(table, {{:loads, :activity, project_id}, 0})
-    put_scoped_user(table, user_a, [{user_a, :user_a_issue}])
-    put_scoped_user(table, user_b, [{user_b, :user_b_issue}])
-    :ets.insert(table, {{:loads, :shared_user_project_dashboard_model, user_a}, 0})
-    :ets.insert(table, {{:loads, :shared_user_project_dashboard_model, user_b}, 0})
+    Fixture.put_loaded_value(:activity, project_id, [:project_activity])
+    Fixture.put_scoped_user(user_a, [{user_a, :user_a_issue}])
+    Fixture.put_scoped_user(user_b, [{user_b, :user_b_issue}])
+    Fixture.put_load(:shared_user_project_dashboard_model, user_a)
+    Fixture.put_load(:shared_user_project_dashboard_model, user_b)
 
     socket_a =
       connected_socket()
@@ -907,45 +802,33 @@ defmodule Upkeep.LiveRefreshTest do
              activity: [:project_activity]
            }
 
-    assert load_count(:shared_user_project_dashboard_model, user_a) == 1
-    assert load_count(:shared_user_project_dashboard_model, user_b) == 1
+    assert Fixture.load_count(:shared_user_project_dashboard_model, user_a) == 1
+    assert Fixture.load_count(:shared_user_project_dashboard_model, user_b) == 1
 
-    assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
-                    %{
-                      assign_name: :dashboard_model,
-                      result: :local,
-                      reason: :cross_partition_dep,
-                      dep_partitions: [
-                        {{ScopedIssues, %{user_id: ^user_a}}, %{user_id: ^user_a}},
-                        {{ProjectActivity, %{project_id: ^project_id}},
-                         %{project_id: ^project_id}}
-                      ]
-                    }}
+    TelemetryProbe.assert_derive_sharing(:dashboard_model, :local, :cross_partition_dep,
+      dep_partitions: [
+        {{ScopedIssues, %{user_id: user_a}}, %{user_id: user_a}},
+        {{ProjectActivity, %{project_id: project_id}}, %{project_id: project_id}}
+      ]
+    )
 
-    assert_receive {:telemetry, [:upkeep, :derive, :sharing], %{count: 1},
-                    %{
-                      assign_name: :dashboard_model,
-                      result: :local,
-                      reason: :cross_partition_dep,
-                      dep_partitions: [
-                        {{ScopedIssues, %{user_id: ^user_b}}, %{user_id: ^user_b}},
-                        {{ProjectActivity, %{project_id: ^project_id}},
-                         %{project_id: ^project_id}}
-                      ]
-                    }}
+    TelemetryProbe.assert_derive_sharing(:dashboard_model, :local, :cross_partition_dep,
+      dep_partitions: [
+        {{ScopedIssues, %{user_id: user_b}}, %{user_id: user_b}},
+        {{ProjectActivity, %{project_id: project_id}}, %{project_id: project_id}}
+      ]
+    )
   end
 
-  test "connected multi-source derived sharing does not leak values across source params", %{
-    table: table
-  } do
+  test "connected multi-source derived sharing does not leak values across source params" do
     user_a = System.unique_integer([:positive])
     user_b = System.unique_integer([:positive])
-    put_scoped_user(table, user_a, [{user_a, :user_a_issue}])
-    put_scoped_user(table, user_b, [{user_b, :user_b_issue}])
-    put_scoped_activity(table, user_a, [{user_a, :user_a_activity}])
-    put_scoped_activity(table, user_b, [{user_b, :user_b_activity}])
-    :ets.insert(table, {{:loads, :shared_dashboard_model, user_a}, 0})
-    :ets.insert(table, {{:loads, :shared_dashboard_model, user_b}, 0})
+    Fixture.put_scoped_user(user_a, [{user_a, :user_a_issue}])
+    Fixture.put_scoped_user(user_b, [{user_b, :user_b_issue}])
+    Fixture.put_scoped_activity(user_a, [{user_a, :user_a_activity}])
+    Fixture.put_scoped_activity(user_b, [{user_b, :user_b_activity}])
+    Fixture.put_load(:shared_dashboard_model, user_a)
+    Fixture.put_load(:shared_dashboard_model, user_b)
 
     socket_a =
       connected_socket()
@@ -971,11 +854,11 @@ defmodule Upkeep.LiveRefreshTest do
              activity: [:user_b_activity]
            }
 
-    assert load_count(:shared_dashboard_model, user_a) == 1
-    assert load_count(:shared_dashboard_model, user_b) == 1
+    assert Fixture.load_count(:shared_dashboard_model, user_a) == 1
+    assert Fixture.load_count(:shared_dashboard_model, user_b) == 1
   end
 
-  test "graph-pushed source updates reuse shared derived graph values", %{table: table} do
+  test "graph-pushed source updates reuse shared derived graph values" do
     attach_telemetry([
       [:upkeep, :graph, :dispatch, :stop],
       [:upkeep, :live, :dag_values, :apply],
@@ -983,10 +866,8 @@ defmodule Upkeep.LiveRefreshTest do
     ])
 
     user_id = System.unique_integer([:positive])
-    put_scoped_user(table, user_id, [{user_id, :before}])
-    :ets.insert(table, {{:loads, :shared_issue_count, user_id}, 0})
-
-    source_id = {ScopedIssues, %{user_id: user_id}}
+    Fixture.put_scoped_user(user_id, [{user_id, :before}])
+    Fixture.put_load(:shared_issue_count, user_id)
 
     socket =
       connected_socket()
@@ -994,79 +875,23 @@ defmodule Upkeep.LiveRefreshTest do
       |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
 
     assert socket.assigns.issue_count == 1
-    assert load_count(:shared_issue_count, user_id) == 1
+    assert Fixture.load_count(:shared_issue_count, user_id) == 1
 
-    :ets.insert(table, {{:scoped_issues, user_id}, [{user_id, :before}, {user_id, :after}]})
+    Fixture.put_value(:scoped_issues, user_id, [{user_id, :before}, {user_id, :after}])
 
-    assert :ok =
-             %Issue{issue_id: user_id}
-             |> Upkeep.Change.updated()
-             |> Upkeep.notify()
-
-    assert :ok = Upkeep.Test.drain()
-
-    graph_node_id =
-      {:derived, UpkeepWeb.KanbanLive, :issue_count, [source_id],
-       {__MODULE__, :shared_issue_count, 1}}
-
-    pairs = DagProbe.receive_batch()
-    assert {source_id, [{user_id, :before}, {user_id, :after}]} in pairs
-    assert {graph_node_id, 2} in pairs
-
-    assert_receive {:telemetry, [:upkeep, :graph, :dispatch, :stop], _measurements,
-                    %{
-                      node_partitions: [
-                        {^source_id, %{user_id: ^user_id}},
-                        {^graph_node_id, %{user_id: ^user_id}}
-                      ]
-                    }}
-
-    flush_telemetry_messages()
-    socket = Live.apply_dag_values(socket, pairs)
-
-    assert_receive {:telemetry, [:upkeep, :live, :dag_values, :apply],
-                    %{count: 1, duration: apply_duration},
-                    %{
-                      pair_count: 2,
-                      changed_node_count: changed_node_count,
-                      shared_node_count: shared_node_count,
-                      effect_count: effect_count,
-                      assign_effect_count: assign_effect_count,
-                      recompute_effect_count: recompute_effect_count
-                    }}
-
-    assert is_integer(apply_duration)
-    assert changed_node_count >= 1
-    assert shared_node_count >= 1
-    assert effect_count >= 2
-    assert assign_effect_count >= 2
-    assert recompute_effect_count >= 0
-
-    assert_receive {:telemetry, [:upkeep, :live, :effects, :apply],
-                    %{count: 1, duration: effects_duration},
-                    %{
-                      effect_count: materialized_effect_count,
-                      assign_count: materialized_assign_count,
-                      telemetry_count: materialized_telemetry_count
-                    }}
-
-    assert is_integer(effects_duration)
-    assert materialized_effect_count >= 2
-    assert materialized_assign_count >= 2
-    assert materialized_telemetry_count >= 2
+    socket = assert_shared_issue_graph_push_reused(socket, user_id)
 
     assert socket.assigns.issues == [{user_id, :before}, {user_id, :after}]
     assert socket.assigns.issue_count == 2
-    assert load_count(:shared_issue_count, user_id) == 2
+    assert Fixture.load_count(:shared_issue_count, user_id) == 2
   end
 
-  test "local derives recompute after graph-pushed shared derived values", %{table: table} do
+  test "local derives recompute after graph-pushed shared derived values" do
     user_id = System.unique_integer([:positive])
-    put_scoped_user(table, user_id, [{user_id, :before}])
-    :ets.insert(table, {{:loads, :shared_issue_count, user_id}, 0})
+    Fixture.put_scoped_user(user_id, [{user_id, :before}])
+    Fixture.put_load(:shared_issue_count, user_id)
 
     extra = user_id
-    source_id = {ScopedIssues, %{user_id: user_id}}
 
     socket =
       connected_socket()
@@ -1076,25 +901,13 @@ defmodule Upkeep.LiveRefreshTest do
 
     assert socket.assigns.visible_count == user_id + 1
 
-    :ets.insert(table, {{:scoped_issues, user_id}, [{user_id, :before}, {user_id, :after}]})
+    Fixture.put_value(:scoped_issues, user_id, [{user_id, :before}, {user_id, :after}])
 
-    assert :ok =
-             %Issue{issue_id: user_id}
-             |> Upkeep.Change.updated()
-             |> Upkeep.notify()
-
-    graph_node_id =
-      {:derived, UpkeepWeb.KanbanLive, :issue_count, [source_id],
-       {__MODULE__, :shared_issue_count, 1}}
-
-    pairs = DagProbe.receive_batch()
-    assert {graph_node_id, 2} in pairs
-
-    socket = Live.apply_dag_values(socket, pairs)
+    socket = assert_shared_issue_push_recomputed_local_derive(socket, user_id)
 
     assert socket.assigns.issue_count == 2
     assert socket.assigns.visible_count == user_id + 2
-    assert load_count(:shared_issue_count, user_id) == 2
+    assert Fixture.load_count(:shared_issue_count, user_id) == 2
   end
 
   test "watch is idempotent for the same source identity" do
@@ -1104,7 +917,7 @@ defmodule Upkeep.LiveRefreshTest do
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
 
     assert socket.assigns.issues == [:issue_a]
-    assert load_count(:issues) == 1
+    assert Fixture.load_count(:issues) == 1
     assert member_count(ProjectIssues, project_id: 1) == 1
   end
 
@@ -1114,7 +927,7 @@ defmodule Upkeep.LiveRefreshTest do
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
 
     assert socket.assigns.issues == [:issue_a]
-    assert load_count(:issues) == 1
+    assert Fixture.load_count(:issues) == 1
     assert member_count(ProjectIssues, project_id: 1) == 0
 
     _socket = Live.unwatch(socket, :issues)
@@ -1128,13 +941,11 @@ defmodule Upkeep.LiveRefreshTest do
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
 
     assert socket.assigns.issues == [:issue_a]
-    assert load_count(:issues) == 1
+    assert Fixture.load_count(:issues) == 1
     assert member_count(ProjectIssues, project_id: 1) == 1
   end
 
-  test "duplicate watch can alias the same source value without duplicate membership", %{
-    table: table
-  } do
+  test "duplicate watch can alias the same source value without duplicate membership" do
     socket =
       socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
@@ -1142,10 +953,10 @@ defmodule Upkeep.LiveRefreshTest do
 
     assert socket.assigns.issues == [:issue_a]
     assert socket.assigns.other_issues == [:issue_a]
-    assert load_count(:issues) == 1
+    assert Fixture.load_count(:issues) == 1
     assert member_count(ProjectIssues, project_id: 1) == 1
 
-    :ets.insert(table, {{:issues, 1}, [:issue_b]})
+    Fixture.put_value(:issues, 1, [:issue_b])
 
     socket =
       socket
@@ -1154,7 +965,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     assert socket.assigns.issues == [:issue_b]
     assert socket.assigns.other_issues == [:issue_b]
-    assert load_count(:issues) == 2
+    assert Fixture.load_count(:issues) == 2
   end
 
   test "unwatch by assign keeps shared source interest until last alias is removed" do
@@ -1172,7 +983,7 @@ defmodule Upkeep.LiveRefreshTest do
     assert member_count(ProjectIssues, project_id: 1) == 0
   end
 
-  test "unwatch by assign leaves interest and stops refreshes", %{table: table} do
+  test "unwatch by assign leaves interest and stops refreshes" do
     socket =
       socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
@@ -1183,12 +994,12 @@ defmodule Upkeep.LiveRefreshTest do
 
     assert member_count(ProjectIssues, project_id: 1) == 0
 
-    :ets.insert(table, {{:issues, 1}, [:issue_b]})
+    Fixture.put_value(:issues, 1, [:issue_b])
 
     change = updated_issue(1, 1)
     assert :ok = Upkeep.notify(change)
     :ok = Upkeep.Test.drain()
-    DagProbe.refute_any()
+    refute_unwatched_graph_push()
 
     socket =
       socket
@@ -1196,16 +1007,16 @@ defmodule Upkeep.LiveRefreshTest do
       |> Live.flush_refreshes()
 
     assert socket.assigns.issues == [:issue_a]
-    assert load_count(:issues) == 1
+    assert Fixture.load_count(:issues) == 1
   end
 
-  test "unwatch by source params clears pending refreshes", %{table: table} do
+  test "unwatch by source params clears pending refreshes" do
     socket =
       socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
       |> Live.queue_matching(updated_issue(1, 1))
 
-    :ets.insert(table, {{:issues, 1}, [:issue_b]})
+    Fixture.put_value(:issues, 1, [:issue_b])
 
     socket =
       socket
@@ -1213,29 +1024,29 @@ defmodule Upkeep.LiveRefreshTest do
       |> Live.flush_refreshes()
 
     assert socket.assigns.issues == [:issue_a]
-    assert load_count(:issues) == 1
+    assert Fixture.load_count(:issues) == 1
     assert member_count(ProjectIssues, project_id: 1) == 0
   end
 
-  test "derived assigns recompute through a real dependency chain", %{table: table} do
+  test "derived assigns recompute through a real dependency chain" do
     socket =
       socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
       |> Live.derive(:issue_count, [:issues], fn %{issues: issues} ->
-        bump_load({:loads, :issue_count, 1})
+        Fixture.bump_load({:loads, :issue_count, 1})
         length(issues)
       end)
       |> Live.derive(:issue_label, [:issue_count], fn %{issue_count: count} ->
-        bump_load({:loads, :issue_label, 1})
+        Fixture.bump_load({:loads, :issue_label, 1})
         "#{count} issue"
       end)
 
     assert socket.assigns.issue_count == 1
     assert socket.assigns.issue_label == "1 issue"
-    assert load_count(:issue_count) == 1
-    assert load_count(:issue_label) == 1
+    assert Fixture.load_count(:issue_count) == 1
+    assert Fixture.load_count(:issue_label) == 1
 
-    :ets.insert(table, {{:issues, 1}, [:issue_a, :issue_b]})
+    Fixture.put_value(:issues, 1, [:issue_a, :issue_b])
 
     socket =
       socket
@@ -1244,37 +1055,35 @@ defmodule Upkeep.LiveRefreshTest do
 
     assert socket.assigns.issue_count == 2
     assert socket.assigns.issue_label == "2 issue"
-    assert load_count(:issue_count) == 2
-    assert load_count(:issue_label) == 2
+    assert Fixture.load_count(:issue_count) == 2
+    assert Fixture.load_count(:issue_label) == 2
   end
 
-  test "shared derived intermediates compute once and unrelated sources do not trigger them", %{
-    table: table
-  } do
+  test "shared derived intermediates compute once and unrelated sources do not trigger them" do
     socket =
       socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
       |> Live.watch(:activity, ProjectActivity, project_id: 1)
       |> Live.derive(:visible_issues, [:issues], fn %{issues: issues} ->
-        bump_load({:loads, :visible, 1})
+        Fixture.bump_load({:loads, :visible, 1})
         issues
       end)
       |> Live.derive(:issue_count, [:visible_issues], fn %{visible_issues: issues} ->
-        bump_load({:loads, :issue_count, 1})
+        Fixture.bump_load({:loads, :issue_count, 1})
         length(issues)
       end)
       |> Live.derive(:issue_label, [:visible_issues], fn %{visible_issues: issues} ->
-        bump_load({:loads, :issue_label, 1})
+        Fixture.bump_load({:loads, :issue_label, 1})
         List.first(issues)
       end)
 
     assert socket.assigns.issue_count == 1
     assert socket.assigns.issue_label == :issue_a
-    assert load_count(:visible) == 1
-    assert load_count(:issue_count) == 1
-    assert load_count(:issue_label) == 1
+    assert Fixture.load_count(:visible) == 1
+    assert Fixture.load_count(:issue_count) == 1
+    assert Fixture.load_count(:issue_label) == 1
 
-    :ets.insert(table, {{:activity, 1}, [:activity_b]})
+    Fixture.put_value(:activity, 1, [:activity_b])
 
     socket =
       socket
@@ -1282,11 +1091,11 @@ defmodule Upkeep.LiveRefreshTest do
       |> Live.flush_refreshes()
 
     assert socket.assigns.activity == [:activity_b]
-    assert load_count(:visible) == 1
-    assert load_count(:issue_count) == 1
-    assert load_count(:issue_label) == 1
+    assert Fixture.load_count(:visible) == 1
+    assert Fixture.load_count(:issue_count) == 1
+    assert Fixture.load_count(:issue_label) == 1
 
-    :ets.insert(table, {{:issues, 1}, [:issue_a, :issue_b]})
+    Fixture.put_value(:issues, 1, [:issue_a, :issue_b])
 
     socket =
       socket
@@ -1295,14 +1104,12 @@ defmodule Upkeep.LiveRefreshTest do
 
     assert socket.assigns.issue_count == 2
     assert socket.assigns.issue_label == :issue_a
-    assert load_count(:visible) == 2
-    assert load_count(:issue_count) == 2
-    assert load_count(:issue_label) == 2
+    assert Fixture.load_count(:visible) == 2
+    assert Fixture.load_count(:issue_count) == 2
+    assert Fixture.load_count(:issue_label) == 2
   end
 
-  test "component-scoped sources enter and leave the graph with downstream derived nodes", %{
-    table: table
-  } do
+  test "component-scoped sources enter and leave the graph with downstream derived nodes" do
     socket =
       socket()
       |> Live.component(:issue_detail, [], fn %{} -> %{issue_id: 1} end)
@@ -1311,14 +1118,14 @@ defmodule Upkeep.LiveRefreshTest do
 
     assert socket.assigns.comments == [:comment_a]
     assert socket.assigns.comment_count == 1
-    assert load_count(:comments, 1) == 1
+    assert Fixture.load_count(:comments, 1) == 1
     assert member_count(IssueComments, issue_id: 1) == 1
 
     socket = Live.remove_component(socket, :issue_detail)
 
     assert member_count(IssueComments, issue_id: 1) == 0
 
-    :ets.insert(table, {{:comments, 1}, [:comment_a, :comment_c]})
+    Fixture.put_value(:comments, 1, [:comment_a, :comment_c])
 
     socket =
       socket
@@ -1327,7 +1134,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     assert socket.assigns.comments == [:comment_a]
     assert socket.assigns.comment_count == 1
-    assert load_count(:comments, 1) == 1
+    assert Fixture.load_count(:comments, 1) == 1
 
     socket =
       socket
@@ -1341,7 +1148,7 @@ defmodule Upkeep.LiveRefreshTest do
     assert member_count(IssueComments, issue_id: 2) == 1
   end
 
-  test "function component identity can scope sources without an Upkeep frame", %{table: table} do
+  test "function component identity can scope sources without an Upkeep frame" do
     component_id = {__MODULE__.IssueComponents, :issue_card, 1}
 
     socket =
@@ -1372,7 +1179,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     assert member_count(IssueComments, issue_id: 1) == 0
 
-    :ets.insert(table, {{:comments, 1}, [:comment_a, :comment_c]})
+    Fixture.put_value(:comments, 1, [:comment_a, :comment_c])
 
     socket =
       socket
@@ -1381,12 +1188,12 @@ defmodule Upkeep.LiveRefreshTest do
 
     assert socket.assigns.issue_card_comments == [:comment_a]
     assert socket.assigns.issue_card_comment_count == 1
-    assert load_count(:comments, 1) == 1
+    assert Fixture.load_count(:comments, 1) == 1
   end
 
-  test "function component input changes remove stale scoped source reads", %{table: table} do
+  test "function component input changes remove stale scoped source reads" do
     component_id = {__MODULE__.IssueComponents, :issue_card, 1}
-    :ets.insert(table, {{:issues, 1}, [1]})
+    Fixture.put_value(:issues, 1, [1])
 
     socket =
       socket()
@@ -1404,7 +1211,7 @@ defmodule Upkeep.LiveRefreshTest do
     assert socket.assigns.issue_card_comments == [:comment_a]
     assert member_count(IssueComments, [issue_id: 1], component_id) == 1
 
-    :ets.insert(table, {{:issues, 1}, [1, :unchanged_component_value]})
+    Fixture.put_value(:issues, 1, [1, :unchanged_component_value])
 
     socket =
       socket
@@ -1415,7 +1222,7 @@ defmodule Upkeep.LiveRefreshTest do
     assert socket.assigns.issue_label == "issue 1"
     assert member_count(IssueComments, [issue_id: 1], component_id) == 1
 
-    :ets.insert(table, {{:issues, 1}, [2]})
+    Fixture.put_value(:issues, 1, [2])
 
     socket =
       socket
@@ -1426,7 +1233,7 @@ defmodule Upkeep.LiveRefreshTest do
     assert socket.assigns.issue_label == "issue 2"
     assert member_count(IssueComments, issue_id: 1) == 0
 
-    :ets.insert(table, {{:comments, 1}, [:comment_a, :comment_c]})
+    Fixture.put_value(:comments, 1, [:comment_a, :comment_c])
 
     socket =
       socket
@@ -1434,7 +1241,7 @@ defmodule Upkeep.LiveRefreshTest do
       |> Live.flush_refreshes()
 
     assert socket.assigns.issue_card_comments == [:comment_a]
-    assert load_count(:comments, 1) == 1
+    assert Fixture.load_count(:comments, 1) == 1
 
     socket =
       Live.watch(socket, :issue_card_comments, IssueComments, [issue_id: 2], under: component_id)
@@ -1443,7 +1250,7 @@ defmodule Upkeep.LiveRefreshTest do
     assert member_count(IssueComments, [issue_id: 2], component_id) == 1
   end
 
-  test "removing component-scoped source preserves shared source interest", %{table: table} do
+  test "removing component-scoped source preserves shared source interest" do
     socket =
       socket()
       |> Live.watch(:comments, IssueComments, issue_id: 1)
@@ -1451,24 +1258,22 @@ defmodule Upkeep.LiveRefreshTest do
       |> Live.watch(:detail_comments, IssueComments, [issue_id: 1], under: :issue_detail)
 
     assert member_count(IssueComments, issue_id: 1) == 1
-    assert load_count(:comments, 1) == 2
+    assert Fixture.load_count(:comments, 1) == 2
 
     socket = Live.remove_component(socket, :issue_detail)
 
     assert member_count(IssueComments, issue_id: 1) == 1
 
-    :ets.insert(table, {{:comments, 1}, [:comment_a, :comment_c]})
+    Fixture.put_value(:comments, 1, [:comment_a, :comment_c])
 
     change = inserted_comment(1, 1)
-    source_id = {IssueComments, %{issue_id: 1}}
     assert :ok = Upkeep.notify(change)
     assert :ok = Upkeep.Test.drain()
-    assert DagProbe.receive_value(source_id) == [:comment_a, :comment_c]
 
-    socket = Live.apply_dag_value(socket, source_id, [:comment_a, :comment_c])
+    socket = assert_shared_comment_push(socket, 1, [:comment_a, :comment_c])
 
     assert socket.assigns.comments == [:comment_a, :comment_c]
-    assert load_count(:comments, 1) == 3
+    assert Fixture.load_count(:comments, 1) == 3
 
     _socket = Live.unwatch(socket, :comments)
 
@@ -1514,10 +1319,7 @@ defmodule Upkeep.LiveRefreshTest do
              Enum.find(snapshot.dag.edges, &(&1.to == {:source, comments_source_id}))
   end
 
-  test "emits telemetry for watch, shared initial load, queue, reload, recompute, assign, and unwatch",
-       %{
-         table: table
-       } do
+  test "emits telemetry for watch, shared initial load, queue, reload, recompute, assign, and unwatch" do
     attach_telemetry([
       [:upkeep, :source, :watch],
       [:upkeep, :source, :queue],
@@ -1537,94 +1339,89 @@ defmodule Upkeep.LiveRefreshTest do
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
       |> Live.derive(:issue_count, [:issues], fn %{issues: issues} -> length(issues) end)
 
-    assert_receive {:telemetry, [:upkeep, :source, :initial_load, :miss], %{count: 1},
-                    %{
-                      node_id: {:source, ^source_id},
-                      source: ProjectIssues,
-                      params: %{project_id: 1},
-                      sharing_partition: %{project_id: 1}
-                    }}
+    TelemetryProbe.assert_counted([:upkeep, :source, :initial_load, :miss],
+      node_id: {:source, source_id},
+      source: ProjectIssues,
+      params: %{project_id: 1},
+      sharing_partition: %{project_id: 1}
+    )
 
-    assert_receive {:telemetry, [:upkeep, :source, :watch], %{count: 1},
-                    %{
-                      source_id: ^source_id,
-                      assign_name: :issues,
-                      kind: :new,
-                      sharing_partition: %{project_id: 1}
-                    }}
+    TelemetryProbe.assert_counted([:upkeep, :source, :watch],
+      source_id: source_id,
+      assign_name: :issues,
+      kind: :new,
+      sharing_partition: %{project_id: 1}
+    )
 
-    assert_receive {:telemetry, [:upkeep, :live, :assign], %{count: 1},
-                    %{assign: :issues, node_id: {:source, ^source_id}, kind: :source}}
+    TelemetryProbe.assert_counted([:upkeep, :live, :assign],
+      assign: :issues,
+      node_id: {:source, source_id},
+      kind: :source
+    )
 
-    :ets.insert(table, {{:issues, 1}, [:issue_a, :issue_b]})
+    Fixture.put_value(:issues, 1, [:issue_a, :issue_b])
     change = updated_issue(1, 1)
 
     socket = Live.queue_matching(socket, change)
 
-    assert_receive {:telemetry, [:upkeep, :source, :queue], %{count: 1},
-                    %{source_id: ^source_id, event: ^change}}
+    TelemetryProbe.assert_counted([:upkeep, :source, :queue],
+      source_id: source_id,
+      event: change
+    )
 
     socket = Live.flush_refreshes(socket)
 
-    assert_receive {:telemetry, [:upkeep, :source, :reload, :start], _measurements,
-                    %{
-                      source_id: ^source_id,
-                      reason: :refresh,
-                      sharing_partition: %{project_id: 1}
-                    }}
+    TelemetryProbe.assert_event([:upkeep, :source, :reload, :start],
+      metadata: %{
+        source_id: source_id,
+        reason: :refresh,
+        sharing_partition: %{project_id: 1}
+      }
+    )
 
-    assert_receive {:telemetry, [:upkeep, :source, :reload, :stop], measurements,
-                    %{
-                      source_id: ^source_id,
-                      reason: :refresh,
-                      sharing_partition: %{project_id: 1}
-                    }}
+    {measurements, _metadata} =
+      TelemetryProbe.assert_event([:upkeep, :source, :reload, :stop],
+        metadata: %{
+          source_id: source_id,
+          reason: :refresh,
+          sharing_partition: %{project_id: 1}
+        }
+      )
 
     assert is_integer(measurements.duration)
 
-    assert_receive {:telemetry, [:upkeep, :dag, :recompute, :stop], _measurements,
-                    %{
-                      changed_source_nodes: [{:source, ^source_id}],
-                      changed_derived_nodes: [{:derived, :issue_count}],
-                      recomputed_nodes: [{:derived, :issue_count}],
-                      changed_count: 1,
-                      recomputed_count: 1
-                    }}
+    TelemetryProbe.assert_event([:upkeep, :dag, :recompute, :stop],
+      metadata: %{
+        changed_source_nodes: [{:source, source_id}],
+        changed_derived_nodes: [{:derived, :issue_count}],
+        recomputed_nodes: [{:derived, :issue_count}],
+        changed_count: 1,
+        recomputed_count: 1
+      }
+    )
 
-    assert_receive {:telemetry, [:upkeep, :live, :assign], %{count: 1},
-                    %{assign: :issue_count, node_id: {:derived, :issue_count}, kind: :derived}}
+    TelemetryProbe.assert_counted([:upkeep, :live, :assign],
+      assign: :issue_count,
+      node_id: {:derived, :issue_count},
+      kind: :derived
+    )
 
     _socket = Live.unwatch(socket, :issues)
 
-    assert_receive {:telemetry, [:upkeep, :source, :unwatch], %{count: 1},
-                    %{source_id: ^source_id, kind: :remove}}
-  end
-
-  def table_value(key) do
-    [{^key, value}] = :ets.lookup(__MODULE__, key)
-    value
-  end
-
-  def bump_load(key) do
-    :ets.update_counter(__MODULE__, key, 1)
+    TelemetryProbe.assert_counted([:upkeep, :source, :unwatch],
+      source_id: source_id,
+      kind: :remove
+    )
   end
 
   def shared_issue_count(%{issues: [{user_id, _name} | _] = issues}) do
-    bump_load({:loads, :shared_issue_count, user_id})
+    Fixture.bump_load({:loads, :shared_issue_count, user_id})
 
-    case :ets.lookup(__MODULE__, {:derive_test_pid, user_id}) do
-      [{_, test_pid}] ->
-        send(test_pid, {:derived_compute_started, self(), user_id})
-
-        receive do
-          :continue -> :ok
-        after
-          1_000 -> raise "blocking derived compute was not released"
-        end
-
-      [] ->
-        :ok
-    end
+    block_derive_if_configured(
+      user_id,
+      :derived_compute_started,
+      "blocking derived compute was not released"
+    )
 
     length(issues)
   end
@@ -1632,71 +1429,47 @@ defmodule Upkeep.LiveRefreshTest do
   def shared_local_issue_count(%{local_issues: issues}), do: length(issues)
 
   def shared_issue_names(%{issues: [{user_id, _name} | _] = issues}) do
-    bump_load({:loads, :shared_issue_names, user_id})
+    Fixture.bump_load({:loads, :shared_issue_names, user_id})
     Enum.map(issues, fn {_user_id, name} -> name end)
   end
 
   def shared_issue_stats(%{issues: [{user_id, _name} | _] = issues}) do
-    bump_load({:loads, :shared_issue_stats, user_id})
+    Fixture.bump_load({:loads, :shared_issue_stats, user_id})
 
-    case :ets.lookup(__MODULE__, {:derive_test_pid, user_id}) do
-      [{_, test_pid}] ->
-        send(test_pid, {:derived_compute_started, self(), user_id})
-
-        receive do
-          :continue -> :ok
-        after
-          1_000 -> raise "blocking derived compute was not released"
-        end
-
-      [] ->
-        :ok
-    end
+    block_derive_if_configured(
+      user_id,
+      :derived_compute_started,
+      "blocking derived compute was not released"
+    )
 
     %{user_id: user_id, count: length(issues)}
   end
 
   def shared_issue_label(%{issue_stats: %{user_id: user_id, count: count}}) do
-    bump_load({:loads, :shared_issue_label, user_id})
+    Fixture.bump_load({:loads, :shared_issue_label, user_id})
 
-    case :ets.lookup(__MODULE__, {:derive_test_pid, user_id}) do
-      [{_, test_pid}] ->
-        send(test_pid, {:derived_label_started, self(), user_id})
-
-        receive do
-          :continue -> :ok
-        after
-          1_000 -> raise "blocking derived label compute was not released"
-        end
-
-      [] ->
-        :ok
-    end
+    block_derive_if_configured(
+      user_id,
+      :derived_label_started,
+      "blocking derived label compute was not released"
+    )
 
     "#{count} issue"
   end
 
   def shared_user_label(%{issue_stats: %{user_id: user_id, count: count}}) do
-    bump_load({:loads, :shared_user_label, user_id})
+    Fixture.bump_load({:loads, :shared_user_label, user_id})
     "user #{user_id}: #{count} issue"
   end
 
   def shared_dashboard_model(%{issues: [{user_id, _issue} | _] = issues, activity: activity}) do
-    bump_load({:loads, :shared_dashboard_model, user_id})
+    Fixture.bump_load({:loads, :shared_dashboard_model, user_id})
 
-    case :ets.lookup(__MODULE__, {:derive_test_pid, user_id}) do
-      [{_, test_pid}] ->
-        send(test_pid, {:dashboard_model_started, self(), user_id})
-
-        receive do
-          :continue -> :ok
-        after
-          1_000 -> raise "blocking dashboard model compute was not released"
-        end
-
-      [] ->
-        :ok
-    end
+    block_derive_if_configured(
+      user_id,
+      :dashboard_model_started,
+      "blocking dashboard model compute was not released"
+    )
 
     %{
       user_id: user_id,
@@ -1715,12 +1488,12 @@ defmodule Upkeep.LiveRefreshTest do
       end
 
     project_id =
-      case :ets.match(__MODULE__, {{:issues, :"$1"}, issues}) do
-        [[id] | _] -> id
-        [] -> project_id
+      case Fixture.project_id_for_issues(issues) do
+        {:ok, id} -> id
+        :error -> project_id
       end
 
-    bump_load({:loads, :shared_project_dashboard_model, project_id})
+    Fixture.bump_load({:loads, :shared_project_dashboard_model, project_id})
 
     %{
       project_id: project_id,
@@ -1733,7 +1506,7 @@ defmodule Upkeep.LiveRefreshTest do
         issues: [{user_id, _issue} | _] = issues,
         activity: activity
       }) do
-    bump_load({:loads, :shared_user_project_dashboard_model, user_id})
+    Fixture.bump_load({:loads, :shared_user_project_dashboard_model, user_id})
 
     %{
       user_id: user_id,
@@ -1742,22 +1515,103 @@ defmodule Upkeep.LiveRefreshTest do
     }
   end
 
-  defp load_count(source) do
-    table_value({:loads, source, 1})
+  defp assert_shared_issue_graph_push_reused(socket, user_id) do
+    issues = [{user_id, :before}, {user_id, :after}]
+    source_id = {ScopedIssues, %{user_id: user_id}}
+    graph_node_id = shared_issue_count_node_id(source_id)
+
+    assert :ok =
+             %Issue{issue_id: user_id}
+             |> Upkeep.Change.updated()
+             |> Upkeep.notify()
+
+    assert :ok = Upkeep.Test.drain()
+
+    pairs = DagProbe.receive_batch()
+    assert {source_id, issues} in pairs
+    assert {graph_node_id, 2} in pairs
+
+    TelemetryProbe.assert_event([:upkeep, :graph, :dispatch, :stop],
+      metadata: %{
+        node_partitions: [
+          {source_id, %{user_id: user_id}},
+          {graph_node_id, %{user_id: user_id}}
+        ]
+      }
+    )
+
+    flush_telemetry_messages()
+    socket = Live.apply_dag_values(socket, pairs)
+    assert_shared_issue_push_apply_telemetry()
+    socket
   end
 
-  defp load_count(source, id) do
-    table_value({:loads, source, id})
+  defp assert_shared_issue_push_recomputed_local_derive(socket, user_id) do
+    source_id = {ScopedIssues, %{user_id: user_id}}
+    graph_node_id = shared_issue_count_node_id(source_id)
+
+    assert :ok =
+             %Issue{issue_id: user_id}
+             |> Upkeep.Change.updated()
+             |> Upkeep.notify()
+
+    pairs = DagProbe.receive_batch()
+    assert {graph_node_id, 2} in pairs
+    Live.apply_dag_values(socket, pairs)
   end
 
-  defp put_scoped_user(table, user_id, issues) do
-    :ets.insert(table, {{:scoped_issues, user_id}, issues})
-    :ets.insert(table, {{:loads, :scoped_issues, user_id}, 0})
+  defp assert_shared_comment_push(socket, issue_id, comments) do
+    source_id = {IssueComments, %{issue_id: issue_id}}
+    assert DagProbe.receive_value(source_id) == comments
+    Live.apply_dag_value(socket, source_id, comments)
   end
 
-  defp put_scoped_activity(table, user_id, activity) do
-    :ets.insert(table, {{:scoped_activity, user_id}, activity})
-    :ets.insert(table, {{:loads, :scoped_activity, user_id}, 0})
+  defp refute_unwatched_graph_push do
+    DagProbe.refute_any()
+  end
+
+  defp assert_shared_issue_push_apply_telemetry do
+    {%{duration: apply_duration},
+     %{
+       changed_node_count: changed_node_count,
+       shared_node_count: shared_node_count,
+       effect_count: effect_count,
+       assign_effect_count: assign_effect_count,
+       recompute_effect_count: recompute_effect_count
+     }} =
+      TelemetryProbe.assert_counted([:upkeep, :live, :dag_values, :apply], pair_count: 2)
+
+    assert is_integer(apply_duration)
+    assert changed_node_count >= 1
+    assert shared_node_count >= 1
+    assert effect_count >= 2
+    assert assign_effect_count >= 2
+    assert recompute_effect_count >= 0
+
+    {%{duration: effects_duration},
+     %{
+       effect_count: materialized_effect_count,
+       assign_count: materialized_assign_count,
+       telemetry_count: materialized_telemetry_count
+     }} =
+      TelemetryProbe.assert_counted([:upkeep, :live, :effects, :apply])
+
+    assert is_integer(effects_duration)
+    assert materialized_effect_count >= 2
+    assert materialized_assign_count >= 2
+    assert materialized_telemetry_count >= 2
+  end
+
+  defp shared_issue_count_node_id(source_id) do
+    {:derived, UpkeepWeb.KanbanLive, :issue_count, [source_id],
+     {__MODULE__, :shared_issue_count, 1}}
+  end
+
+  defp block_derive_if_configured(user_id, event, message) do
+    case Fixture.derive_test_pid(user_id) do
+      {:ok, test_pid} -> BlockingProbe.block(test_pid, event, [user_id], message)
+      :error -> :ok
+    end
   end
 
   defp updated_issue(project_id, issue_id) do

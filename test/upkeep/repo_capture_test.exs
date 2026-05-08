@@ -3,7 +3,7 @@ defmodule Upkeep.RepoCaptureTest do
 
   alias Ecto.Changeset
   alias Upkeep.Live
-  alias Upkeep.TestSupport.{Config, DagProbe, LiveSocket}
+  alias Upkeep.TestSupport.{Config, DagProbe, LiveSocket, TelemetryProbe}
   import ExUnit.CaptureLog
   import Upkeep.TestSupport, only: [attach_telemetry: 1]
 
@@ -174,7 +174,7 @@ defmodule Upkeep.RepoCaptureTest do
                :created
              end)
 
-    socket = assert_project_issues(socket, 9, ["Created"])
+    socket = assert_project_issues_refresh(socket, 9, ["Created"])
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Created"]
   end
 
@@ -194,8 +194,8 @@ defmodule Upkeep.RepoCaptureTest do
 
     assert {:ok, %Issue{assignee_id: 9}} = Upkeep.mutate(fn -> Repo.update!(issue) end)
 
-    mine = assert_project_issues(mine, 9, ["Moved"])
-    theirs = assert_project_issues(theirs, 10, [])
+    mine = assert_project_issues_refresh(mine, 9, ["Moved"])
+    theirs = assert_project_issues_refresh(theirs, 10, [])
 
     assert Enum.map(mine.assigns.issues, & &1.title) == ["Moved"]
     assert theirs.assigns.issues == []
@@ -214,7 +214,7 @@ defmodule Upkeep.RepoCaptureTest do
                |> Repo.delete!()
              end)
 
-    socket = assert_project_issues(socket, 9, [])
+    socket = assert_project_issues_refresh(socket, 9, [])
     assert socket.assigns.issues == []
   end
 
@@ -228,7 +228,7 @@ defmodule Upkeep.RepoCaptureTest do
              end)
 
     :ok = Upkeep.Test.drain()
-    DagProbe.refute_any()
+    refute_any_repo_refresh()
     refute Repo.get(Issue, 1)
   end
 
@@ -241,7 +241,7 @@ defmodule Upkeep.RepoCaptureTest do
                :created
              end)
 
-    assert_project_issues(9, ["Issue"])
+    assert_project_issues_refresh(9, ["Issue"])
   end
 
   test "repo transaction capture discards direct transaction rollbacks" do
@@ -254,7 +254,7 @@ defmodule Upkeep.RepoCaptureTest do
              end)
 
     :ok = Upkeep.Test.drain()
-    DagProbe.refute_any()
+    refute_any_repo_refresh()
     refute Repo.get(Issue, 1)
   end
 
@@ -267,7 +267,7 @@ defmodule Upkeep.RepoCaptureTest do
 
     assert {:ok, %{issue: %Issue{id: 1}}} = Upkeep.mutate(multi)
 
-    assert_project_issues(9, ["Issue"])
+    assert_project_issues_refresh(9, ["Issue"])
   end
 
   test "insert_or_update capture chooses inserted or updated from schema state" do
@@ -277,14 +277,14 @@ defmodule Upkeep.RepoCaptureTest do
     |> Changeset.change()
     |> Repo.insert_or_update!()
 
-    assert_project_issues(9, ["Issue"])
+    assert_project_issues_refresh(9, ["Issue"])
 
     Issue
     |> Repo.get!(1)
     |> Changeset.change(title: "Updated")
     |> Repo.insert_or_update!()
 
-    assert_project_issues(9, ["Updated"])
+    assert_project_issues_refresh(9, ["Updated"])
   end
 
   test "insert_all capture emits inserted changes from submitted entries" do
@@ -298,8 +298,8 @@ defmodule Upkeep.RepoCaptureTest do
                ])
              end)
 
-    socket = assert_project_issues(socket, 9, ["Mine"])
-    DagProbe.refute_value({ProjectIssues, %{project_id: 1, user_id: 10}}, 0)
+    socket = assert_project_issues_refresh(socket, 9, ["Mine"])
+    refute_project_issues_refresh(10)
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Mine"]
   end
 
@@ -315,7 +315,7 @@ defmodule Upkeep.RepoCaptureTest do
                )
              end)
 
-    socket = assert_project_issues(socket, 9, ["Table"])
+    socket = assert_project_issues_refresh(socket, 9, ["Table"])
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Table"]
   end
 
@@ -329,7 +329,7 @@ defmodule Upkeep.RepoCaptureTest do
                ])
              end)
 
-    socket = assert_table_project_issues(socket, 9, ["Table source"])
+    socket = assert_table_project_issues_refresh(socket, 9, ["Table source"])
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Table source"]
   end
 
@@ -350,8 +350,8 @@ defmodule Upkeep.RepoCaptureTest do
                Repo.insert_all(Issue, import_query(user_id: 9))
              end)
 
-    socket = assert_project_issues(socket, 9, ["Imported"])
-    DagProbe.refute_value({ProjectIssues, %{project_id: 1, user_id: 10}}, 0)
+    socket = assert_project_issues_refresh(socket, 9, ["Imported"])
+    refute_project_issues_refresh(10)
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Imported"]
   end
 
@@ -369,7 +369,7 @@ defmodule Upkeep.RepoCaptureTest do
                Repo.insert_all("upkeep_repo_capture_test_issues", import_query(user_id: 9))
              end)
 
-    socket = assert_table_project_issues(socket, 9, ["Imported table"])
+    socket = assert_table_project_issues_refresh(socket, 9, ["Imported table"])
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Imported table"]
   end
 
@@ -391,8 +391,8 @@ defmodule Upkeep.RepoCaptureTest do
                )
              end)
 
-    mine = assert_project_issues(mine, 9, ["Moved", "Mine"])
-    theirs = assert_project_issues(theirs, 10, [])
+    mine = assert_project_issues_refresh(mine, 9, ["Moved", "Mine"])
+    theirs = assert_project_issues_refresh(theirs, 10, [])
 
     assert Enum.map(mine.assigns.issues, & &1.title) == ["Moved", "Mine"]
     assert theirs.assigns.issues == []
@@ -431,16 +431,15 @@ defmodule Upkeep.RepoCaptureTest do
                )
              end)
 
-    socket = assert_project_issues(socket, 9, ["After"])
+    socket = assert_project_issues_refresh(socket, 9, ["After"])
     assert Enum.map(socket.assigns.issues, & &1.title) == ["After"]
 
-    assert_receive {:telemetry, [:upkeep, :repo, :update_all_returning, :deopt], %{count: 1},
-                    %{
-                      repo: Repo,
-                      schema: Issue,
-                      operation: :update_all,
-                      reason: :caller_select
-                    }}
+    TelemetryProbe.assert_counted([:upkeep, :repo, :update_all_returning, :deopt],
+      repo: Repo,
+      schema: Issue,
+      operation: :update_all,
+      reason: :caller_select
+    )
   end
 
   test "update_all capture supports schemaless table queries" do
@@ -463,8 +462,8 @@ defmodule Upkeep.RepoCaptureTest do
                )
              end)
 
-    mine = assert_table_project_issues(mine, 9, ["Moved", "Mine"])
-    theirs = assert_table_project_issues(theirs, 10, [])
+    mine = assert_table_project_issues_refresh(mine, 9, ["Moved", "Mine"])
+    theirs = assert_table_project_issues_refresh(theirs, 10, [])
 
     assert Enum.map(mine.assigns.issues, & &1.title) == ["Moved", "Mine"]
     assert theirs.assigns.issues == []
@@ -485,7 +484,7 @@ defmodule Upkeep.RepoCaptureTest do
                )
              end)
 
-    socket = assert_project_issues(socket, 9, ["Moved"])
+    socket = assert_project_issues_refresh(socket, 9, ["Moved"])
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Moved"]
   end
 
@@ -499,7 +498,7 @@ defmodule Upkeep.RepoCaptureTest do
                set: [assignee_id: 9]
              )
 
-    assert_project_issues(9, ["Moved"])
+    assert_project_issues_refresh(9, ["Moved"])
   end
 
   test "delete_all capture emits deleted changes from affected rows" do
@@ -514,7 +513,7 @@ defmodule Upkeep.RepoCaptureTest do
                Repo.delete_all(from(i in Issue, where: i.project_id == 1 and i.assignee_id == 9))
              end)
 
-    socket = assert_project_issues(socket, 9, [])
+    socket = assert_project_issues_refresh(socket, 9, [])
     assert socket.assigns.issues == []
   end
 
@@ -534,7 +533,7 @@ defmodule Upkeep.RepoCaptureTest do
                )
              end)
 
-    socket = assert_table_project_issues(socket, 9, [])
+    socket = assert_table_project_issues_refresh(socket, 9, [])
     assert socket.assigns.issues == []
   end
 
@@ -553,7 +552,7 @@ defmodule Upkeep.RepoCaptureTest do
              end)
 
     :ok = Upkeep.Test.drain()
-    DagProbe.refute_any()
+    refute_any_repo_refresh()
     assert %Issue{assignee_id: 10} = Repo.get!(Issue, 1)
   end
 
@@ -568,7 +567,7 @@ defmodule Upkeep.RepoCaptureTest do
 
     assert {:ok, %{issues: {1, nil}}} = Upkeep.mutate(multi)
 
-    assert_project_issues(9, ["Multi"])
+    assert_project_issues_refresh(9, ["Multi"])
   end
 
   test "repo and bulk capture can be disabled" do
@@ -578,7 +577,7 @@ defmodule Upkeep.RepoCaptureTest do
     Repo.insert!(issue(id: 2, assignee_id: 9), upkeep: false)
 
     :ok = Upkeep.Test.drain()
-    DagProbe.refute_any()
+    refute_any_repo_refresh()
   end
 
   defp watch_project(opts) do
@@ -595,23 +594,34 @@ defmodule Upkeep.RepoCaptureTest do
     |> Live.watch(:issues, TableProjectIssues, project_id: 1, user_id: user_id)
   end
 
-  defp assert_project_issues(user_id, titles) do
-    source_id = {ProjectIssues, %{project_id: 1, user_id: user_id}}
-    issues = DagProbe.receive_value(source_id)
+  defp assert_project_issues_refresh(user_id, titles) do
+    issues = DagProbe.receive_value(project_issues_source_id(user_id))
     assert Enum.map(issues, & &1.title) == titles
     issues
   end
 
-  defp assert_project_issues(socket, user_id, titles) do
-    issues = assert_project_issues(user_id, titles)
-    Live.apply_dag_value(socket, {ProjectIssues, %{project_id: 1, user_id: user_id}}, issues)
+  defp assert_project_issues_refresh(socket, user_id, titles) do
+    issues = assert_project_issues_refresh(user_id, titles)
+    Live.apply_dag_value(socket, project_issues_source_id(user_id), issues)
   end
 
-  defp assert_table_project_issues(socket, user_id, titles) do
+  defp assert_table_project_issues_refresh(socket, user_id, titles) do
     source_id = {TableProjectIssues, %{project_id: 1, user_id: user_id}}
     issues = DagProbe.receive_value(source_id)
     assert Enum.map(issues, & &1.title) == titles
     Live.apply_dag_value(socket, source_id, issues)
+  end
+
+  defp refute_project_issues_refresh(user_id) do
+    DagProbe.refute_value(project_issues_source_id(user_id), 0)
+  end
+
+  defp refute_any_repo_refresh do
+    DagProbe.refute_any()
+  end
+
+  defp project_issues_source_id(user_id) do
+    {ProjectIssues, %{project_id: 1, user_id: user_id}}
   end
 
   defp issue(attrs) do

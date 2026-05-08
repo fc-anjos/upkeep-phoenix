@@ -548,12 +548,8 @@ defmodule Upkeep.SourceEctoTest do
         Repo.insert!(issue(id: 2, project_id: 1, assignee_id: 9, title: "After", position: 2))
       end)
 
-    source_id = {ProjectIssues, %{project_id: 1, user_id: 9}}
-
-    issues = DagProbe.receive_value(source_id)
-    assert Enum.map(issues, & &1.title) == ["Before", "After"]
-
-    socket = Live.apply_dag_value(socket, source_id, issues)
+    issues = assert_project_issues_refresh(1, 9, ["Before", "After"])
+    socket = Live.apply_dag_value(socket, project_issues_source_id(1, 9), issues)
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Before", "After"]
   end
 
@@ -972,10 +968,8 @@ defmodule Upkeep.SourceEctoTest do
         Repo.insert!(comment(id: 1, project_id: 1, issue_id: 1, body: "New comment"))
       end)
 
-    source_id = {PreloadedProjectIssues, %{project_id: 1}}
-
     assert [%Issue{comments: [%Comment{body: "New comment"}]}] =
-             DagProbe.receive_value(source_id)
+             refreshed_source_issues(PreloadedProjectIssues, %{project_id: 1})
   end
 
   test "query preload sources refresh from analyzed preload query deps" do
@@ -989,9 +983,8 @@ defmodule Upkeep.SourceEctoTest do
         Repo.insert!(comment(id: 1, project_id: 1, issue_id: 1, body: "visible"))
       end)
 
-    source_id = {QueryPreloadedProjectIssues, %{project_id: 1}}
-
-    assert [%Issue{comments: [%Comment{body: "visible"}]}] = DagProbe.receive_value(source_id)
+    assert [%Issue{comments: [%Comment{body: "visible"}]}] =
+             refreshed_source_issues(QueryPreloadedProjectIssues, %{project_id: 1})
   end
 
   test "fragment broad fallback is scoped to the schema referenced by the fragment" do
@@ -1067,4 +1060,18 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defp sort_terms(terms), do: Enum.sort_by(terms, &inspect/1)
+
+  defp assert_project_issues_refresh(project_id, user_id, titles) do
+    issues = refreshed_source_issues(ProjectIssues, %{project_id: project_id, user_id: user_id})
+    assert Enum.map(issues, & &1.title) == titles
+    issues
+  end
+
+  defp refreshed_source_issues(source, params) do
+    DagProbe.receive_value({source, params})
+  end
+
+  defp project_issues_source_id(project_id, user_id) do
+    {ProjectIssues, %{project_id: project_id, user_id: user_id}}
+  end
 end
