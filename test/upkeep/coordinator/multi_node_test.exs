@@ -111,11 +111,12 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
 
   defp seed_local_read_node(schema, fingerprint) do
     deps = %Upkeep.Ecto.Source.QueryDeps{schemas: MapSet.new([schema])}
+    surface = Upkeep.Source.dependency_surface([deps])
     node_id = {:read, :synthetic_repo, fingerprint}
     :ets.insert(ReadCache.values_table(), {node_id, []})
 
     for action <- [:inserted, :updated, :deleted] do
-      :ets.insert(ReadCache.index_table(), {{action, schema}, {node_id, deps}})
+      :ets.insert(ReadCache.index_table(), {{:upkeep_change, action, schema}, {node_id, surface}})
     end
 
     :ok
@@ -124,6 +125,7 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
   defp seed_peer_read_node(peer, schema, fingerprint) do
     peer_node = node_of(peer)
     deps = %Upkeep.Ecto.Source.QueryDeps{schemas: MapSet.new([schema])}
+    surface = Upkeep.Source.dependency_surface([deps])
     node_id = {:read, :synthetic_repo, fingerprint}
 
     :erpc.call(peer_node, :ets, :insert, [ReadCache.values_table(), {node_id, []}])
@@ -131,7 +133,7 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
     for action <- [:inserted, :updated, :deleted] do
       :erpc.call(peer_node, :ets, :insert, [
         ReadCache.index_table(),
-        {{action, schema}, {node_id, deps}}
+        {{:upkeep_change, action, schema}, {node_id, surface}}
       ])
     end
 
