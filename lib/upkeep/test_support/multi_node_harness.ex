@@ -7,6 +7,11 @@ defmodule Upkeep.TestSupport.MultiNodeHarness do
     |> Enum.uniq()
   end
 
+  def seed_read_node(node_id, deps, value \\ []) do
+    Upkeep.Invalidation.fetch_read(node_id, deps, fn -> value end)
+    :ok
+  end
+
   def start_graph_subscriber(parent, node_id, event_name, value) do
     surface =
       Upkeep.InvalidationSurface.manual([{:upkeep_change, event_name, nil}], fn
