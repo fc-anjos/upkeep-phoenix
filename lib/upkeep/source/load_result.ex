@@ -10,6 +10,15 @@ defmodule Upkeep.Source.LoadResult do
             surface: Upkeep.InvalidationSurface.empty(),
             coverage: nil
 
+  @type t :: %__MODULE__{
+          instance: Instance.t(),
+          value: term(),
+          tracked_deps: [term()],
+          surface: Upkeep.InvalidationSurface.t(),
+          coverage: Upkeep.Source.Coverage.t()
+        }
+
+  @spec new(Instance.t(), term(), [term()], Upkeep.Source.Coverage.t()) :: t()
   def new(%Instance{} = instance, value, tracked_deps, coverage) when is_list(tracked_deps) do
     %__MODULE__{
       instance: instance,
@@ -20,6 +29,7 @@ defmodule Upkeep.Source.LoadResult do
     }
   end
 
+  @spec keys(t()) :: [Upkeep.InvalidationSurface.key()]
   def keys(%__MODULE__{surface: surface}) do
     Upkeep.InvalidationSurface.keys(surface)
   end

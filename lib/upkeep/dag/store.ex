@@ -5,14 +5,27 @@ defmodule Upkeep.DAG.Store do
 
   defstruct graph: nil, values: %{}, compute_fns: %{}, metadata: %{}
 
+  @type node_id :: Graph.node_id()
+  @type compute_fn :: (map() -> term())
+  @opaque t :: %__MODULE__{
+            graph: Graph.t(),
+            values: %{optional(node_id()) => term()},
+            compute_fns: %{optional(node_id()) => compute_fn()},
+            metadata: %{optional(node_id()) => term()}
+          }
+
   def new, do: %__MODULE__{graph: Graph.new()}
 
+  @spec graph(t()) :: Graph.t()
   def graph(%__MODULE__{graph: graph}), do: graph
 
+  @spec has_node?(t(), node_id()) :: boolean()
   def has_node?(%__MODULE__{graph: graph}, id), do: Graph.has_node?(graph, id)
 
+  @spec fetch!(t(), node_id()) :: term()
   def fetch!(%__MODULE__{values: values}, id), do: Map.fetch!(values, id)
 
+  @spec put_metadata(t(), node_id(), term()) :: t()
   def put_metadata(%__MODULE__{} = store, id, metadata) do
     unless Graph.has_node?(store.graph, id) do
       raise ArgumentError, "unknown DAG node #{inspect(id)}"
@@ -21,6 +34,7 @@ defmodule Upkeep.DAG.Store do
     %{store | metadata: Map.put(store.metadata, id, metadata)}
   end
 
+  @spec update_metadata(t(), node_id(), term(), (term() -> term())) :: t()
   def update_metadata(%__MODULE__{} = store, id, default, fun) when is_function(fun, 1) do
     unless Graph.has_node?(store.graph, id) do
       raise ArgumentError, "unknown DAG node #{inspect(id)}"
@@ -29,18 +43,22 @@ defmodule Upkeep.DAG.Store do
     %{store | metadata: Map.update(store.metadata, id, default, fun)}
   end
 
+  @spec fetch_metadata!(t(), node_id()) :: term()
   def fetch_metadata!(%__MODULE__{metadata: metadata}, id), do: Map.fetch!(metadata, id)
 
+  @spec get_metadata(t(), node_id(), term()) :: term()
   def get_metadata(%__MODULE__{metadata: metadata}, id, default \\ nil) do
     Map.get(metadata, id, default)
   end
 
+  @spec put_source(t(), node_id(), term(), [node_id()]) :: {t(), boolean()}
   def put_source(%__MODULE__{} = store, id, value, deps \\ []) when is_list(deps) do
     store
     |> ensure_topology(id, :source, deps)
     |> put_value(id, value)
   end
 
+  @spec put_derived(t(), node_id(), [node_id()], compute_fn()) :: t()
   def put_derived(%__MODULE__{} = store, id, deps, compute)
       when is_list(deps) and is_function(compute, 1) do
     store
@@ -49,6 +67,7 @@ defmodule Upkeep.DAG.Store do
     |> compute_and_store(id)
   end
 
+  @spec register_derived(t(), node_id(), [node_id()], compute_fn()) :: t()
   def register_derived(%__MODULE__{} = store, id, deps, compute)
       when is_list(deps) and is_function(compute, 1) do
     store
@@ -56,6 +75,7 @@ defmodule Upkeep.DAG.Store do
     |> put_compute(id, compute)
   end
 
+  @spec put_component(t(), node_id(), [node_id()], compute_fn()) :: t()
   def put_component(%__MODULE__{} = store, id, deps, compute)
       when is_list(deps) and is_function(compute, 1) do
     store
@@ -64,6 +84,7 @@ defmodule Upkeep.DAG.Store do
     |> compute_and_store(id)
   end
 
+  @spec seed(t(), node_id(), term()) :: {t(), boolean()}
   def seed(%__MODULE__{} = store, id, value) do
     unless Graph.has_node?(store.graph, id) do
       raise ArgumentError, "unknown DAG node #{inspect(id)}"
@@ -72,6 +93,7 @@ defmodule Upkeep.DAG.Store do
     put_value(store, id, value)
   end
 
+  @spec remove_subgraph(t(), node_id()) :: t()
   def remove_subgraph(%__MODULE__{} = store, root_id) do
     plan = Graph.subgraph_plan(store.graph, root_id)
 
@@ -86,6 +108,7 @@ defmodule Upkeep.DAG.Store do
     end)
   end
 
+  @spec recompute(t(), Enumerable.t(), keyword()) :: {t(), Diff.t()}
   def recompute(%__MODULE__{} = store, changed_ids, opts \\ []) do
     changed_ids = MapSet.new(changed_ids)
     skip_ids = opts |> Keyword.get(:skip, []) |> MapSet.new()

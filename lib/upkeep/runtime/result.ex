@@ -6,6 +6,15 @@ defmodule Upkeep.Runtime.Result do
   alias Upkeep.Runtime.Telemetry
   alias Upkeep.Runtime.Subscriptions
 
+  @type effect ::
+          {:assign, atom(), term()}
+          | {:telemetry, [atom()], map(), map()}
+          | {:register_source, term(), Upkeep.InvalidationSurface.t(), Upkeep.Source.Instance.t()}
+          | {:register_derived, term(), [term()], (map() -> term())}
+          | {:unregister, term()}
+  @type result(socket) :: {:ok, socket, [effect()]}
+
+  @spec to_socket(result(socket)) :: socket when socket: term()
   def to_socket({:ok, socket, effects}) when is_list(effects) do
     started_at = System.monotonic_time()
     socket = Enum.reduce(effects, socket, &apply_one/2)

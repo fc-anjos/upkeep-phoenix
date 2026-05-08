@@ -26,6 +26,20 @@ defmodule Upkeep.Source.Instance do
             surface: Upkeep.InvalidationSurface.empty(),
             explicit_surface: Upkeep.InvalidationSurface.empty()
 
+  @type t :: %__MODULE__{
+          source: module(),
+          params: Upkeep.Source.params(),
+          id: term(),
+          repo: module() | nil,
+          repo_explicit?: boolean(),
+          query_source?: boolean(),
+          retry: Upkeep.Source.retry_config(),
+          sharing_partition: term(),
+          surface: Upkeep.InvalidationSurface.t(),
+          explicit_surface: Upkeep.InvalidationSurface.t()
+        }
+
+  @spec build(module(), map() | keyword()) :: t()
   def build(source, params) when is_atom(source) do
     params = normalize_params(params)
 
@@ -43,6 +57,7 @@ defmodule Upkeep.Source.Instance do
     }
   end
 
+  @spec verify!(t(), keyword()) :: :ok
   def verify!(%__MODULE__{} = instance, opts \\ []) do
     if function_exported?(instance.source, :__upkeep_verify__!, 2) do
       instance.source.__upkeep_verify__!(instance.params, opts)

@@ -6,18 +6,30 @@ defmodule Upkeep.Source.Loader do
   @context_key {__MODULE__, :read_context}
   @warn_dedup_key {__MODULE__, :no_invalidation_warned}
 
+  @type read_context :: %{
+          required(:repo) => module() | nil,
+          required(:deps) => [term()],
+          required(:holder) => term(),
+          required(:source) => module(),
+          required(:params) => Upkeep.Source.params(),
+          optional(:reads) => map()
+        }
+
+  @spec verify_source!(module(), map(), keyword()) :: :ok
   def verify_source!(source, params, opts \\ []) when is_atom(source) and is_map(params) do
     source
     |> Instance.build(params)
     |> Instance.verify!(opts)
   end
 
+  @spec load_result(module(), map()) :: LoadResult.t()
   def load_result(source, params) when is_atom(source) do
     source
     |> Instance.build(params)
     |> load_result()
   end
 
+  @spec load_result(Instance.t()) :: LoadResult.t()
   def load_result(%Instance{} = instance) do
     {value, deps} = execute(instance)
     coverage = coverage(instance, deps)
@@ -29,14 +41,17 @@ defmodule Upkeep.Source.Loader do
     result
   end
 
+  @spec read(term()) :: term()
   def read(value), do: value
 
+  @spec coverage(module(), map()) :: Upkeep.Source.Coverage.t()
   def coverage(source, params) when is_atom(source) and is_map(params) do
     source
     |> Instance.build(params)
     |> coverage()
   end
 
+  @spec coverage(Instance.t(), [term()]) :: Upkeep.Source.Coverage.t()
   def coverage(%Instance{} = instance, deps) when is_list(deps) do
     deps
     |> Enum.map(&Upkeep.Source.Dependency.coverage/1)
@@ -44,23 +59,28 @@ defmodule Upkeep.Source.Loader do
     |> attach_unknown_if_empty()
   end
 
+  @spec coverage(Instance.t()) :: Upkeep.Source.Coverage.t()
   def coverage(%Instance{} = instance) do
     {_value, deps} = execute(instance)
     coverage(instance, deps)
   end
 
+  @spec coverage(module(), map(), [term()]) :: Upkeep.Source.Coverage.t()
   def coverage(source, params, deps) when is_atom(source) and is_map(params) and is_list(deps) do
     source
     |> Instance.build(params)
     |> coverage(deps)
   end
 
+  @spec read_context() :: read_context() | nil
   def read_context, do: Process.get(@context_key)
 
+  @spec track_dependency(term()) :: :ok | no_return()
   def track_dependency(deps) do
     case Process.get(@context_key) do
       %{deps: existing_deps} = context ->
         Process.put(@context_key, %{context | deps: [deps | existing_deps]})
+        :ok
 
       _ ->
         raise "Upkeep.Source.Loader.track_dependency/1 called outside a source context. " <>
@@ -69,6 +89,7 @@ defmodule Upkeep.Source.Loader do
     end
   end
 
+  @spec memoized_read(term(), (-> term())) :: term()
   def memoized_read(fingerprint, read) when is_function(read, 0) do
     cache = Map.get(Process.get(@context_key), :reads, %{})
 

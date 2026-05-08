@@ -13,8 +13,19 @@ defmodule Upkeep.InvalidationSurface do
             index_keys: [],
             matcher: nil
 
+  @type key :: term()
+  @type notification :: %{required(:name) => atom(), optional(:schema) => module() | :_}
+  @type event_notification :: %{required(:event) => module()}
+  @type matcher :: nil | (struct() -> boolean()) | {module(), atom(), [term()]}
+  @type t :: %__MODULE__{
+          keys: [key()],
+          index_keys: [key()],
+          matcher: matcher()
+        }
+
   def empty, do: %__MODULE__{}
 
+  @spec manual([key()], matcher()) :: t()
   def manual(keys, matcher) when is_list(keys) do
     unless is_function(matcher, 1) or valid_matcher?(matcher) do
       raise ArgumentError, "invalid invalidation surface matcher"
@@ -27,6 +38,7 @@ defmodule Upkeep.InvalidationSurface do
     }
   end
 
+  @spec merge(t(), t()) :: t()
   def merge(%__MODULE__{} = left, %__MODULE__{} = right) do
     %__MODULE__{
       keys: Enum.uniq(left.keys ++ right.keys),
@@ -35,13 +47,18 @@ defmodule Upkeep.InvalidationSurface do
     }
   end
 
+  @spec merge_all([t()]) :: t()
   def merge_all(surfaces) when is_list(surfaces) do
     Enum.reduce(surfaces, empty(), &merge/2)
   end
 
+  @spec keys(t()) :: [key()]
   def keys(%__MODULE__{keys: keys}), do: keys
+
+  @spec index_keys(t()) :: [key()]
   def index_keys(%__MODULE__{index_keys: keys}), do: keys
 
+  @spec candidate_keys(struct()) :: [key()]
   def candidate_keys(%Upkeep.Change{} = change) do
     [
       notification_key(%{name: change.name, schema: change.schema}),
@@ -54,10 +71,12 @@ defmodule Upkeep.InvalidationSurface do
     [notification_key(%{event: event.__struct__})]
   end
 
+  @spec matches?(t(), struct()) :: boolean()
   def matches?(%__MODULE__{} = surface, event) when is_struct(event) do
     manual_match?(surface.matcher, event)
   end
 
+  @spec matches_notification?(struct(), notification() | event_notification()) :: boolean()
   def matches_notification?(%Upkeep.Change{} = change, %{name: name, schema: schema}) do
     change.name == name and schema_matches?(change.schema, schema)
   end
@@ -68,6 +87,7 @@ defmodule Upkeep.InvalidationSurface do
 
   def matches_notification?(_event, _notification), do: false
 
+  @spec equal_fields?(struct(), map(), [atom()], [atom()]) :: boolean()
   def equal_fields?(%Upkeep.Change{} = change, params, event_fields, source_fields) do
     cond do
       Upkeep.Change.partial_update?(change) ->
@@ -95,6 +115,7 @@ defmodule Upkeep.InvalidationSurface do
     |> equal_field_set?(params, event_fields, source_fields)
   end
 
+  @spec field_key(notification() | event_notification(), [atom()], [atom()], map()) :: key()
   def field_key(notification, event_fields, source_fields, params) do
     values =
       Enum.zip(event_fields, source_fields)

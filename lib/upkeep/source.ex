@@ -24,6 +24,36 @@ defmodule Upkeep.Source do
     ],
     type: :strict
 
+  @type params :: map()
+  @type source_module :: module()
+  @type retry_config :: :default | false | keyword()
+
+  @callback load(params()) :: term()
+  @callback query(params()) :: term()
+  @callback reacts_to?(struct(), params()) :: boolean()
+  @callback __upkeep_repo__() :: module() | nil
+  @callback __upkeep_repo_explicit__?() :: boolean()
+  @callback __upkeep_query_source__?() :: boolean()
+  @callback __upkeep_retry__() :: retry_config()
+  @callback __upkeep_sharing_partition__(params()) :: term()
+  @callback __upkeep_verify__!(params(), keyword()) :: :ok
+  @callback __upkeep_surface__(params()) :: Upkeep.InvalidationSurface.t()
+  @callback __upkeep_explicit_surface__(params()) :: Upkeep.InvalidationSurface.t()
+  @callback __upkeep_explicit_surface_matches__?(params(), struct()) :: boolean()
+
+  @optional_callbacks load: 1,
+                      query: 1,
+                      reacts_to?: 2,
+                      __upkeep_repo__: 0,
+                      __upkeep_repo_explicit__?: 0,
+                      __upkeep_query_source__?: 0,
+                      __upkeep_retry__: 0,
+                      __upkeep_sharing_partition__: 1,
+                      __upkeep_verify__!: 2,
+                      __upkeep_surface__: 1,
+                      __upkeep_explicit_surface__: 1,
+                      __upkeep_explicit_surface_matches__?: 2
+
   defmacro __using__(opts) do
     quote do
       use Upkeep.Source.Spec, unquote(opts)

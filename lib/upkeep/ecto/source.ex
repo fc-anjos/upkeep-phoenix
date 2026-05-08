@@ -54,7 +54,7 @@ defmodule Upkeep.Ecto.Source do
         )
 
         deps = Upkeep.Ecto.Source.QueryDeps.from_query(query)
-        Upkeep.Source.Loader.track_dependency(deps)
+        :ok = Upkeep.Source.Loader.track_dependency(deps)
 
         fingerprint = read_fingerprint(repo, query)
 

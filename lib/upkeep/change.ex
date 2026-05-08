@@ -19,22 +19,40 @@ defmodule Upkeep.Change do
 
   defstruct [:name, :action, :schema, :record, :from, :payload, :changed_fields, meta: %{}]
 
+  @type field :: atom()
+  @type field_status :: :changed | :unchanged | :unknown
+  @type t :: %__MODULE__{
+          name: atom(),
+          action: atom() | nil,
+          schema: module() | nil,
+          record: struct() | nil,
+          from: struct() | map() | nil,
+          payload: term(),
+          changed_fields: [field()] | nil,
+          meta: map()
+        }
+
+  @spec inserted(struct(), keyword()) :: t()
   def inserted(record, opts \\ []) when is_struct(record) do
     new(:inserted, record, Keyword.put(opts, :action, :inserted))
   end
 
+  @spec updated(struct(), keyword()) :: t()
   def updated(record, opts \\ []) when is_struct(record) do
     new(:updated, record, Keyword.put(opts, :action, :updated))
   end
 
+  @spec deleted(struct(), keyword()) :: t()
   def deleted(record, opts \\ []) when is_struct(record) do
     new(:deleted, record, Keyword.put(opts, :action, :deleted))
   end
 
+  @spec changed(atom(), term(), keyword()) :: t()
   def changed(name, payload, opts \\ []) when is_atom(name) do
     new(name, payload, opts)
   end
 
+  @spec changed?(t(), field()) :: boolean()
   def changed?(%__MODULE__{} = change, field) when is_atom(field),
     do: field_change(change, field) == :changed
 
@@ -45,6 +63,7 @@ defmodule Upkeep.Change do
   current record value is safe to use for equality matching, and `:unknown`
   means an update happened without enough field knowledge.
   """
+  @spec field_change(t(), field()) :: field_status()
   def field_change(%__MODULE__{name: :updated, from: from, record: record}, field)
       when is_atom(field) and not is_nil(from) do
     if field_value(from, field) == field_value(record, field), do: :unchanged, else: :changed
@@ -65,6 +84,7 @@ defmodule Upkeep.Change do
   These updates are handled as schema/action-wide invalidations because Upkeep
   cannot prove which field-indexed sources the record may have moved out of.
   """
+  @spec broad_update?(term()) :: boolean()
   def broad_update?(%__MODULE__{name: :updated, from: nil, changed_fields: nil}), do: true
 
   def broad_update?(_event), do: false
@@ -76,6 +96,7 @@ defmodule Upkeep.Change do
   Partial updates can match declarative equality filters precisely for unchanged
   fields and conservatively for changed fields.
   """
+  @spec partial_update?(term()) :: boolean()
   def partial_update?(%__MODULE__{name: :updated, from: nil, changed_fields: fields})
       when is_list(fields),
       do: true
@@ -91,6 +112,7 @@ defmodule Upkeep.Change do
     [fields(record), fields(from)]
     |> Enum.flat_map(&Map.keys/1)
     |> Enum.uniq()
+    |> Enum.filter(&is_atom/1)
     |> Enum.filter(&(field_value(from, &1) != field_value(record, &1)))
     |> MapSet.new()
   end
@@ -98,6 +120,7 @@ defmodule Upkeep.Change do
   def changed_fields(%__MODULE__{}), do: MapSet.new()
 
   @doc false
+  @spec diagnose_broad_update(term()) :: :ok
   def diagnose_broad_update(%__MODULE__{} = change) do
     if broad_update?(change) do
       emit_broad_update(change)
@@ -109,9 +132,13 @@ defmodule Upkeep.Change do
 
   def diagnose_broad_update(_event), do: :ok
 
+  @spec old(t(), field()) :: term()
   def old(%__MODULE__{from: from}, field) when is_atom(field), do: field_value(from, field)
+
+  @spec new(t(), field()) :: term()
   def new(%__MODULE__{record: record}, field) when is_atom(field), do: field_value(record, field)
 
+  @spec field_sets(t()) :: [map()]
   def field_sets(%__MODULE__{record: record, from: from}) do
     [record, from]
     |> Enum.reject(&is_nil/1)

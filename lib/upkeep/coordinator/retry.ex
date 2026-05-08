@@ -3,6 +3,26 @@ defmodule Upkeep.Coordinator.Retry do
 
   defstruct attempts: %{}, timers: %{}, max_attempts: 3, base_delay_ms: 10, max_delay_ms: 40
 
+  @type key :: term()
+  @type policy :: :default | :source | :none | :not_loaded
+  @type metadata :: %{
+          retry?: boolean(),
+          retry_attempt: non_neg_integer(),
+          retry_max_attempts: non_neg_integer(),
+          retry_delay_ms: non_neg_integer() | nil,
+          retry_policy: policy()
+        }
+  @type schedule_fn :: (key(), reference(), non_neg_integer() -> reference())
+  @type timer_entry :: {reference(), reference()}
+  @type t :: %__MODULE__{
+          attempts: %{optional(key()) => non_neg_integer()},
+          timers: %{optional(key()) => timer_entry()},
+          max_attempts: non_neg_integer(),
+          base_delay_ms: non_neg_integer(),
+          max_delay_ms: non_neg_integer()
+        }
+
+  @spec new(keyword()) :: t()
   def new(opts \\ []) do
     %__MODULE__{
       max_attempts: Keyword.get(opts, :max_attempts, 3),
@@ -11,10 +31,13 @@ defmodule Upkeep.Coordinator.Retry do
     }
   end
 
+  @spec after_failure(t(), key(), schedule_fn()) :: {t(), metadata()}
   def after_failure(%__MODULE__{} = retry, key, schedule_fn) when is_function(schedule_fn, 3) do
     after_failure(retry, key, :default, schedule_fn)
   end
 
+  @spec after_failure(t(), key(), false | keyword() | :default, schedule_fn()) ::
+          {t(), metadata()}
   def after_failure(%__MODULE__{} = retry, key, false, _schedule_fn) do
     retry = clear(retry, key)
     {retry, metadata(false, 1, 0, nil, :none)}
@@ -46,20 +69,24 @@ defmodule Upkeep.Coordinator.Retry do
     {retry, metadata(retry?, attempt, effective.max_attempts, delay_ms, policy(opts))}
   end
 
+  @spec no_retry_metadata(t()) :: metadata()
   def no_retry_metadata(%__MODULE__{} = retry) do
     metadata(false, 0, retry.max_attempts, nil, :not_loaded)
   end
 
+  @spec clear(t(), key()) :: t()
   def clear(%__MODULE__{} = retry, key) do
     retry
     |> cancel_timer(key)
     |> update_in([Access.key!(:attempts)], &Map.delete(&1, key))
   end
 
+  @spec reset(t(), Enumerable.t()) :: t()
   def reset(%__MODULE__{} = retry, keys) do
     Enum.reduce(keys, retry, &clear(&2, &1))
   end
 
+  @spec cancel_all(t()) :: t()
   def cancel_all(%__MODULE__{} = retry) do
     retry.timers
     |> Map.values()
@@ -72,6 +99,7 @@ defmodule Upkeep.Coordinator.Retry do
     %{retry | attempts: %{}, timers: %{}}
   end
 
+  @spec pop_timer(t(), key(), reference()) :: {:ok, t()} | :stale
   def pop_timer(%__MODULE__{} = retry, key, timer_ref) do
     case Map.fetch(retry.timers, key) do
       {:ok, {^timer_ref, _process_ref}} ->

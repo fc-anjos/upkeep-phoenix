@@ -11,6 +11,8 @@ defmodule Upkeep.Source.Spec do
     query_adapter = Keyword.get(opts, :query_adapter)
 
     quote bind_quoted: [repo: repo, retry: retry, query_adapter: query_adapter] do
+      @behaviour Upkeep.Source
+
       import Upkeep.Source,
         only: [invalidated_by: 2, invalidated_by: 3, reacts_to: 2, reacts_to: 3]
 

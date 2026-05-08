@@ -16,17 +16,44 @@ defmodule Upkeep.Source.Coverage do
             unknown: [],
             warnings: []
 
+  @type entry :: map()
+  @type diagnostic :: %{
+          severity: :error | :warn,
+          kind: :unknown | :warning | :broad,
+          reason: atom(),
+          label: String.t(),
+          schema: module() | nil,
+          schema_label: String.t() | nil,
+          message: String.t(),
+          action: String.t(),
+          location_label: String.t() | nil,
+          source_excerpt: String.t() | nil
+        }
+  @type t :: %__MODULE__{
+          source: module(),
+          params: Upkeep.Source.params(),
+          precise: [entry()],
+          broad: [entry()],
+          explicit: [entry()],
+          unknown: [entry()],
+          warnings: [entry()]
+        }
+
+  @spec new(module(), map(), keyword()) :: t()
   def new(source, params, attrs \\ []) do
     struct!(__MODULE__, Keyword.merge([source: source, params: params], attrs))
   end
 
+  @spec known?(t()) :: boolean()
   def known?(%__MODULE__{unknown: []}), do: true
   def known?(%__MODULE__{}), do: false
 
+  @spec severity(t()) :: :ok | :warn | :error
   def severity(%__MODULE__{unknown: [_ | _]}), do: :error
   def severity(%__MODULE__{warnings: [_ | _]}), do: :warn
   def severity(%__MODULE__{}), do: :ok
 
+  @spec summary(t()) :: String.t()
   def summary(%__MODULE__{unknown: [_ | _]}) do
     "Upkeep found gaps that can leave the source non-reactive."
   end
@@ -51,6 +78,7 @@ defmodule Upkeep.Source.Coverage do
     "Upkeep has not observed an invalidation surface for this source."
   end
 
+  @spec diagnostics(t(), keyword()) :: [diagnostic()]
   def diagnostics(%__MODULE__{} = coverage, opts \\ []) do
     source_location = Keyword.get(opts, :source_location)
 
@@ -60,6 +88,7 @@ defmodule Upkeep.Source.Coverage do
     |> Enum.uniq_by(&{&1.kind, &1.schema, &1.reason, &1.action})
   end
 
+  @spec explain(t(), keyword()) :: String.t()
   def explain(%__MODULE__{} = coverage, opts \\ []) do
     source = inspect(coverage.source)
     params = inspect(coverage.params)
@@ -89,6 +118,7 @@ defmodule Upkeep.Source.Coverage do
     |> Enum.join("\n")
   end
 
+  @spec merge(t(), t()) :: t()
   def merge(%__MODULE__{} = left, %__MODULE__{} = right) do
     %__MODULE__{
       left

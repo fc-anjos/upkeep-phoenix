@@ -5,16 +5,29 @@ defmodule Upkeep.DAG.Graph do
 
   alias Upkeep.DAG.Plan
 
+  @type node_id :: term()
+  @type node_kind :: :source | :derived | :component | term()
+  @type graph_node :: %{id: node_id(), kind: node_kind()}
+  @opaque t :: %__MODULE__{
+            nodes: %{optional(node_id()) => graph_node()},
+            deps: %{optional(node_id()) => [node_id()]},
+            dependents: %{optional(node_id()) => MapSet.t(node_id())}
+          }
+
   def new, do: %__MODULE__{}
 
+  @spec has_node?(t(), node_id()) :: boolean()
   def has_node?(%__MODULE__{} = graph, id), do: Map.has_key?(graph.nodes, id)
 
+  @spec kind(t(), node_id()) :: node_kind()
   def kind(%__MODULE__{} = graph, id) do
     Map.fetch!(graph.nodes, id).kind
   end
 
+  @spec deps(t(), node_id()) :: [node_id()]
   def deps(%__MODULE__{} = graph, id), do: Map.fetch!(graph.deps, id)
 
+  @spec put_node(t(), node_id(), node_kind(), [node_id()]) :: t()
   def put_node(%__MODULE__{} = graph, id, kind, deps) when is_list(deps) do
     if same_topology?(graph, id, kind, deps) do
       graph
@@ -31,6 +44,7 @@ defmodule Upkeep.DAG.Graph do
     end
   end
 
+  @spec remove_node(t(), node_id()) :: t()
   def remove_node(%__MODULE__{} = graph, id) do
     deps = Map.get(graph.deps, id, [])
 
@@ -49,20 +63,24 @@ defmodule Upkeep.DAG.Graph do
     }
   end
 
+  @spec topological_order!(t()) :: [node_id()]
   def topological_order!(%__MODULE__{} = graph) do
     order = topological_order(graph)
     :ok = validate_topological_order!(graph, order)
     order
   end
 
+  @spec downstream_ids(t(), node_id()) :: [node_id()]
   def downstream_ids(%__MODULE__{} = graph, root_id) do
     downstream_order(graph, MapSet.new([root_id]))
   end
 
+  @spec affected_ids(t(), [node_id()]) :: [node_id()]
   def affected_ids(%__MODULE__{} = graph, root_ids) when is_list(root_ids) do
     downstream_order(graph, MapSet.new(root_ids))
   end
 
+  @spec subgraph_plan(t(), node_id()) :: Plan.t()
   def subgraph_plan(%__MODULE__{} = graph, root_id) do
     node_ids =
       if Map.has_key?(graph.nodes, root_id) do
@@ -82,6 +100,11 @@ defmodule Upkeep.DAG.Graph do
     }
   end
 
+  @spec applicable_subgraphs(t(), [node_id()], (node_id(), graph_node() ->
+                                                  :include
+                                                  | :exclude
+                                                  | {:include, term()}
+                                                  | {:exclude, term()})) :: Plan.t()
   def applicable_subgraphs(%__MODULE__{} = graph, root_ids, classify)
       when is_list(root_ids) and is_function(classify, 2) do
     roots = sort_terms(root_ids)
@@ -117,6 +140,7 @@ defmodule Upkeep.DAG.Graph do
     }
   end
 
+  @spec topological_subset(t(), Enumerable.t()) :: [node_id()]
   def topological_subset(%__MODULE__{} = graph, ids) do
     included = MapSet.new(ids)
 
@@ -125,6 +149,7 @@ defmodule Upkeep.DAG.Graph do
     |> Enum.filter(&MapSet.member?(included, &1))
   end
 
+  @spec subgraphs_for(t(), Enumerable.t()) :: [Plan.subgraph()]
   def subgraphs_for(%__MODULE__{} = graph, included) do
     included
     |> connected_subgraphs(graph)
@@ -135,6 +160,7 @@ defmodule Upkeep.DAG.Graph do
     |> Enum.sort_by(fn subgraph -> {-subgraph.count, inspect(subgraph.node_ids)} end)
   end
 
+  @spec largest_subgraphs([Plan.subgraph()]) :: [Plan.subgraph()]
   def largest_subgraphs([]), do: []
 
   def largest_subgraphs(subgraphs) do
@@ -142,6 +168,11 @@ defmodule Upkeep.DAG.Graph do
     Enum.filter(subgraphs, &(&1.count == largest_count))
   end
 
+  @spec snapshot(t()) :: %{
+          nodes: [map()],
+          edges: [%{from: node_id(), to: node_id()}],
+          topological_order: [node_id()]
+        }
   def snapshot(%__MODULE__{} = graph) do
     order = topological_order!(graph)
 
