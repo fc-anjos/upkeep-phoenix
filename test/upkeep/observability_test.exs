@@ -2,6 +2,7 @@ defmodule Upkeep.ObservabilityTest do
   use ExUnit.Case, async: false
 
   alias Upkeep.Live
+  alias Upkeep.TestSupport.{DagProbe, LiveSocket}
 
   defmodule Issue do
     defstruct [:project_id]
@@ -43,7 +44,7 @@ defmodule Upkeep.ObservabilityTest do
 
   test "stores recent runtime telemetry events", %{table: table} do
     socket =
-      %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+      LiveSocket.socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
       |> Live.derive(:issue_count, [:issues], fn %{issues: issues} -> length(issues) end)
 
@@ -88,7 +89,7 @@ defmodule Upkeep.ObservabilityTest do
     :ets.insert(table, {{:issues, project_id}, [:before]})
 
     socket =
-      %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+      LiveSocket.socket()
       |> Live.watch(:issues, ProjectIssues, project_id: project_id)
 
     :ets.insert(table, {{:issues, project_id}, [:after]})
@@ -100,8 +101,7 @@ defmodule Upkeep.ObservabilityTest do
 
     :ok = Upkeep.Test.drain()
 
-    assert_receive {:dag_values,
-                    [{{ProjectIssues, %{project_id: ^project_id}}, [:after]}] = pairs}
+    pairs = DagProbe.assert_values([{{ProjectIssues, %{project_id: project_id}}, [:after]}])
 
     socket = Live.apply_dag_values(socket, pairs)
     assert socket.assigns.issues == [:after]
@@ -143,12 +143,7 @@ defmodule Upkeep.ObservabilityTest do
 
     source_node_id = {:source, {ProjectIssues, %{project_id: project_id}}}
 
-    %Phoenix.LiveView.Socket{
-      endpoint: UpkeepWeb.Endpoint,
-      view: UpkeepWeb.KanbanLive,
-      transport_pid: self(),
-      assigns: %{__changed__: %{}}
-    }
+    LiveSocket.connected_socket()
     |> Live.watch(:issues, ProjectIssues, project_id: project_id)
     |> Live.derive(:issue_count, [:issues], &__MODULE__.issue_count/1)
     |> Live.derive(:local_count, [:issue_count], fn %{issue_count: count} -> count end)
@@ -182,7 +177,7 @@ defmodule Upkeep.ObservabilityTest do
   end
 
   test "can clear stored events" do
-    %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+    LiveSocket.socket()
     |> Live.watch(:issues, ProjectIssues, project_id: 1)
 
     assert Upkeep.recent_events() != []

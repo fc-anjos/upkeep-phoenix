@@ -5,6 +5,16 @@ defmodule Upkeep.LiveRefreshTest do
 
   import Upkeep.TestSupport, only: [attach_telemetry: 1]
 
+  import Upkeep.TestSupport.LiveSocket,
+    only: [
+      connected_socket: 0,
+      disconnected_socket: 0,
+      scoped_connected_socket: 1,
+      socket: 0
+    ]
+
+  alias Upkeep.TestSupport.{Config, DagProbe}
+
   defmodule Issue do
     defstruct [:project_id, :issue_id]
   end
@@ -142,7 +152,7 @@ defmodule Upkeep.LiveRefreshTest do
 
   test "many changes for one source reload once per flush", %{table: table} do
     socket =
-      new_socket()
+      socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
 
     assert load_count(:issues) == 1
@@ -162,7 +172,7 @@ defmodule Upkeep.LiveRefreshTest do
 
   test "different affected sources each reload once", %{table: table} do
     socket =
-      new_socket()
+      socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
       |> Live.watch(:activity, ProjectActivity, project_id: 1)
 
@@ -186,7 +196,7 @@ defmodule Upkeep.LiveRefreshTest do
 
   test "failed source load raises", %{table: table} do
     socket =
-      new_socket()
+      socket()
       |> Live.watch(:issues, FailingIssues, project_id: 1)
 
     assert load_count(:failing) == 1
@@ -203,8 +213,8 @@ defmodule Upkeep.LiveRefreshTest do
   end
 
   test "queues are per socket process state", %{table: table} do
-    socket_a = Live.watch(new_socket(), :issues, ProjectIssues, project_id: 1)
-    socket_b = Live.watch(new_socket(), :issues, ProjectIssues, project_id: 1)
+    socket_a = Live.watch(socket(), :issues, ProjectIssues, project_id: 1)
+    socket_b = Live.watch(socket(), :issues, ProjectIssues, project_id: 1)
 
     :ets.insert(table, {{:issues, 1}, [:issue_b]})
 
@@ -230,7 +240,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     task_a =
       Task.async(fn ->
-        connected_live_socket()
+        connected_socket()
         |> Live.watch(:issues, BlockingScopedIssues, user_id: user_id, test_pid: test_pid)
       end)
 
@@ -238,7 +248,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     task_b =
       Task.async(fn ->
-        connected_live_socket()
+        connected_socket()
         |> Live.watch(:issues, BlockingScopedIssues, user_id: user_id, test_pid: test_pid)
       end)
 
@@ -264,11 +274,11 @@ defmodule Upkeep.LiveRefreshTest do
     put_scoped_user(table, user_b, [:user_b_issue])
 
     socket_a =
-      connected_live_socket()
+      connected_socket()
       |> Live.watch(:issues, ScopedIssues, user_id: user_a)
 
     socket_b =
-      connected_live_socket()
+      connected_socket()
       |> Live.watch(:issues, ScopedIssues, user_id: user_b)
 
     assert socket_a.assigns.issues == [:user_a_issue]
@@ -290,7 +300,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     task_a =
       Task.async(fn ->
-        connected_live_socket()
+        connected_socket()
         |> Live.watch(:issues, BlockingScopedIssues, user_id: user_id, test_pid: test_pid)
       end)
 
@@ -298,7 +308,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     task_b =
       Task.async(fn ->
-        connected_live_socket()
+        connected_socket()
         |> Live.watch(:issues, BlockingScopedIssues, user_id: user_id, test_pid: test_pid)
       end)
 
@@ -341,7 +351,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     task_a =
       Task.async(fn ->
-        connected_live_socket()
+        connected_socket()
         |> Live.watch(:issues, ScopedIssues, user_id: user_id)
         |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
       end)
@@ -350,7 +360,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     task_b =
       Task.async(fn ->
-        connected_live_socket()
+        connected_socket()
         |> Live.watch(:issues, ScopedIssues, user_id: user_id)
         |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
       end)
@@ -396,12 +406,12 @@ defmodule Upkeep.LiveRefreshTest do
     :ets.insert(table, {{:loads, :shared_issue_names, user_b}, 0})
 
     socket_a =
-      connected_live_socket()
+      connected_socket()
       |> Live.watch(:issues, ScopedIssues, user_id: user_a)
       |> Live.derive(:issue_names, [:issues], &__MODULE__.shared_issue_names/1)
 
     socket_b =
-      connected_live_socket()
+      connected_socket()
       |> Live.watch(:issues, ScopedIssues, user_id: user_b)
       |> Live.derive(:issue_names, [:issues], &__MODULE__.shared_issue_names/1)
 
@@ -424,7 +434,7 @@ defmodule Upkeep.LiveRefreshTest do
       {:derived, UpkeepWeb.KanbanLive, :issue_count, [shared_source_id],
        {__MODULE__, :shared_issue_count, 1}}
 
-    connected_live_socket()
+    connected_socket()
     |> Live.watch(:issues, ScopedIssues, user_id: user_id)
     |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
 
@@ -441,7 +451,7 @@ defmodule Upkeep.LiveRefreshTest do
                       fun: {__MODULE__, :shared_issue_count, 1}
                     }}
 
-    disconnected_live_socket()
+    disconnected_socket()
     |> Live.watch(:issues, ScopedIssues, user_id: user_id)
     |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
 
@@ -454,7 +464,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     issue_count_fn = fn %{issues: issues} -> length(issues) + user_id end
 
-    connected_live_socket()
+    connected_socket()
     |> Live.watch(:issues, ScopedIssues, user_id: user_id)
     |> Live.derive(:issue_count, [:issues], issue_count_fn)
 
@@ -465,7 +475,7 @@ defmodule Upkeep.LiveRefreshTest do
                       reason: :captured_fun
                     }}
 
-    connected_live_socket()
+    connected_socket()
     |> Live.component(:issue_detail, [], fn %{} -> %{issue_id: user_id} end)
     |> Live.watch(:issues, ScopedIssues, [user_id: user_id], under: :issue_detail)
     |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
@@ -479,7 +489,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     local_marker = :local
 
-    connected_live_socket()
+    connected_socket()
     |> Live.watch(:issues, ScopedIssues, user_id: user_id)
     |> Live.derive(:local_issues, [:issues], fn %{issues: issues} ->
       {local_marker, issues} |> elem(1)
@@ -510,7 +520,7 @@ defmodule Upkeep.LiveRefreshTest do
     :ets.insert(table, {{:loads, :issues, user_a}, 0})
 
     socket =
-      connected_live_socket(%{user_id: user_a})
+      scoped_connected_socket(%{user_id: user_a})
       |> Live.watch(:issues, ProjectIssues, project_id: user_a)
       |> Live.derive(:viewer_issue_count, [:issues], fn %{
                                                           issues: issues,
@@ -530,14 +540,14 @@ defmodule Upkeep.LiveRefreshTest do
   end
 
   test "capturing socket scope raises under strict policy before sharing data", %{table: table} do
-    with_captured_scope_policy(:raise, fn ->
+    Config.with_upkeep(:captured_scope_policy, :raise, fn ->
       user_id = System.unique_integer([:positive])
       :ets.insert(table, {{:issues, user_id}, [:user_issue]})
       :ets.insert(table, {{:loads, :issues, user_id}, 0})
       :ets.insert(table, {{:loads, :captured_scope_label, user_id}, 0})
 
       socket =
-        connected_live_socket(%{user_id: user_id})
+        scoped_connected_socket(%{user_id: user_id})
         |> Live.watch(:issues, ProjectIssues, project_id: user_id)
 
       assert_raise Upkeep.Runtime.ImplicitScopeError, ~r/captures :socket/, fn ->
@@ -554,7 +564,7 @@ defmodule Upkeep.LiveRefreshTest do
   test "capturing socket scope stays local with error telemetry in production policy", %{
     table: table
   } do
-    with_captured_scope_policy(:telemetry, fn ->
+    Config.with_upkeep(:captured_scope_policy, :telemetry, fn ->
       attach_telemetry([[:upkeep, :derive, :sharing]])
 
       user_a = System.unique_integer([:positive])
@@ -565,11 +575,11 @@ defmodule Upkeep.LiveRefreshTest do
       :ets.insert(table, {{:loads, :captured_scope_label, user_b}, 0})
 
       base_a =
-        connected_live_socket(%{user_id: user_a})
+        scoped_connected_socket(%{user_id: user_a})
         |> Live.watch(:issues, ProjectIssues, project_id: user_a)
 
       base_b =
-        connected_live_socket(%{user_id: user_b})
+        scoped_connected_socket(%{user_id: user_b})
         |> Live.watch(:issues, ProjectIssues, project_id: user_a)
 
       socket_a =
@@ -625,7 +635,7 @@ defmodule Upkeep.LiveRefreshTest do
     visible_extra = user_id
 
     socket =
-      connected_live_socket()
+      connected_socket()
       |> Live.watch(:issues, ScopedIssues, user_id: user_id)
       |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
       |> Live.derive(:visible_count, [:issue_count], fn %{issue_count: count} ->
@@ -671,7 +681,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     task_a =
       Task.async(fn ->
-        connected_live_socket()
+        connected_socket()
         |> Live.watch(:issues, ScopedIssues, user_id: user_id)
         |> Live.derive(:issue_stats, [:issues], &__MODULE__.shared_issue_stats/1)
         |> Live.derive(:issue_label, [:issue_stats], &__MODULE__.shared_issue_label/1)
@@ -681,7 +691,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     task_b =
       Task.async(fn ->
-        connected_live_socket()
+        connected_socket()
         |> Live.watch(:issues, ScopedIssues, user_id: user_id)
         |> Live.derive(:issue_stats, [:issues], &__MODULE__.shared_issue_stats/1)
         |> Live.derive(:issue_label, [:issue_stats], &__MODULE__.shared_issue_label/1)
@@ -723,13 +733,13 @@ defmodule Upkeep.LiveRefreshTest do
     :ets.insert(table, {{:loads, :shared_user_label, user_b}, 0})
 
     socket_a =
-      connected_live_socket()
+      connected_socket()
       |> Live.watch(:issues, ScopedIssues, user_id: user_a)
       |> Live.derive(:issue_stats, [:issues], &__MODULE__.shared_issue_stats/1)
       |> Live.derive(:user_label, [:issue_stats], &__MODULE__.shared_user_label/1)
 
     socket_b =
-      connected_live_socket()
+      connected_socket()
       |> Live.watch(:issues, ScopedIssues, user_id: user_b)
       |> Live.derive(:issue_stats, [:issues], &__MODULE__.shared_issue_stats/1)
       |> Live.derive(:user_label, [:issue_stats], &__MODULE__.shared_user_label/1)
@@ -754,7 +764,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     task_a =
       Task.async(fn ->
-        connected_live_socket()
+        connected_socket()
         |> Live.watch(:issues, ScopedIssues, user_id: user_id)
         |> Live.watch(:activity, ScopedActivity, user_id: user_id)
         |> Live.derive(
@@ -768,7 +778,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     task_b =
       Task.async(fn ->
-        connected_live_socket()
+        connected_socket()
         |> Live.watch(:issues, ScopedIssues, user_id: user_id)
         |> Live.watch(:activity, ScopedActivity, user_id: user_id)
         |> Live.derive(
@@ -816,7 +826,7 @@ defmodule Upkeep.LiveRefreshTest do
        {__MODULE__, :shared_project_dashboard_model, 1}}
 
     socket =
-      connected_live_socket()
+      connected_socket()
       |> Live.watch(:issues, ProjectIssues, project_id: project_id)
       |> Live.watch(:activity, ProjectActivity, project_id: project_id)
       |> Live.derive(
@@ -866,7 +876,7 @@ defmodule Upkeep.LiveRefreshTest do
     :ets.insert(table, {{:loads, :shared_user_project_dashboard_model, user_b}, 0})
 
     socket_a =
-      connected_live_socket()
+      connected_socket()
       |> Live.watch(:issues, ScopedIssues, user_id: user_a)
       |> Live.watch(:activity, ProjectActivity, project_id: project_id)
       |> Live.derive(
@@ -876,7 +886,7 @@ defmodule Upkeep.LiveRefreshTest do
       )
 
     socket_b =
-      connected_live_socket()
+      connected_socket()
       |> Live.watch(:issues, ScopedIssues, user_id: user_b)
       |> Live.watch(:activity, ProjectActivity, project_id: project_id)
       |> Live.derive(
@@ -938,13 +948,13 @@ defmodule Upkeep.LiveRefreshTest do
     :ets.insert(table, {{:loads, :shared_dashboard_model, user_b}, 0})
 
     socket_a =
-      connected_live_socket()
+      connected_socket()
       |> Live.watch(:issues, ScopedIssues, user_id: user_a)
       |> Live.watch(:activity, ScopedActivity, user_id: user_a)
       |> Live.derive(:dashboard_model, [:issues, :activity], &__MODULE__.shared_dashboard_model/1)
 
     socket_b =
-      connected_live_socket()
+      connected_socket()
       |> Live.watch(:issues, ScopedIssues, user_id: user_b)
       |> Live.watch(:activity, ScopedActivity, user_id: user_b)
       |> Live.derive(:dashboard_model, [:issues, :activity], &__MODULE__.shared_dashboard_model/1)
@@ -979,7 +989,7 @@ defmodule Upkeep.LiveRefreshTest do
     source_id = {ScopedIssues, %{user_id: user_id}}
 
     socket =
-      connected_live_socket()
+      connected_socket()
       |> Live.watch(:issues, ScopedIssues, user_id: user_id)
       |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
 
@@ -999,7 +1009,7 @@ defmodule Upkeep.LiveRefreshTest do
       {:derived, UpkeepWeb.KanbanLive, :issue_count, [source_id],
        {__MODULE__, :shared_issue_count, 1}}
 
-    assert_receive {:dag_values, pairs}
+    pairs = DagProbe.receive_batch()
     assert {source_id, [{user_id, :before}, {user_id, :after}]} in pairs
     assert {graph_node_id, 2} in pairs
 
@@ -1059,7 +1069,7 @@ defmodule Upkeep.LiveRefreshTest do
     source_id = {ScopedIssues, %{user_id: user_id}}
 
     socket =
-      connected_live_socket()
+      connected_socket()
       |> Live.watch(:issues, ScopedIssues, user_id: user_id)
       |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
       |> Live.derive(:visible_count, [:issue_count], fn %{issue_count: count} -> count + extra end)
@@ -1077,7 +1087,7 @@ defmodule Upkeep.LiveRefreshTest do
       {:derived, UpkeepWeb.KanbanLive, :issue_count, [source_id],
        {__MODULE__, :shared_issue_count, 1}}
 
-    assert_receive {:dag_values, pairs}
+    pairs = DagProbe.receive_batch()
     assert {graph_node_id, 2} in pairs
 
     socket = Live.apply_dag_values(socket, pairs)
@@ -1089,7 +1099,7 @@ defmodule Upkeep.LiveRefreshTest do
 
   test "watch is idempotent for the same source identity" do
     socket =
-      new_socket()
+      socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
 
@@ -1100,7 +1110,7 @@ defmodule Upkeep.LiveRefreshTest do
 
   test "disconnected LiveView-shaped watches load without joining source interest" do
     socket =
-      disconnected_live_socket()
+      disconnected_socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
 
     assert socket.assigns.issues == [:issue_a]
@@ -1114,7 +1124,7 @@ defmodule Upkeep.LiveRefreshTest do
 
   test "connected LiveView-shaped watches join source interest" do
     socket =
-      connected_live_socket()
+      connected_socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
 
     assert socket.assigns.issues == [:issue_a]
@@ -1126,7 +1136,7 @@ defmodule Upkeep.LiveRefreshTest do
     table: table
   } do
     socket =
-      new_socket()
+      socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
       |> Live.watch(:other_issues, ProjectIssues, project_id: 1)
 
@@ -1149,7 +1159,7 @@ defmodule Upkeep.LiveRefreshTest do
 
   test "unwatch by assign keeps shared source interest until last alias is removed" do
     socket =
-      new_socket()
+      socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
       |> Live.watch(:other_issues, ProjectIssues, project_id: 1)
 
@@ -1164,7 +1174,7 @@ defmodule Upkeep.LiveRefreshTest do
 
   test "unwatch by assign leaves interest and stops refreshes", %{table: table} do
     socket =
-      new_socket()
+      socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
 
     assert member_count(ProjectIssues, project_id: 1) == 1
@@ -1178,7 +1188,7 @@ defmodule Upkeep.LiveRefreshTest do
     change = updated_issue(1, 1)
     assert :ok = Upkeep.notify(change)
     :ok = Upkeep.Test.drain()
-    refute_received {:dag_values, [{_, _}]}
+    DagProbe.refute_any()
 
     socket =
       socket
@@ -1191,7 +1201,7 @@ defmodule Upkeep.LiveRefreshTest do
 
   test "unwatch by source params clears pending refreshes", %{table: table} do
     socket =
-      new_socket()
+      socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
       |> Live.queue_matching(updated_issue(1, 1))
 
@@ -1209,7 +1219,7 @@ defmodule Upkeep.LiveRefreshTest do
 
   test "derived assigns recompute through a real dependency chain", %{table: table} do
     socket =
-      new_socket()
+      socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
       |> Live.derive(:issue_count, [:issues], fn %{issues: issues} ->
         bump_load({:loads, :issue_count, 1})
@@ -1242,7 +1252,7 @@ defmodule Upkeep.LiveRefreshTest do
     table: table
   } do
     socket =
-      new_socket()
+      socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
       |> Live.watch(:activity, ProjectActivity, project_id: 1)
       |> Live.derive(:visible_issues, [:issues], fn %{issues: issues} ->
@@ -1294,7 +1304,7 @@ defmodule Upkeep.LiveRefreshTest do
     table: table
   } do
     socket =
-      new_socket()
+      socket()
       |> Live.component(:issue_detail, [], fn %{} -> %{issue_id: 1} end)
       |> Live.watch(:comments, IssueComments, [issue_id: 1], under: :issue_detail)
       |> Live.derive(:comment_count, [:comments], fn %{comments: comments} -> length(comments) end)
@@ -1335,7 +1345,7 @@ defmodule Upkeep.LiveRefreshTest do
     component_id = {__MODULE__.IssueComponents, :issue_card, 1}
 
     socket =
-      new_socket()
+      socket()
       |> Live.component(component_id, [], fn %{} -> %{issue_id: 1} end)
       |> Live.watch(:issue_card_comments, IssueComments, [issue_id: 1], under: component_id)
       |> Live.derive(:issue_card_comment_count, [:issue_card_comments], fn %{
@@ -1379,7 +1389,7 @@ defmodule Upkeep.LiveRefreshTest do
     :ets.insert(table, {{:issues, 1}, [1]})
 
     socket =
-      new_socket()
+      socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
       |> Live.component(component_id, [:issues], fn %{issues: [issue_id | _]} ->
         %{issue_id: issue_id}
@@ -1435,7 +1445,7 @@ defmodule Upkeep.LiveRefreshTest do
 
   test "removing component-scoped source preserves shared source interest", %{table: table} do
     socket =
-      new_socket()
+      socket()
       |> Live.watch(:comments, IssueComments, issue_id: 1)
       |> Live.component(:issue_detail, [], fn %{} -> %{issue_id: 1} end)
       |> Live.watch(:detail_comments, IssueComments, [issue_id: 1], under: :issue_detail)
@@ -1453,7 +1463,7 @@ defmodule Upkeep.LiveRefreshTest do
     source_id = {IssueComments, %{issue_id: 1}}
     assert :ok = Upkeep.notify(change)
     assert :ok = Upkeep.Test.drain()
-    assert_receive {:dag_values, [{^source_id, [:comment_a, :comment_c]}]}
+    assert DagProbe.receive_value(source_id) == [:comment_a, :comment_c]
 
     socket = Live.apply_dag_value(socket, source_id, [:comment_a, :comment_c])
 
@@ -1467,7 +1477,7 @@ defmodule Upkeep.LiveRefreshTest do
 
   test "graph snapshot exposes assigns, watches, and pending refreshes" do
     socket =
-      new_socket()
+      socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
       |> Live.derive(:issue_count, [:issues], fn %{issues: issues} -> length(issues) end)
       |> Live.component(:issue_detail, [:issues], fn %{issues: issues} ->
@@ -1523,7 +1533,7 @@ defmodule Upkeep.LiveRefreshTest do
     source_id = {ProjectIssues, %{project_id: 1}}
 
     socket =
-      connected_live_socket()
+      connected_socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1)
       |> Live.derive(:issue_count, [:issues], fn %{issues: issues} -> length(issues) end)
 
@@ -1588,30 +1598,6 @@ defmodule Upkeep.LiveRefreshTest do
 
     assert_receive {:telemetry, [:upkeep, :source, :unwatch], %{count: 1},
                     %{source_id: ^source_id, kind: :remove}}
-  end
-
-  defp new_socket, do: %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
-
-  defp disconnected_live_socket do
-    %Phoenix.LiveView.Socket{
-      endpoint: UpkeepWeb.Endpoint,
-      view: UpkeepWeb.KanbanLive,
-      assigns: %{__changed__: %{}}
-    }
-  end
-
-  defp connected_live_socket do
-    %Phoenix.LiveView.Socket{
-      endpoint: UpkeepWeb.Endpoint,
-      view: UpkeepWeb.KanbanLive,
-      transport_pid: self(),
-      assigns: %{__changed__: %{}}
-    }
-  end
-
-  defp connected_live_socket(current_scope) do
-    connected_live_socket()
-    |> Phoenix.Component.assign(:current_scope, current_scope)
   end
 
   def table_value(key) do
@@ -1805,20 +1791,6 @@ defmodule Upkeep.LiveRefreshTest do
       {:telemetry, _event, _measurements, _metadata} -> flush_telemetry_messages()
     after
       0 -> :ok
-    end
-  end
-
-  defp with_captured_scope_policy(policy, fun) do
-    previous = Application.get_env(:upkeep, :captured_scope_policy, :__missing__)
-    Application.put_env(:upkeep, :captured_scope_policy, policy)
-
-    try do
-      fun.()
-    after
-      case previous do
-        :__missing__ -> Application.delete_env(:upkeep, :captured_scope_policy)
-        value -> Application.put_env(:upkeep, :captured_scope_policy, value)
-      end
     end
   end
 end

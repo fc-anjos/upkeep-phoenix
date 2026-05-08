@@ -3,6 +3,7 @@ defmodule Upkeep.Runtime.ResultTest do
 
   alias Upkeep.Runtime
   alias Upkeep.Runtime.Specs
+  alias Upkeep.TestSupport.LiveSocket
 
   import Upkeep.TestSupport, only: [attach_telemetry: 1]
 
@@ -19,7 +20,7 @@ defmodule Upkeep.Runtime.ResultTest do
   end
 
   test "runtime mount returns effects instead of applying them" do
-    socket = new_socket()
+    socket = LiveSocket.socket()
     spec = Specs.source(:issues, ProjectIssues, %{project_id: 1}, nil)
 
     assert {:ok, socket, effects} = Runtime.mount(socket, spec)
@@ -38,7 +39,7 @@ defmodule Upkeep.Runtime.ResultTest do
     attach_telemetry([[:upkeep, :live, :effects, :apply]])
 
     result =
-      {:ok, new_socket(),
+      {:ok, LiveSocket.socket(),
        [
          {:assign, :issues, [:issue]},
          {:telemetry, [:runtime, :result, :test], %{count: 1}, %{kind: :test}}
@@ -65,6 +66,4 @@ defmodule Upkeep.Runtime.ResultTest do
       _other -> false
     end)
   end
-
-  defp new_socket, do: %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
 end

@@ -8,6 +8,7 @@ defmodule Upkeep.Coordinator.GraphTest do
   alias Upkeep.Coordinator.Graph.Notifier
   alias Upkeep.Invalidation.Bus
   alias Upkeep.InvalidationSurface
+  alias Upkeep.TestSupport.DagProbe
 
   defmodule Ev do
     defstruct [:id, :tenant_id]
@@ -130,7 +131,7 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       assert is_integer(flush_duration)
 
-      assert_receive {:dag_values, [{^node_id, :loaded_value}]}, 1_000
+      assert DagProbe.receive_value(node_id) == :loaded_value
 
       assert_receive {:telemetry, [:upkeep, :graph, :dispatch, :start], %{system_time: _},
                       %{shard: shard, pair_count: pair_count}}
@@ -179,7 +180,7 @@ defmodule Upkeep.Coordinator.GraphTest do
                         shard_count: 1
                       }}
 
-      assert_receive {:dag_values, [{^node_id, :loaded}]}, 1_000
+      assert DagProbe.receive_value(node_id) == :loaded
       assert :counters.get(counter, 1) == 1
 
       Graph.unregister(node_id)
@@ -201,7 +202,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       :ok = Graph.drain()
 
       assert :counters.get(counter, 1) == 1
-      assert_receive {:dag_values, [{^node_id, :loaded}]}, 1_000
+      assert DagProbe.receive_value(node_id) == :loaded
 
       Graph.unregister(node_id)
     end
@@ -231,7 +232,7 @@ defmodule Upkeep.Coordinator.GraphTest do
                         shard_count: 1
                       }}
 
-      assert_receive {:dag_values, [{^node_id, :loaded}]}, 1_000
+      assert DagProbe.receive_value(node_id) == :loaded
       assert :counters.get(counter, 1) == 1
 
       Graph.unregister(node_id)
@@ -255,11 +256,11 @@ defmodule Upkeep.Coordinator.GraphTest do
       # First flush: routes via key_a.
       notify(%Ev{id: 1, tenant_id: 1})
       :ok = Graph.drain()
-      assert_receive {:dag_values, [{^node_id, :v}]}, 1_000
+      assert DagProbe.receive_value(node_id) == :v
 
       notify(%Ev{id: 1, tenant_id: 2})
       :ok = Graph.drain()
-      assert_receive {:dag_values, [{^node_id, :v}]}, 1_000
+      assert DagProbe.receive_value(node_id) == :v
 
       Graph.unregister(node_id)
     end
@@ -275,7 +276,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       # No subscribers; notify must not deliver anything.
       notify(%Ev{id: 99, tenant_id: 1})
       :ok = Graph.drain()
-      refute_received {:dag_values, [{^node_id, _}]}
+      DagProbe.refute_value(node_id, 0)
     end
 
     test "reset removes shared source state and allows a fresh registration" do
@@ -287,13 +288,13 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       notify(%Ev{id: 100, tenant_id: 1})
       :ok = Graph.drain()
-      refute_received {:dag_values, [{^node_id, _}]}
+      DagProbe.refute_value(node_id, 0)
 
       :ok = Graph.register_loader(node_id, surface, fn -> {:new, surface} end)
 
       notify(%Ev{id: 100, tenant_id: 1})
       :ok = Graph.drain()
-      assert_receive {:dag_values, [{^node_id, :new}]}, 1_000
+      assert DagProbe.receive_value(node_id) == :new
 
       Graph.unregister(node_id)
     end
@@ -326,8 +327,8 @@ defmodule Upkeep.Coordinator.GraphTest do
       notify(%Ev{id: 10, tenant_id: 1})
       :ok = Graph.drain()
 
-      assert_receive {:dag_values, [{^matching_id, :matched}]}, 1_000
-      refute_received {:dag_values, [{{:unrelated_source, _, _}, _}]}
+      assert DagProbe.receive_value(matching_id) == :matched
+      DagProbe.refute_any()
 
       assert :counters.get(matching_loads, 1) == 1
       assert :counters.get(unrelated_loads, 1) == 0
@@ -368,7 +369,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       notify(event)
       :ok = Graph.drain()
 
-      assert_receive {:dag_values, batch}, 1_000
+      batch = DagProbe.receive_batch()
       assert {node_id, :stable_value} in batch
       assert {derived_id, {:derived, :stable_value}} in batch
       assert :counters.get(loads, 1) == 1
@@ -401,7 +402,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       assert is_integer(retry_delay_ms)
       assert retry_delay_ms >= 0
 
-      assert_receive {:dag_values, batch}, 1_000
+      batch = DagProbe.receive_batch()
       assert {node_id, :recovered_value} in batch
       assert {derived_id, {:derived, :recovered_value}} in batch
       assert :counters.get(loads, 1) == 3
@@ -441,7 +442,7 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       notify(event)
       :ok = Graph.drain()
-      assert_receive {:dag_values, [{^node_id, :stable_value}]}, 1_000
+      assert DagProbe.receive_value(node_id) == :stable_value
 
       parent = self()
 
@@ -461,13 +462,13 @@ defmodule Upkeep.Coordinator.GraphTest do
       assert %{retry_delay_ms: nil} = List.last(failures)
       assert :counters.get(loads, 1) == 5
 
-      refute_received {:dag_values, [{^node_id, _}]}
+      DagProbe.refute_value(node_id, 0)
 
       :ets.insert(table, {:mode, :recover})
       notify(event)
       :ok = Graph.drain()
 
-      assert_receive {:dag_values, [{^node_id, :recovered_value}]}, 1_000
+      assert DagProbe.receive_value(node_id) == :recovered_value
       assert :counters.get(loads, 1) == 6
 
       Graph.unregister(node_id)
@@ -510,7 +511,7 @@ defmodule Upkeep.Coordinator.GraphTest do
                retry_delay_ms: nil
              } = metadata
 
-      refute_receive {:dag_values, [{^node_id, _}]}, 100
+      DagProbe.refute_value(node_id)
       assert :ets.lookup(table, {:loads, event.id}) == [{{:loads, event.id}, 2}]
 
       Graph.unregister(node_id)
@@ -587,7 +588,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       notify(%Ev{id: 20, tenant_id: 1})
       :ok = Graph.drain()
 
-      assert_receive {:dag_values, batch}, 1_000
+      batch = DagProbe.receive_batch()
       assert {source_id, [:a, :b]} in batch
       assert {derived_id, 2} in batch
 
@@ -625,7 +626,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       Enum.each(1..12, fn _ -> notify(event) end)
       :ok = Graph.drain()
 
-      assert_receive {:dag_values, batch}, 1_000
+      batch = DagProbe.receive_batch()
       assert {source_id, :value} in batch
       assert {derived_id, :value} in batch
 
@@ -664,7 +665,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       Enum.each(1..12, fn _ -> notify(%Ev{id: 7, tenant_id: 1}) end)
       :ok = Graph.drain()
 
-      assert_receive {:dag_values, batch}, 1_000
+      batch = DagProbe.receive_batch()
       assert {source_id, 42} in batch
       assert {derived_id, 84} in batch
 

@@ -3,6 +3,7 @@ defmodule Upkeep.RepoCaptureTest do
 
   alias Ecto.Changeset
   alias Upkeep.Live
+  alias Upkeep.TestSupport.{Config, DagProbe, LiveSocket}
   import ExUnit.CaptureLog
   import Upkeep.TestSupport, only: [attach_telemetry: 1]
 
@@ -122,7 +123,7 @@ defmodule Upkeep.RepoCaptureTest do
 
     error =
       assert_raise ArgumentError, fn ->
-        %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+        LiveSocket.socket()
         |> Live.watch(:issues, PlainRepoProjectIssues, %{project_id: 1},
           source_location: location
         )
@@ -141,10 +142,10 @@ defmodule Upkeep.RepoCaptureTest do
       snippet: "> 43  socket |> watch(:issues, PlainRepoExplicitLoad, project_id: 1)"
     }
 
-    with_repo_capture_policy(:warn, fn ->
+    Config.with_upkeep(:repo_capture_misconfiguration, :warn, fn ->
       log =
         capture_log(fn ->
-          %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+          LiveSocket.socket()
           |> Live.watch(:issues, PlainRepoExplicitLoad, %{project_id: 1},
             source_location: location
           )
@@ -227,7 +228,7 @@ defmodule Upkeep.RepoCaptureTest do
              end)
 
     :ok = Upkeep.Test.drain()
-    refute_received {:dag_values, [{_, _}]}
+    DagProbe.refute_any()
     refute Repo.get(Issue, 1)
   end
 
@@ -253,7 +254,7 @@ defmodule Upkeep.RepoCaptureTest do
              end)
 
     :ok = Upkeep.Test.drain()
-    refute_received {:dag_values, [{_, _}]}
+    DagProbe.refute_any()
     refute Repo.get(Issue, 1)
   end
 
@@ -298,7 +299,7 @@ defmodule Upkeep.RepoCaptureTest do
              end)
 
     socket = assert_project_issues(socket, 9, ["Mine"])
-    refute_received {:dag_values, [{{ProjectIssues, %{project_id: 1, user_id: 10}}, _}]}
+    DagProbe.refute_value({ProjectIssues, %{project_id: 1, user_id: 10}}, 0)
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Mine"]
   end
 
@@ -350,7 +351,7 @@ defmodule Upkeep.RepoCaptureTest do
              end)
 
     socket = assert_project_issues(socket, 9, ["Imported"])
-    refute_received {:dag_values, [{{ProjectIssues, %{project_id: 1, user_id: 10}}, _}]}
+    DagProbe.refute_value({ProjectIssues, %{project_id: 1, user_id: 10}}, 0)
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Imported"]
   end
 
@@ -552,7 +553,7 @@ defmodule Upkeep.RepoCaptureTest do
              end)
 
     :ok = Upkeep.Test.drain()
-    refute_received {:dag_values, [{_, _}]}
+    DagProbe.refute_any()
     assert %Issue{assignee_id: 10} = Repo.get!(Issue, 1)
   end
 
@@ -577,62 +578,28 @@ defmodule Upkeep.RepoCaptureTest do
     Repo.insert!(issue(id: 2, assignee_id: 9), upkeep: false)
 
     :ok = Upkeep.Test.drain()
-    refute_received {:dag_values, [{_, _}]}
+    DagProbe.refute_any()
   end
 
   defp watch_project(opts) do
     user_id = Keyword.fetch!(opts, :user_id)
 
-    %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+    LiveSocket.socket()
     |> Live.watch(:issues, ProjectIssues, project_id: 1, user_id: user_id)
   end
 
   defp watch_table_project(opts) do
     user_id = Keyword.fetch!(opts, :user_id)
 
-    %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+    LiveSocket.socket()
     |> Live.watch(:issues, TableProjectIssues, project_id: 1, user_id: user_id)
   end
 
   defp assert_project_issues(user_id, titles) do
     source_id = {ProjectIssues, %{project_id: 1, user_id: user_id}}
-    issues = receive_dag_value(source_id)
+    issues = DagProbe.receive_value(source_id)
     assert Enum.map(issues, & &1.title) == titles
     issues
-  end
-
-  @dag_buffer_key {__MODULE__, :dag_buffer}
-
-  defp receive_dag_value(source_id) do
-    buffered = Process.get(@dag_buffer_key, [])
-
-    case Enum.split_with(buffered, fn {id, _} -> id == source_id end) do
-      {[{^source_id, value} | rest_match], remaining} ->
-        Process.put(@dag_buffer_key, rest_match ++ remaining)
-        value
-
-      {[], _} ->
-        drain_until(source_id)
-    end
-  end
-
-  defp drain_until(source_id) do
-    receive do
-      {:dag_values, batch} ->
-        case Enum.split_with(batch, fn {id, _} -> id == source_id end) do
-          {[{^source_id, value} | rest_match], remaining} ->
-            existing = Process.get(@dag_buffer_key, [])
-            Process.put(@dag_buffer_key, existing ++ rest_match ++ remaining)
-            value
-
-          {[], _} ->
-            existing = Process.get(@dag_buffer_key, [])
-            Process.put(@dag_buffer_key, existing ++ batch)
-            drain_until(source_id)
-        end
-    after
-      1_000 -> flunk("did not receive :dag_values for #{inspect(source_id)}")
-    end
   end
 
   defp assert_project_issues(socket, user_id, titles) do
@@ -642,7 +609,7 @@ defmodule Upkeep.RepoCaptureTest do
 
   defp assert_table_project_issues(socket, user_id, titles) do
     source_id = {TableProjectIssues, %{project_id: 1, user_id: user_id}}
-    issues = receive_dag_value(source_id)
+    issues = DagProbe.receive_value(source_id)
     assert Enum.map(issues, & &1.title) == titles
     Live.apply_dag_value(socket, source_id, issues)
   end
@@ -715,19 +682,5 @@ defmodule Upkeep.RepoCaptureTest do
   defp update_returning_query?(query) do
     normalized = String.upcase(query)
     String.starts_with?(normalized, "UPDATE") and String.contains?(normalized, "RETURNING")
-  end
-
-  defp with_repo_capture_policy(policy, fun) do
-    previous = Application.get_env(:upkeep, :repo_capture_misconfiguration, :__missing__)
-    Application.put_env(:upkeep, :repo_capture_misconfiguration, policy)
-
-    try do
-      fun.()
-    after
-      case previous do
-        :__missing__ -> Application.delete_env(:upkeep, :repo_capture_misconfiguration)
-        value -> Application.put_env(:upkeep, :repo_capture_misconfiguration, value)
-      end
-    end
   end
 end

@@ -2,6 +2,7 @@ defmodule Upkeep.Runtime.PushTest do
   use ExUnit.Case, async: true
 
   import Upkeep.TestSupport, only: [attach_telemetry: 1]
+  alias Upkeep.TestSupport.LiveSocket
 
   defmodule ProjectIssues do
   end
@@ -12,7 +13,7 @@ defmodule Upkeep.Runtime.PushTest do
       [:upkeep, :live, :dag_values, :ignored]
     ])
 
-    socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}, issues: [:current]}}
+    socket = LiveSocket.socket(%{issues: [:current]})
     source_id = {ProjectIssues, %{project_id: 1}}
 
     shared_id =
@@ -48,7 +49,7 @@ defmodule Upkeep.Runtime.PushTest do
   test "single unknown pushed value emits ignored telemetry" do
     attach_telemetry([[:upkeep, :live, :dag_values, :ignored]])
 
-    socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+    socket = LiveSocket.socket()
     source_id = {ProjectIssues, %{project_id: 2}}
 
     assert {:ok, ^socket, []} = Upkeep.Runtime.apply_dag_value(socket, source_id, [:pushed])

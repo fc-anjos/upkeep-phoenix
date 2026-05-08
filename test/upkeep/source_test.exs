@@ -3,6 +3,7 @@ defmodule Upkeep.SourceTest do
 
   alias Upkeep.InvalidationSurface
   alias Upkeep.Live
+  alias Upkeep.TestSupport.{DagProbe, LiveSocket}
 
   defmodule Issue do
     defstruct [:id, :project_id, :assignee_id, :column_id]
@@ -304,7 +305,7 @@ defmodule Upkeep.SourceTest do
   test "watch joins source interest and notify dispatches through the coordinator", %{
     table: table
   } do
-    socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+    socket = LiveSocket.socket()
 
     socket = Live.watch(socket, :columns, BoardColumns, project_id: 123)
     assert socket.assigns.columns == [:todo]
@@ -317,14 +318,14 @@ defmodule Upkeep.SourceTest do
     :ok = Upkeep.Test.drain()
 
     source_id = {BoardColumns, %{project_id: 123}}
-    assert_receive {:dag_values, [{^source_id, [:todo, :doing]}]}
+    assert DagProbe.receive_value(source_id) == [:todo, :doing]
 
     refreshed = Live.apply_dag_value(socket, source_id, [:todo, :doing])
     assert refreshed.assigns.columns == [:todo, :doing]
   end
 
   test "coordinator does not dispatch to unrelated field-indexed watchers" do
-    socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+    socket = LiveSocket.socket()
 
     Live.watch(socket, :columns, BoardColumns, project_id: 123)
 
@@ -337,11 +338,11 @@ defmodule Upkeep.SourceTest do
     assert :ok = Upkeep.notify(change)
     :ok = Upkeep.Test.drain()
 
-    refute_received {:dag_values, [{_, _}]}
+    DagProbe.refute_any()
   end
 
   test "coordinator dispatches field-indexed watchers broadly when update old state is missing" do
-    socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+    socket = LiveSocket.socket()
 
     Live.watch(socket, :columns, BoardColumns, project_id: 123)
 
@@ -350,11 +351,11 @@ defmodule Upkeep.SourceTest do
     assert :ok = Upkeep.notify(change)
     :ok = Upkeep.Test.drain()
 
-    assert_receive {:dag_values, [{{BoardColumns, %{project_id: 123}}, [:todo]}]}
+    assert DagProbe.receive_value({BoardColumns, %{project_id: 123}}) == [:todo]
   end
 
   test "coordinator sends one event when a process watches overlapping source keys" do
-    socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+    socket = LiveSocket.socket()
     project_id = System.unique_integer([:positive])
     user_id = 9
 
@@ -370,25 +371,12 @@ defmodule Upkeep.SourceTest do
 
     assert :ok = Upkeep.notify(change)
 
-    assert_dag_values([
+    DagProbe.assert_values([
       {{BoardColumns, %{project_id: project_id}}, [:todo]},
       {{MyIssues, %{project_id: project_id, user_id: user_id}}, [:mine]}
     ])
 
-    refute_received {:dag_values, _}
-  end
-
-  defp assert_dag_values(expected, received \\ []) do
-    if Enum.all?(expected, &(&1 in received)) do
-      received
-    else
-      receive do
-        {:dag_values, batch} -> assert_dag_values(expected, received ++ batch)
-      after
-        1_000 ->
-          flunk("expected DAG values #{inspect(expected)}, got #{inspect(received)}")
-      end
-    end
+    DagProbe.refute_any()
   end
 
   defp surface_keys(source, params) do

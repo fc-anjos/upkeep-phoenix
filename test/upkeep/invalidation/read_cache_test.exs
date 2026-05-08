@@ -5,6 +5,7 @@ defmodule Upkeep.Invalidation.ReadCacheTest do
 
   alias Upkeep.Ecto.Source.QueryDeps
   alias Upkeep.Invalidation.ReadCache, as: ReadCache
+  alias Upkeep.TestSupport.LiveSocket
   alias Upkeep.TestSupport.Repo
 
   defmodule Project do
@@ -304,7 +305,7 @@ defmodule Upkeep.Invalidation.ReadCacheTest do
     end
 
     socket =
-      %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+      LiveSocket.socket()
       |> Upkeep.Live.watch(:project, HolderSource, id: 1)
 
     assert ReadCache.count() == 1

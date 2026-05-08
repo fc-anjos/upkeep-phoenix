@@ -3,6 +3,7 @@ defmodule Upkeep.SourceEctoTest do
 
   alias Upkeep.InvalidationSurface
   alias Upkeep.Live
+  alias Upkeep.TestSupport.{DagProbe, LiveSocket}
 
   defmodule Column do
     use Ecto.Schema
@@ -537,7 +538,7 @@ defmodule Upkeep.SourceEctoTest do
     )
 
     socket =
-      new_socket()
+      LiveSocket.socket()
       |> Live.watch(:issues, ProjectIssues, project_id: 1, user_id: 9)
 
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Before"]
@@ -549,7 +550,7 @@ defmodule Upkeep.SourceEctoTest do
 
     source_id = {ProjectIssues, %{project_id: 1, user_id: 9}}
 
-    assert_receive {:dag_values, [{^source_id, issues}]}, 1_000
+    issues = DagProbe.receive_value(source_id)
     assert Enum.map(issues, & &1.title) == ["Before", "After"]
 
     socket = Live.apply_dag_value(socket, source_id, issues)
@@ -961,7 +962,7 @@ defmodule Upkeep.SourceEctoTest do
     Repo.insert!(issue(id: 1, project_id: 1, column_id: 1, title: "With comments"), upkeep: false)
 
     socket =
-      new_socket()
+      LiveSocket.socket()
       |> Live.watch(:issues, PreloadedProjectIssues, project_id: 1)
 
     assert [%Issue{comments: []}] = socket.assigns.issues
@@ -973,15 +974,14 @@ defmodule Upkeep.SourceEctoTest do
 
     source_id = {PreloadedProjectIssues, %{project_id: 1}}
 
-    assert_receive {:dag_values,
-                    [{^source_id, [%Issue{comments: [%Comment{body: "New comment"}]}]}]},
-                   1_000
+    assert [%Issue{comments: [%Comment{body: "New comment"}]}] =
+             DagProbe.receive_value(source_id)
   end
 
   test "query preload sources refresh from analyzed preload query deps" do
     Repo.insert!(issue(id: 1, project_id: 1, title: "With visible comments"), upkeep: false)
 
-    new_socket()
+    LiveSocket.socket()
     |> Live.watch(:issues, QueryPreloadedProjectIssues, project_id: 1)
 
     {:ok, %Comment{}} =
@@ -991,8 +991,7 @@ defmodule Upkeep.SourceEctoTest do
 
     source_id = {QueryPreloadedProjectIssues, %{project_id: 1}}
 
-    assert_receive {:dag_values, [{^source_id, [%Issue{comments: [%Comment{body: "visible"}]}]}]},
-                   1_000
+    assert [%Issue{comments: [%Comment{body: "visible"}]}] = DagProbe.receive_value(source_id)
   end
 
   test "fragment broad fallback is scoped to the schema referenced by the fragment" do
@@ -1060,8 +1059,6 @@ defmodule Upkeep.SourceEctoTest do
   defp comment(attrs) do
     struct!(Comment, Keyword.merge([id: 1, project_id: 1, issue_id: 1, body: "Comment"], attrs))
   end
-
-  defp new_socket, do: %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
 
   defp surface_keys(source, params) do
     source

@@ -6,6 +6,7 @@ defmodule Upkeep.Runtime.SpecsTest do
   alias Upkeep.Runtime.Materializer
   alias Upkeep.Runtime.Producer
   alias Upkeep.Source.Instance
+  alias Upkeep.TestSupport.LiveSocket
 
   defmodule Issue do
     defstruct [:project_id]
@@ -106,10 +107,14 @@ defmodule Upkeep.Runtime.SpecsTest do
 
   defp socket_with_issues do
     assert {:ok, socket, _effects} =
-             Runtime.mount_source(new_socket(), :issues, ProjectIssues, %{project_id: 1}, nil)
+             Runtime.mount_source(
+               LiveSocket.socket(),
+               :issues,
+               ProjectIssues,
+               %{project_id: 1},
+               nil
+             )
 
     socket
   end
-
-  defp new_socket, do: %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
 end
