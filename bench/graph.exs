@@ -14,6 +14,194 @@
 
 Application.ensure_all_started(:upkeep)
 
+defmodule Bench.Telemetry do
+  @table :bench_graph_telemetry
+  @handler_id "bench-graph-telemetry"
+  @events [
+    [:upkeep, :graph, :invalidation],
+    [:upkeep, :graph, :notifier, :flush],
+    [:upkeep, :graph, :source_load, :stop],
+    [:upkeep, :graph, :dispatch, :stop]
+  ]
+  @duration_buckets_us [
+    1,
+    5,
+    10,
+    25,
+    50,
+    100,
+    250,
+    500,
+    1_000,
+    2_500,
+    5_000,
+    10_000,
+    25_000,
+    50_000,
+    100_000
+  ]
+
+  def attach do
+    :ets.new(@table, [
+      :named_table,
+      :public,
+      :set,
+      write_concurrency: true,
+      read_concurrency: true
+    ])
+
+    :telemetry.attach_many(@handler_id, @events, &__MODULE__.handle_event/4, nil)
+  end
+
+  def detach do
+    :telemetry.detach(@handler_id)
+  end
+
+  def handle_event(event, measurements, metadata, _config) do
+    key = List.to_tuple(event)
+
+    add(key, :count, Map.get(measurements, :count, 1))
+    add_duration(key, measurements)
+
+    metadata
+    |> Map.take([
+      :candidate_count,
+      :matched_count,
+      :candidate_key_count,
+      :message_count,
+      :event_count,
+      :source_node_count,
+      :shard_count,
+      :pair_count,
+      :pid_count,
+      :subscriber_count
+    ])
+    |> Enum.each(fn {field, value} when is_integer(value) ->
+      add(key, field, value)
+    end)
+  end
+
+  def report do
+    IO.puts("")
+    IO.puts("Telemetry averages:")
+
+    [
+      {[:upkeep, :graph, :invalidation], "invalidation"},
+      {[:upkeep, :graph, :notifier, :flush], "notifier_flush"},
+      {[:upkeep, :graph, :source_load, :stop], "source_load"},
+      {[:upkeep, :graph, :dispatch, :stop], "dispatch"}
+    ]
+    |> Enum.each(fn {event, label} ->
+      key = List.to_tuple(event)
+      count = read(key, :count)
+
+      if count > 0 do
+        duration = read(key, :duration)
+        duration_count = read(key, :duration_count)
+        avg_us = avg_duration_us(duration, duration_count)
+
+        IO.puts(
+          "  #{String.pad_trailing(label, 18)} count=#{count} avg_us=#{avg_us}" <>
+            percentile_summary(key, duration_count) <>
+            averages(key, count)
+        )
+      end
+    end)
+  end
+
+  defp add_duration(key, %{duration: duration}) when is_integer(duration) do
+    add(key, :duration, duration)
+    add(key, :duration_count, 1)
+
+    duration_us = System.convert_time_unit(duration, :native, :microsecond)
+    add(key, {:duration_bucket_us, bucket_for(duration_us)}, 1)
+  end
+
+  defp add_duration(_key, _measurements), do: :ok
+
+  defp averages(key, count) do
+    [
+      :candidate_key_count,
+      :candidate_count,
+      :matched_count,
+      :message_count,
+      :event_count,
+      :source_node_count,
+      :shard_count,
+      :pair_count,
+      :pid_count,
+      :subscriber_count
+    ]
+    |> Enum.flat_map(fn field ->
+      case read(key, field) do
+        0 -> []
+        value -> [" #{field}=#{Float.round(value / count, 2)}"]
+      end
+    end)
+    |> Enum.join()
+  end
+
+  defp avg_duration_us(0, _count), do: "n/a"
+  defp avg_duration_us(_duration, 0), do: "n/a"
+
+  defp avg_duration_us(duration, count) do
+    duration
+    |> div(count)
+    |> System.convert_time_unit(:native, :microsecond)
+    |> Integer.to_string()
+  end
+
+  defp add(key, field, value) do
+    :ets.update_counter(@table, {key, field}, {2, value}, {{key, field}, 0})
+  end
+
+  defp read(key, field) do
+    case :ets.lookup(@table, {key, field}) do
+      [{{^key, ^field}, value}] -> value
+      [] -> 0
+    end
+  end
+
+  defp percentile_summary(_key, 0), do: ""
+
+  defp percentile_summary(key, duration_count) do
+    " #{percentile_text(key, duration_count, 0.95, "p95_us")}" <>
+      " #{percentile_text(key, duration_count, 0.99, "p99_us")}"
+  end
+
+  defp percentile_text(key, duration_count, percentile, label) do
+    case percentile_bucket(key, duration_count, percentile) do
+      {:bucket, bucket} -> "#{label}<=#{bucket}"
+      {:over, bucket} -> "#{label}>#{bucket}"
+    end
+  end
+
+  defp percentile_bucket(key, duration_count, percentile) do
+    target = ceil(duration_count * percentile)
+
+    result =
+      @duration_buckets_us
+      |> Enum.reduce_while(0, fn bucket, total ->
+        total = total + read(key, {:duration_bucket_us, bucket})
+
+        if total >= target do
+          {:halt, {:bucket, bucket}}
+        else
+          {:cont, total}
+        end
+      end)
+
+    case result do
+      {:bucket, bucket} -> {:bucket, bucket}
+      _total -> {:over, List.last(@duration_buckets_us)}
+    end
+  end
+
+  defp bucket_for(duration_us) do
+    Enum.find(@duration_buckets_us, ">#{List.last(@duration_buckets_us)}", &(duration_us <= &1))
+  end
+end
+
 defmodule Bench.Q do
   @query_us 50
 
@@ -52,6 +240,15 @@ defmodule Bench.Keys do
     fields = event |> Map.from_struct() |> Map.to_list() |> Enum.sort()
     {:upkeep_event, event.__struct__, fields}
   end
+
+  def surface(event) do
+    key = narrow(event)
+
+    Upkeep.InvalidationSurface.manual([key], fn
+      event when is_struct(event) -> narrow(event) == key
+      _event -> false
+    end)
+  end
 end
 
 defmodule Bench.Sub do
@@ -67,15 +264,15 @@ defmodule Bench.Sub do
         spawn_link(fn ->
           Enum.each(pool, fn event ->
             node_id = {:src, event.__struct__, event.id}
-            keys = [Bench.Keys.narrow(event)]
+            surface = Bench.Keys.surface(event)
 
             load_fn = fn ->
               :counters.add(queries, 1, 1)
               Bench.Q.fake_query()
-              {1, keys}
+              {1, surface}
             end
 
-            Upkeep.Coordinator.Graph.register_loader(node_id, keys, load_fn)
+            Upkeep.Coordinator.Graph.register_loader(node_id, surface, load_fn)
           end)
 
           send(parent, :ready)
@@ -89,12 +286,12 @@ defmodule Bench.Sub do
           Enum.each(pool, fn event ->
             source_id = {:src, event.__struct__, event.id}
             derived_id = {:der, event.__struct__, event.id}
-            keys = [Bench.Keys.narrow(event)]
+            surface = Bench.Keys.surface(event)
 
             load_fn = fn ->
               :counters.add(queries, 1, 1)
               Bench.Q.fake_query()
-              {1, keys}
+              {1, surface}
             end
 
             compute_fn = fn deps ->
@@ -102,7 +299,7 @@ defmodule Bench.Sub do
               Map.fetch!(deps, source_id) * 2
             end
 
-            Upkeep.Coordinator.Graph.register_loader(source_id, keys, load_fn)
+            Upkeep.Coordinator.Graph.register_loader(source_id, surface, load_fn)
             Upkeep.Coordinator.Graph.register_derived(derived_id, [source_id], compute_fn)
           end)
 
@@ -184,7 +381,7 @@ defmodule Bench.Run do
       n
     else
       event = elem(pool, :rand.uniform(size) - 1)
-      Upkeep.Coordinator.Graph.notify(event)
+      Upkeep.Invalidation.dispatch(event)
       loop(pool, size, deadline, n + 1)
     end
   end
@@ -194,6 +391,8 @@ queries = :counters.new(1, [:atomics])
 derived_computes = :counters.new(1, [:atomics])
 deliveries = :counters.new(1, [:atomics])
 pool = Bench.Run.event_pool()
+
+Bench.Telemetry.attach()
 
 n_subs = 100
 duration_ms = 3_000
@@ -253,6 +452,9 @@ results =
       derived_per_s: derived_per_s
     }
   end
+
+Bench.Telemetry.report()
+Bench.Telemetry.detach()
 
 # Regression gates: thresholds from the M2 baseline at 16 publishers.
 # Tighten for production CI; the values below are conservative floors.
