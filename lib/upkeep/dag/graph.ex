@@ -38,9 +38,13 @@ defmodule Upkeep.DAG.Graph do
         raise ArgumentError, "unknown DAG dependencies for #{inspect(id)}: #{inspect(missing)}"
       end
 
-      graph
-      |> insert_node(id, kind, deps)
-      |> ensure_acyclic!()
+      if Map.has_key?(graph.nodes, id) do
+        graph
+        |> insert_node(id, kind, deps)
+        |> ensure_acyclic!()
+      else
+        insert_node(graph, id, kind, deps)
+      end
     end
   end
 
