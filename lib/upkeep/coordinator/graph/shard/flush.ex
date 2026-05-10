@@ -59,6 +59,29 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
     %{state | store: store}
   end
 
+  defp load_sources([node_id], state) do
+    node = Store.fetch_metadata!(state.store, node_id)
+    metadata = LoadedSource.load_metadata(state, node_id, node, :refresh)
+
+    try do
+      loaded = Loaders.run_with_deps(node_id, node, metadata)
+      {results, state} = apply_loaded_source([], state, loaded)
+      {Enum.reverse(results), state}
+    rescue
+      exception ->
+        stacktrace = __STACKTRACE__
+        :logger.error(~c"~s", [Exception.format(:error, exception, stacktrace)])
+        {results, state} = handle_load_failure([], state, node_id, {exception, stacktrace})
+        {Enum.reverse(results), state}
+    catch
+      kind, reason ->
+        stacktrace = __STACKTRACE__
+        :logger.error(~c"~s", [Exception.format(kind, reason, stacktrace)])
+        {results, state} = handle_load_failure([], state, node_id, {kind, reason, stacktrace})
+        {Enum.reverse(results), state}
+    end
+  end
+
   defp load_sources(node_ids, state) do
     stream =
       Task.Supervisor.async_stream_nolink(
@@ -79,21 +102,29 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
       node_ids
       |> Stream.zip(stream)
       |> Enum.reduce({[], state}, fn
-        {_node_id, {:ok, %LoadedSource{node_id: node_id} = loaded}}, {results, state} ->
-          state = Retries.clear(state, node_id)
-          state = LoadedSource.apply(state, loaded)
-
-          {[LoadedSource.pair(loaded) | results], state}
+        {_node_id, {:ok, %LoadedSource{} = loaded}}, {results, state} ->
+          apply_loaded_source(results, state, loaded)
 
         {node_id, {:exit, reason}}, {results, state} ->
-          node = Store.fetch_metadata!(state.store, node_id)
-          {state, retry_metadata} = Retries.after_failure(state, node_id, node)
-          failure = LoadFailure.new(node_id, node, reason, :refresh, retry_metadata)
-          LoadFailure.emit(state, failure)
-
-          {results, state}
+          handle_load_failure(results, state, node_id, reason)
       end)
 
     {Enum.reverse(results), state}
+  end
+
+  defp apply_loaded_source(results, state, %LoadedSource{node_id: node_id} = loaded) do
+    state = Retries.clear(state, node_id)
+    state = LoadedSource.apply(state, loaded)
+
+    {[LoadedSource.pair(loaded) | results], state}
+  end
+
+  defp handle_load_failure(results, state, node_id, reason) do
+    node = Store.fetch_metadata!(state.store, node_id)
+    {state, retry_metadata} = Retries.after_failure(state, node_id, node)
+    failure = LoadFailure.new(node_id, node, reason, :refresh, retry_metadata)
+    LoadFailure.emit(state, failure)
+
+    {results, state}
   end
 end
