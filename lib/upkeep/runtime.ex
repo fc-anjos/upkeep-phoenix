@@ -19,7 +19,9 @@ defmodule Upkeep.Runtime do
     ],
     type: :strict
 
+  alias Upkeep.DAG.Store
   alias Upkeep.Runtime.{Ids, Mount, Patch, Push, Refresh, Result, Snapshot, SourceLoads, Specs}
+  alias Upkeep.Runtime.State
   alias Upkeep.Runtime.{Telemetry, Watches}
 
   def mount_source(socket, assign_name, source, params, component, source_location \\ nil) do
@@ -45,14 +47,18 @@ defmodule Upkeep.Runtime do
       {:ok, current_scope} ->
         node_id = Ids.scope_node_id(:current_scope)
 
-        patch =
-          socket
-          |> Patch.new()
-          |> Patch.put_source_node(node_id, current_scope, [], track_change?: true)
-          |> Patch.put_assign_node(:current_scope, node_id)
-          |> Patch.recompute(&Watches.remove_watch/2)
+        if current_scope_synced?(socket, node_id, current_scope) do
+          {:ok, socket, []}
+        else
+          patch =
+            socket
+            |> Patch.new()
+            |> Patch.put_source_node(node_id, current_scope, [], track_change?: true)
+            |> Patch.put_assign_node(:current_scope, node_id)
+            |> Patch.recompute(&Watches.remove_watch/2)
 
-        Patch.result(patch)
+          Patch.result(patch)
+        end
 
       :error ->
         {:ok, socket, []}
@@ -107,5 +113,16 @@ defmodule Upkeep.Runtime do
     })
 
     :ok
+  end
+
+  defp current_scope_synced?(socket, node_id, current_scope) do
+    case Map.fetch(State.assign_nodes(socket), :current_scope) do
+      {:ok, ^node_id} ->
+        store = State.store(socket)
+        Store.has_node?(store, node_id) and Store.fetch!(store, node_id) == current_scope
+
+      _other ->
+        false
+    end
   end
 end
