@@ -27,7 +27,7 @@ defmodule Upkeep.Runtime.Mount do
 
         effects = [
           {:telemetry, [:source, :watch], %{count: 1},
-           Telemetry.watch_metadata(watch, assign_name, :alias)},
+           Telemetry.watch_alias_metadata(watch, assign_name)},
           {:assign, assign_name, Store.fetch!(State.store(socket), spec.id)}
         ]
 

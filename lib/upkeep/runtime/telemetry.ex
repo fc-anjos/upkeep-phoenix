@@ -21,6 +21,24 @@ defmodule Upkeep.Runtime.Telemetry do
     Map.merge(watch_metadata(watch), Map.new(opts))
   end
 
+  def watch_alias_metadata(watch, assign_name) when is_atom(assign_name) do
+    instance = watch.instance
+
+    %{
+      source_id: watch.source_id,
+      node_id: Ids.source_node_id(watch.source_id),
+      source: instance.source,
+      params: instance.params,
+      sharing_partition: instance.sharing_partition,
+      component: watch.component,
+      assign_name: assign_name,
+      assign_count: MapSet.size(watch.assign_names),
+      kind: :alias,
+      registered?: watch.registered?,
+      surface_keys: Upkeep.InvalidationSurface.keys(watch.surface)
+    }
+  end
+
   def watch_metadata(watch, assign_name, kind) do
     instance = watch.instance
 

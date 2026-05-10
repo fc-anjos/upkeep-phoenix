@@ -99,7 +99,7 @@ defmodule Upkeep.Runtime.Watches do
             {socket,
              [
                {:telemetry, [:source, :unwatch], %{count: 1},
-                Telemetry.watch_metadata(watch, assign_name, :alias)}
+                Telemetry.watch_alias_metadata(watch, assign_name)}
              ]}
           end)
         end
