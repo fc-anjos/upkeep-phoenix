@@ -24,8 +24,8 @@ defmodule Upkeep do
         {Upkeep, []}
       ]
 
-  See the package guide for complete setup, source authoring, LiveView usage,
-  tests, and inspector installation.
+  See the README for complete setup, source authoring, LiveView usage, tests,
+  and inspector installation.
 
   Library users that prefer explicit args can still call
   `Upkeep.mutate(MyApp.Repo, fn -> ... end)` and
@@ -89,14 +89,59 @@ defmodule Upkeep do
     Supervisor.init(children, strategy: :one_for_one)
   end
 
+  @doc """
+  Run a mutation inside the configured repo transaction and dispatch any
+  Upkeep notifications after the transaction commits.
+  """
   defdelegate mutate(fun), to: Upkeep.Ecto.Mutation
+
+  @doc """
+  Run a mutation inside the given repo transaction and dispatch any Upkeep
+  notifications after the transaction commits.
+  """
   defdelegate mutate(repo, fun), to: Upkeep.Ecto.Mutation
+
+  @doc """
+  Publish a domain event to Upkeep's invalidation runtime.
+  """
   defdelegate notify(event), to: Upkeep.Mutation
+
+  @doc """
+  Publish a semantic domain change.
+  """
   defdelegate changed(name, payload, opts \\ []), to: Upkeep.Mutation
+
+  @doc """
+  Publish an inserted-record change.
+  """
   defdelegate inserted(record, opts \\ []), to: Upkeep.Mutation
+
+  @doc """
+  Publish an updated-record change.
+
+  Pass `from: old_record` when possible so field-indexed invalidation can
+  refresh the old and new matching source sets precisely.
+  """
   defdelegate updated(record, opts \\ []), to: Upkeep.Mutation
+
+  @doc """
+  Publish a deleted-record change.
+  """
   defdelegate deleted(record, opts \\ []), to: Upkeep.Mutation
+
+  @doc """
+  Execute an Ecto read inside a source context so Upkeep can capture the
+  source's invalidation surface.
+  """
   defdelegate read(query), to: Upkeep.Ecto.Source
+
+  @doc """
+  Return recent diagnostic runtime events.
+  """
   defdelegate recent_events(opts \\ []), to: Upkeep.Observability, as: :recent
+
+  @doc """
+  Clear the diagnostic runtime event buffer.
+  """
   defdelegate clear_events(), to: Upkeep.Observability, as: :clear
 end

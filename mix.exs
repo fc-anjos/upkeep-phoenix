@@ -81,6 +81,7 @@ defmodule Upkeep.MixProject do
       {:telemetry, "~> 1.0"},
       {:group, "~> 0.1"},
       {:boundary, "~> 0.10.4", runtime: false},
+      {:ex_doc, "~> 0.38", only: :dev, runtime: false},
       {:benchee, "~> 1.3", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
@@ -116,19 +117,8 @@ defmodule Upkeep.MixProject do
 
   defp docs do
     [
-      main: "Upkeep",
-      extras: [
-        "README.md",
-        "docs/getting-started.md",
-        "docs/release-policy.md"
-      ],
-      groups_for_extras: [
-        Guides: [
-          "README.md",
-          "docs/getting-started.md",
-          "docs/release-policy.md"
-        ]
-      ]
+      main: "readme",
+      extras: ["README.md"]
     ]
   end
 end
