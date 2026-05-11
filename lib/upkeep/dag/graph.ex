@@ -146,11 +146,9 @@ defmodule Upkeep.DAG.Graph do
 
   @spec topological_subset(t(), Enumerable.t()) :: [node_id()]
   def topological_subset(%__MODULE__{} = graph, ids) do
-    included = MapSet.new(ids)
+    included = existing_subset(graph, ids)
 
-    graph
-    |> topological_order!()
-    |> Enum.filter(&MapSet.member?(included, &1))
+    subset_topological_order!(graph, included)
   end
 
   @spec subgraphs_for(t(), Enumerable.t()) :: [Plan.subgraph()]
@@ -235,13 +233,7 @@ defmodule Upkeep.DAG.Graph do
       |> Enum.flat_map(&downstream_ids_depth_first(graph, &1, new_visited()))
       |> MapSet.new()
 
-    if MapSet.size(affected) == 0 do
-      []
-    else
-      graph
-      |> topological_order!()
-      |> Enum.filter(&MapSet.member?(affected, &1))
-    end
+    subset_topological_order!(graph, affected)
   end
 
   defp downstream_ids_depth_first(graph, id, seen) do
@@ -345,6 +337,50 @@ defmodule Upkeep.DAG.Graph do
     end
   end
 
+  defp validate_subset_topological_order!(included, order) do
+    if length(order) == MapSet.size(included) do
+      :ok
+    else
+      raise ArgumentError, "cycle detected in Upkeep DAG"
+    end
+  end
+
+  defp existing_subset(graph, ids) do
+    Enum.reduce(ids, MapSet.new(), fn id, included ->
+      if Map.has_key?(graph.nodes, id) do
+        MapSet.put(included, id)
+      else
+        included
+      end
+    end)
+  end
+
+  defp subset_topological_order!(graph, included) do
+    order = subset_topological_order(graph, included)
+    :ok = validate_subset_topological_order!(included, order)
+    order
+  end
+
+  defp subset_topological_order(graph, included) do
+    indegrees =
+      Map.new(included, fn id ->
+        degree =
+          graph.deps
+          |> Map.get(id, [])
+          |> Enum.count(&MapSet.member?(included, &1))
+
+        {id, degree}
+      end)
+
+    queue =
+      indegrees
+      |> Enum.filter(fn {_id, degree} -> degree == 0 end)
+      |> Enum.map(fn {id, _degree} -> id end)
+      |> sort_terms()
+
+    subset_kahn(graph, included, queue, indegrees, [])
+  end
+
   defp new_visited, do: %{}
   defp visited?(visited, id), do: Map.has_key?(visited, id)
   defp visit(visited, id), do: Map.put(visited, id, true)
@@ -366,6 +402,26 @@ defmodule Upkeep.DAG.Graph do
       end)
 
     kahn(graph, queue, indegrees, [id | order])
+  end
+
+  defp subset_kahn(_graph, _included, [], _indegrees, order), do: Enum.reverse(order)
+
+  defp subset_kahn(graph, included, [id | queue], indegrees, order) do
+    {queue, indegrees} =
+      graph.dependents
+      |> Map.get(id, MapSet.new())
+      |> Enum.filter(&MapSet.member?(included, &1))
+      |> Enum.reduce({queue, indegrees}, fn dependent, {queue, indegrees} ->
+        indegrees = Map.update!(indegrees, dependent, &(&1 - 1))
+
+        if Map.fetch!(indegrees, dependent) == 0 do
+          {sort_terms([dependent | queue]), indegrees}
+        else
+          {queue, indegrees}
+        end
+      end)
+
+    subset_kahn(graph, included, queue, indegrees, [id | order])
   end
 
   defp sort_terms(terms), do: Enum.sort_by(terms, &inspect/1)

@@ -28,6 +28,17 @@ defmodule Upkeep.DAG.GraphTest do
     assert Graph.affected_ids(graph, [:visible]) == [:count, :badge]
   end
 
+  test "topological_subset orders only requested existing nodes" do
+    graph =
+      Graph.new()
+      |> Graph.put_node(:a, :source, [])
+      |> Graph.put_node(:b, :source, [])
+      |> Graph.put_node(:c, :derived, [:a])
+      |> Graph.put_node(:d, :derived, [:c])
+
+    assert Graph.topological_subset(graph, [:missing, :d, :c]) == [:c, :d]
+  end
+
   test "subgraph_plan reports removable downstream nodes" do
     graph =
       Graph.new()
