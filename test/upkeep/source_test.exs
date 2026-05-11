@@ -316,8 +316,9 @@ defmodule Upkeep.SourceTest do
 
     change = updated_issue(project_id: 123)
 
-    assert :ok = Upkeep.notify(change)
-    :ok = Upkeep.Test.drain()
+    Upkeep.Test.sync(fn ->
+      assert :ok = Upkeep.notify(change)
+    end)
 
     assert_board_columns_refresh(123, [:todo, :doing])
 
@@ -336,8 +337,9 @@ defmodule Upkeep.SourceTest do
         from: %Issue{id: 1, project_id: 456, assignee_id: 9, column_id: 1}
       )
 
-    assert :ok = Upkeep.notify(change)
-    :ok = Upkeep.Test.drain()
+    Upkeep.Test.sync(fn ->
+      assert :ok = Upkeep.notify(change)
+    end)
 
     refute_source_refresh()
   end
@@ -349,8 +351,9 @@ defmodule Upkeep.SourceTest do
 
     change = updated_issue(project_id: 456)
 
-    assert :ok = Upkeep.notify(change)
-    :ok = Upkeep.Test.drain()
+    Upkeep.Test.sync(fn ->
+      assert :ok = Upkeep.notify(change)
+    end)
 
     assert_board_columns_refresh(123, [:todo])
   end

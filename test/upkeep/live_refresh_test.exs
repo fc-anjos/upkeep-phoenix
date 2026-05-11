@@ -1150,8 +1150,11 @@ defmodule Upkeep.LiveRefreshTest do
     Fixture.set_source_value(:issues, 1, [:issue_b])
 
     change = updated_issue(1, 1)
-    assert :ok = Upkeep.notify(change)
-    :ok = Upkeep.Test.drain()
+
+    Upkeep.Test.sync(fn ->
+      assert :ok = Upkeep.notify(change)
+    end)
+
     refute_unwatched_graph_push()
 
     socket =
@@ -1420,8 +1423,10 @@ defmodule Upkeep.LiveRefreshTest do
     Fixture.set_source_value(:comments, 1, [:comment_a, :comment_c])
 
     change = inserted_comment(1, 1)
-    assert :ok = Upkeep.notify(change)
-    assert :ok = Upkeep.Test.drain()
+
+    Upkeep.Test.sync(fn ->
+      assert :ok = Upkeep.notify(change)
+    end)
 
     socket = assert_shared_comment_push(socket, 1, [:comment_a, :comment_c])
 
@@ -1673,12 +1678,12 @@ defmodule Upkeep.LiveRefreshTest do
     source_id = {ScopedIssues, %{user_id: user_id}}
     graph_node_id = shared_issue_count_node_id(source_id)
 
-    assert :ok =
-             %Issue{issue_id: user_id}
-             |> Upkeep.Change.updated()
-             |> Upkeep.notify()
-
-    assert :ok = Upkeep.Test.drain()
+    Upkeep.Test.sync(fn ->
+      assert :ok =
+               %Issue{issue_id: user_id}
+               |> Upkeep.Change.updated()
+               |> Upkeep.notify()
+    end)
 
     pairs = DagMessages.receive_batch()
     assert {source_id, issues} in pairs

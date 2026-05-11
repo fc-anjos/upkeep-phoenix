@@ -1,6 +1,39 @@
 defmodule Upkeep.Live do
   @moduledoc """
   LiveView integration for watching Upkeep sources.
+
+  Use this module from a Phoenix LiveView:
+
+      defmodule MyAppWeb.ProjectLive do
+        use MyAppWeb, :live_view
+        use Upkeep.Live
+
+        def mount(%{"id" => id}, _session, socket) do
+          project_id = String.to_integer(id)
+
+          socket =
+            socket
+            |> watch(:items, MyApp.Catalog.Sources.ProjectItems, %{project_id: project_id})
+            |> derive(:item_count, [:items], fn %{items: items} -> length(items) end)
+
+          {:ok, socket}
+        end
+      end
+
+  `watch/4` loads a source into a LiveView assign and keeps that assign fresh
+  when matching domain writes commit. `derive/4` computes another assign from
+  watched or derived values. `component/4` creates a component-scoped dependency
+  boundary for repeated UI fragments that need their own stable identity.
+
+  `use Upkeep.Live` also installs the runtime `handle_info/2` callbacks needed
+  for graph-pushed values and registers an `on_mount` hook that exposes
+  Phoenix's `:current_scope` assign to Upkeep.
+
+  When viewer identity affects a source value, define the source with
+  `load/2` or `query/2` and read scope through `Upkeep.current_scope!/1` inside
+  the source callback. When the source value is safe to share and only the
+  presentation differs by viewer, use a local derive that receives
+  `%{current_scope: scope}`.
   """
 
   use Boundary,

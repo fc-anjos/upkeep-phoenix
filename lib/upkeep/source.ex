@@ -30,11 +30,12 @@ defmodule Upkeep.Source do
   @type params :: map()
   @type source_module :: module()
   @type retry_config :: :default | false | keyword()
+  @type source_context :: term()
 
   @callback load(params()) :: term()
-  @callback load(params(), Context.t()) :: term()
+  @callback load(params(), source_context()) :: term()
   @callback query(params()) :: term()
-  @callback query(params(), Context.t()) :: term()
+  @callback query(params(), source_context()) :: term()
   @callback reacts_to?(struct(), params()) :: boolean()
   @callback __upkeep_repo__() :: module() | nil
   @callback __upkeep_repo_explicit__?() :: boolean()

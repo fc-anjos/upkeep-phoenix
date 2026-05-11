@@ -166,7 +166,7 @@ prove the same scope identity.
 
 Captured socket/session/current-scope values are fail-closed:
 
-- in dev, Upkeep raises `Upkeep.Runtime.ImplicitScopeError`;
+- in dev, Upkeep raises an implicit scope error;
 - in prod, Upkeep keeps the derive local and emits
   `[:upkeep, :derive, :sharing]` with `severity: :error` and
   `reason: :captured_scope`.

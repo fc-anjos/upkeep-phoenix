@@ -23,14 +23,20 @@ defmodule Upkeep.DemoApp.AuthorizationRefreshTest do
     assert has_element?(user_two, "#note-2", "User two private")
     refute has_element?(user_two, "#note-1")
 
-    rename_note_with_broad_update(1, "User one revised")
+    Upkeep.Test.sync(fn ->
+      rename_note_with_broad_update(1, "User one revised")
+    end)
+
     sync_live_views(user_one, user_two)
 
     assert has_element?(user_one, "#note-1", "User one revised")
     refute has_element?(user_two, "#note-1")
     assert has_element?(user_two, "#note-2", "User two private")
 
-    rename_note_with_broad_update(2, "User two revised")
+    Upkeep.Test.sync(fn ->
+      rename_note_with_broad_update(2, "User two revised")
+    end)
+
     sync_live_views(user_one, user_two)
 
     assert has_element?(user_two, "#note-2", "User two revised")
@@ -60,7 +66,6 @@ defmodule Upkeep.DemoApp.AuthorizationRefreshTest do
   end
 
   defp sync_live_views(views) do
-    :ok = Upkeep.Test.drain()
     Enum.each(views, &:sys.get_state(&1.pid))
   end
 

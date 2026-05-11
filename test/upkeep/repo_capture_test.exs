@@ -222,12 +222,13 @@ defmodule Upkeep.RepoCaptureTest do
     watch_project(user_id: 9)
 
     assert {:error, :cancelled} =
-             Upkeep.mutate(fn ->
-               Repo.insert!(issue(id: 1, assignee_id: 9))
-               Repo.rollback(:cancelled)
+             Upkeep.Test.sync(fn ->
+               Upkeep.mutate(fn ->
+                 Repo.insert!(issue(id: 1, assignee_id: 9))
+                 Repo.rollback(:cancelled)
+               end)
              end)
 
-    :ok = Upkeep.Test.drain()
     refute_any_repo_refresh()
     refute Repo.get(Issue, 1)
   end
@@ -248,12 +249,13 @@ defmodule Upkeep.RepoCaptureTest do
     watch_project(user_id: 9)
 
     assert {:error, :cancelled} =
-             Repo.transaction(fn ->
-               Repo.insert!(issue(id: 1, assignee_id: 9))
-               Repo.rollback(:cancelled)
+             Upkeep.Test.sync(fn ->
+               Repo.transaction(fn ->
+                 Repo.insert!(issue(id: 1, assignee_id: 9))
+                 Repo.rollback(:cancelled)
+               end)
              end)
 
-    :ok = Upkeep.Test.drain()
     refute_any_repo_refresh()
     refute Repo.get(Issue, 1)
   end
@@ -542,16 +544,17 @@ defmodule Upkeep.RepoCaptureTest do
     watch_project(user_id: 9)
 
     assert {:error, :cancelled} =
-             Upkeep.mutate(fn ->
-               Repo.update_all(
-                 from(i in Issue, where: i.id == 1),
-                 set: [assignee_id: 9]
-               )
+             Upkeep.Test.sync(fn ->
+               Upkeep.mutate(fn ->
+                 Repo.update_all(
+                   from(i in Issue, where: i.id == 1),
+                   set: [assignee_id: 9]
+                 )
 
-               Repo.rollback(:cancelled)
+                 Repo.rollback(:cancelled)
+               end)
              end)
 
-    :ok = Upkeep.Test.drain()
     refute_any_repo_refresh()
     assert %Issue{assignee_id: 10} = Repo.get!(Issue, 1)
   end
@@ -573,10 +576,11 @@ defmodule Upkeep.RepoCaptureTest do
   test "repo and bulk capture can be disabled" do
     watch_project(user_id: 9)
 
-    Repo.insert_all(Issue, [issue_attrs(id: 1, assignee_id: 9)], upkeep: false)
-    Repo.insert!(issue(id: 2, assignee_id: 9), upkeep: false)
+    Upkeep.Test.sync(fn ->
+      Repo.insert_all(Issue, [issue_attrs(id: 1, assignee_id: 9)], upkeep: false)
+      Repo.insert!(issue(id: 2, assignee_id: 9), upkeep: false)
+    end)
 
-    :ok = Upkeep.Test.drain()
     refute_any_repo_refresh()
   end
 

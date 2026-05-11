@@ -111,14 +111,22 @@ defmodule Upkeep.MixProject do
     [
       licenses: ["MIT"],
       links: %{"Docs" => "https://hexdocs.pm/upkeep"},
-      files: ~w(lib mix.exs README.md LICENSE*)
+      files: ~w(lib docs mix.exs README.md LICENSE*)
     ]
   end
 
   defp docs do
     [
       main: "readme",
-      extras: ["README.md"]
+      extras: [
+        "README.md",
+        "docs/guides/getting-started.md",
+        "docs/architecture/identity-and-sharing.md"
+      ],
+      groups_for_extras: [
+        Guides: ~r/docs\/guides\//,
+        Architecture: ~r/docs\/architecture\//
+      ]
     ]
   end
 end

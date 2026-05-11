@@ -37,7 +37,7 @@ defmodule Upkeep.MutationTest do
     :ets.insert(table, {{:issues, 780}, [:before]})
 
     on_exit(fn ->
-      drain_graph()
+      await_graph_idle()
 
       if :ets.info(__MODULE__) != :undefined do
         :ets.delete(__MODULE__)
@@ -51,6 +51,24 @@ defmodule Upkeep.MutationTest do
     socket = watch_project(777)
 
     result =
+      Upkeep.Test.sync(fn ->
+        Upkeep.mutate(fn ->
+          :ets.insert(table, {{:issues, 777}, [:after]})
+          Upkeep.updated(issue(777, 1))
+          :moved
+        end)
+      end)
+
+    assert {:ok, :moved} = result
+
+    refreshed = assert_project_refreshed(socket, 777, [:after])
+    assert refreshed.assigns.issues == [:after]
+  end
+
+  test "await_idle synchronizes pending graph notifications", %{table: table} do
+    socket = watch_project(777)
+
+    result =
       Upkeep.mutate(fn ->
         :ets.insert(table, {{:issues, 777}, [:after]})
         Upkeep.updated(issue(777, 1))
@@ -58,7 +76,7 @@ defmodule Upkeep.MutationTest do
       end)
 
     assert {:ok, :moved} = result
-    drain_graph()
+    await_graph_idle()
 
     refreshed = assert_project_refreshed(socket, 777, [:after])
     assert refreshed.assigns.issues == [:after]
@@ -68,27 +86,29 @@ defmodule Upkeep.MutationTest do
     watch_project(778)
 
     result =
-      Upkeep.mutate(fn ->
-        Upkeep.updated(issue(778, 1))
-        Repo.rollback(:cancelled)
+      Upkeep.Test.sync(fn ->
+        Upkeep.mutate(fn ->
+          Upkeep.updated(issue(778, 1))
+          Repo.rollback(:cancelled)
+        end)
       end)
 
     assert {:error, :cancelled} = result
-    drain_graph()
     refute_project_refresh(778)
   end
 
   test "mutate discards notifications when the mutation raises" do
     watch_project(779)
 
-    assert_raise RuntimeError, "boom", fn ->
-      Upkeep.mutate(fn ->
-        Upkeep.updated(issue(779, 1))
-        raise "boom"
-      end)
-    end
+    Upkeep.Test.sync(fn ->
+      assert_raise RuntimeError, "boom", fn ->
+        Upkeep.mutate(fn ->
+          Upkeep.updated(issue(779, 1))
+          raise "boom"
+        end)
+      end
+    end)
 
-    drain_graph()
     refute_project_refresh(779)
   end
 
@@ -96,14 +116,15 @@ defmodule Upkeep.MutationTest do
     watch_project(780)
 
     result =
-      Upkeep.mutate(fn ->
-        Upkeep.updated(issue(780, 1))
-        Upkeep.updated(issue(780, 2))
-        :ok
+      Upkeep.Test.sync(fn ->
+        Upkeep.mutate(fn ->
+          Upkeep.updated(issue(780, 1))
+          Upkeep.updated(issue(780, 2))
+          :ok
+        end)
       end)
 
     assert {:ok, :ok} = result
-    drain_graph()
 
     assert_project_refresh(780, [:before])
     refute_project_refresh(780)
@@ -113,19 +134,20 @@ defmodule Upkeep.MutationTest do
     watch_project(777)
 
     result =
-      Upkeep.mutate(fn ->
-        assert {:ok, :inner} =
-                 Upkeep.mutate(fn ->
-                   Upkeep.updated(issue(777, 1))
-                   :inner
-                 end)
+      Upkeep.Test.sync(fn ->
+        Upkeep.mutate(fn ->
+          assert {:ok, :inner} =
+                   Upkeep.mutate(fn ->
+                     Upkeep.updated(issue(777, 1))
+                     :inner
+                   end)
 
-        refute_project_refresh(777)
-        :outer
+          refute_project_refresh(777)
+          :outer
+        end)
       end)
 
     assert {:ok, :outer} = result
-    drain_graph()
 
     assert_project_refresh(777, [:before])
   end
@@ -140,8 +162,7 @@ defmodule Upkeep.MutationTest do
         {:ok, :moved}
       end)
 
-    assert {:ok, %{move: :moved}} = Upkeep.mutate(multi)
-    drain_graph()
+    assert {:ok, %{move: :moved}} = Upkeep.Test.sync(fn -> Upkeep.mutate(multi) end)
 
     assert_project_refresh(777, [:before])
   end
@@ -156,8 +177,8 @@ defmodule Upkeep.MutationTest do
         {:error, :cancelled}
       end)
 
-    assert {:error, :move, :cancelled, %{}} = Upkeep.mutate(multi)
-    drain_graph()
+    assert {:error, :move, :cancelled, %{}} =
+             Upkeep.Test.sync(fn -> Upkeep.mutate(multi) end)
 
     refute_project_refresh(778)
   end
@@ -176,8 +197,8 @@ defmodule Upkeep.MutationTest do
         {:ok, :second}
       end)
 
-    assert {:ok, %{first: :first, second: :second}} = Upkeep.mutate(multi)
-    drain_graph()
+    assert {:ok, %{first: :first, second: :second}} =
+             Upkeep.Test.sync(fn -> Upkeep.mutate(multi) end)
 
     assert_project_refresh(779, [:before])
     refute_project_refresh(779)
@@ -187,23 +208,23 @@ defmodule Upkeep.MutationTest do
     watch_project(780)
 
     result =
-      Upkeep.mutate(fn ->
-        Upkeep.updated(issue(780, 1))
+      Upkeep.Test.sync(fn ->
+        Upkeep.mutate(fn ->
+          Upkeep.updated(issue(780, 1))
 
-        multi =
-          Ecto.Multi.new()
-          |> Ecto.Multi.run(:inner, fn _repo, _changes ->
-            Upkeep.updated(issue(780, 2))
-            {:error, :cancelled}
-          end)
+          multi =
+            Ecto.Multi.new()
+            |> Ecto.Multi.run(:inner, fn _repo, _changes ->
+              Upkeep.updated(issue(780, 2))
+              {:error, :cancelled}
+            end)
 
-        assert {:error, :inner, :cancelled, %{}} = Upkeep.mutate(multi)
-        :outer
+          assert {:error, :inner, :cancelled, %{}} = Upkeep.mutate(multi)
+          :outer
+        end)
       end)
 
     assert {:error, :rollback} = result
-    drain_graph()
-
     refute_project_refresh(780)
   end
 
@@ -212,8 +233,10 @@ defmodule Upkeep.MutationTest do
 
     log =
       capture_log(fn ->
-        assert :ok = Upkeep.notify(Upkeep.Change.updated(%WarningIssue{project_id: 123}))
-        drain_graph()
+        Upkeep.Test.sync(fn ->
+          assert :ok = Upkeep.notify(Upkeep.Change.updated(%WarningIssue{project_id: 123}))
+        end)
+
         _ = :sys.get_state(Upkeep.Observability)
       end)
 
@@ -250,7 +273,7 @@ defmodule Upkeep.MutationTest do
 
   defp issue(project_id, issue_id), do: %Issue{project_id: project_id, issue_id: issue_id}
 
-  defp drain_graph do
-    :ok = Upkeep.Test.drain()
+  defp await_graph_idle do
+    :ok = Upkeep.Test.await_idle()
   end
 end

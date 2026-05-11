@@ -48,7 +48,7 @@ defmodule Upkeep.TestSupport.DataCase do
 
     on_exit(fn ->
       try do
-        Upkeep.Test.drain()
+        Upkeep.Test.await_idle()
       after
         Upkeep.Test.reset_graph()
         Sandbox.stop_owner(pid)

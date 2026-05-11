@@ -33,12 +33,26 @@ defmodule Upkeep.Test do
   end
 
   @doc """
-  Synchronously drain pending Upkeep graph notifications.
+  Wait until pending Upkeep graph notifications have been processed.
 
-  Use this after `Upkeep.notify/1` in tests that need to assert graph-pushed
-  values without waiting on eventual message delivery.
+  Use this in tests that need to assert graph-pushed values after a write or
+  explicit notification.
   """
-  def drain, do: Graph.drain()
+  def await_idle, do: Graph.drain()
+
+  @doc """
+  Run `fun` and wait until Upkeep has processed the notifications it emitted.
+
+  This is the preferred test helper when the test performs a mutation and then
+  immediately asserts on watched LiveView assigns or graph-pushed values.
+  """
+  def sync(fun) when is_function(fun, 0) do
+    try do
+      fun.()
+    after
+      await_idle()
+    end
+  end
 
   @doc """
   Return true if `pid` is subscribed to an Upkeep source node.

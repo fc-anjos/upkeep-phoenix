@@ -66,14 +66,20 @@ modules, and test-support modules are internal even though Elixir can import
 them. Telemetry is diagnostic during alpha; event names and metadata should be
 treated defensively.
 
+## Start Here
+
+The first-use path is in [Getting Started](docs/guides/getting-started.md). It
+covers repo setup, source authoring, LiveView usage, mutation refreshes,
+identity-aware sources, and test setup.
+
 ## Installation
 
-Add Upkeep to your Phoenix application:
+Dogfood Phoenix applications in this workspace depend on Upkeep by path:
 
 ```elixir
 def deps do
   [
-    {:upkeep, "~> 0.1.0"}
+    {:upkeep, path: "../../upkeep"}
   ]
 end
 ```
@@ -302,8 +308,8 @@ to share the test connection after checking out or starting the sandbox owner:
 Upkeep.Test.allow_sandbox(MyApp.Repo)
 ```
 
-After `Upkeep.notify/1`, use `Upkeep.Test.drain/0` before asserting on
-graph-pushed values in synchronous tests.
+When a synchronous test performs a mutation and immediately asserts on
+graph-pushed values, wrap the mutation with `Upkeep.Test.sync/1`.
 
 ## Inspector
 

@@ -31,7 +31,7 @@ defmodule Upkeep.ObservabilityTest do
     Upkeep.clear_events()
 
     on_exit(fn ->
-      Upkeep.Test.drain()
+      Upkeep.Test.await_idle()
       Upkeep.clear_events()
 
       if :ets.info(__MODULE__) != :undefined do
@@ -94,12 +94,12 @@ defmodule Upkeep.ObservabilityTest do
 
     :ets.insert(table, {{:issues, project_id}, [:after]})
 
-    assert :ok =
-             %Issue{project_id: project_id}
-             |> Upkeep.Change.updated()
-             |> Upkeep.notify()
-
-    :ok = Upkeep.Test.drain()
+    Upkeep.Test.sync(fn ->
+      assert :ok =
+               %Issue{project_id: project_id}
+               |> Upkeep.Change.updated()
+               |> Upkeep.notify()
+    end)
 
     socket = assert_project_graph_refresh(socket, project_id, [:after])
     assert socket.assigns.issues == [:after]
