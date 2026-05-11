@@ -160,11 +160,11 @@ Visit a watched LiveView with `?_upkeep=dag` or `?_upkeep=inspect`.
 
 ## Demo
 
-The Kanban demo app lives in `examples/kanban` and depends on this package with
-`{:upkeep, path: "../.."}`.
+The Kanban demo app lives in the sibling `upkeep-examples` repository. In a
+local workspace it depends on this package with `{:upkeep, path: "../../upkeep"}`.
 
 ```sh
-cd examples/kanban
+cd ../upkeep-examples/kanban
 mix setup
 mix phx.server
 ```

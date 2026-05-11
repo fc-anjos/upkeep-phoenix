@@ -110,7 +110,7 @@ defmodule Upkeep.MixProject do
     [
       licenses: ["MIT"],
       links: %{"Docs" => "https://hexdocs.pm/upkeep"},
-      files: ~w(lib mix.exs README.md LICENSE* docs)
+      files: ~w(lib mix.exs README.md LICENSE*)
     ]
   end
 
