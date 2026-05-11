@@ -5,8 +5,7 @@ watch named sources, writes emit domain facts, and Upkeep refreshes the watched
 assigns whose source invalidation surface matches those facts.
 
 Start with the package guide in [docs/getting-started.md](docs/getting-started.md).
-The current roadmap lives in [docs/roadmap.md](docs/roadmap.md), and the alpha
-release policy lives in [docs/release-policy.md](docs/release-policy.md).
+The alpha release policy lives in [docs/release-policy.md](docs/release-policy.md).
 
 ## Installation
 

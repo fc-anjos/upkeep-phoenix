@@ -120,15 +120,13 @@ defmodule Upkeep.MixProject do
       extras: [
         "README.md",
         "docs/getting-started.md",
-        "docs/release-policy.md",
-        "docs/roadmap.md"
+        "docs/release-policy.md"
       ],
       groups_for_extras: [
         Guides: [
           "README.md",
           "docs/getting-started.md",
-          "docs/release-policy.md",
-          "docs/roadmap.md"
+          "docs/release-policy.md"
         ]
       ]
     ]
