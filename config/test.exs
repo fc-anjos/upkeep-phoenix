@@ -34,6 +34,17 @@ config :upkeep,
          pool: Ecto.Adapters.SQL.Sandbox
        )
 
+config :upkeep, Upkeep.DemoAppWeb.Endpoint,
+  url: [host: "localhost"],
+  secret_key_base: "Wh3w5xprv+UiSvmISWxUEZNWPi69+IJ5um+emjdczl18hS42SlBzyyLWa0osd0FJ",
+  live_view: [signing_salt: "demo-app"],
+  pubsub_server: Upkeep.DemoApp.PubSub,
+  render_errors: [
+    formats: [html: Upkeep.DemoAppWeb.ErrorHTML],
+    layout: false
+  ],
+  server: false
+
 config :logger, level: :warning
 
 config :phoenix, :plug_init_mode, :runtime

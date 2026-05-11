@@ -16,13 +16,18 @@ defmodule Upkeep.TestSupport.Schema do
     "upkeep_source_ecto_test_issues"
   ]
 
+  @demo_app_tables [
+    "upkeep_demo_app_notes"
+  ]
+
   def reset! do
-    Enum.each(@repo_capture_tables ++ @source_ecto_tables, fn table ->
+    Enum.each(@repo_capture_tables ++ @source_ecto_tables ++ @demo_app_tables, fn table ->
       :ok = execute_ddl!("DROP TABLE IF EXISTS #{table}")
     end)
 
     :ok = create_repo_capture_tables()
     :ok = create_source_ecto_tables()
+    :ok = create_demo_app_tables()
   end
 
   defp create_repo_capture_tables do
@@ -98,6 +103,17 @@ defmodule Upkeep.TestSupport.Schema do
       CREATE TABLE upkeep_source_ecto_test_issue_tags (
         issue_id INTEGER NOT NULL,
         tag_id INTEGER NOT NULL
+      )
+      """)
+  end
+
+  defp create_demo_app_tables do
+    :ok =
+      execute_ddl!("""
+      CREATE TABLE upkeep_demo_app_notes (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        title TEXT NOT NULL
       )
       """)
   end
