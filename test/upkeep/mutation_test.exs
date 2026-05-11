@@ -3,6 +3,7 @@ defmodule Upkeep.MutationTest do
 
   alias Upkeep.Live
   alias Upkeep.TestSupport.{DagMessages, LiveSocket}
+  alias Upkeep.TestSupport.Repo
   import ExUnit.CaptureLog
 
   defmodule Issue do
@@ -69,7 +70,7 @@ defmodule Upkeep.MutationTest do
     result =
       Upkeep.mutate(fn ->
         Upkeep.updated(issue(778, 1))
-        Upkeep.TestSupport.Repo.rollback(:cancelled)
+        Repo.rollback(:cancelled)
       end)
 
     assert {:error, :cancelled} = result

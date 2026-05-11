@@ -3,6 +3,8 @@ defmodule Upkeep.SourceEctoTest do
 
   alias Upkeep.InvalidationSurface
   alias Upkeep.Live
+  alias Upkeep.Source.Coverage
+  alias Upkeep.Source.Loader
   alias Upkeep.TestSupport.{DagMessages, LiveSocket}
 
   defmodule Column do
@@ -441,7 +443,7 @@ defmodule Upkeep.SourceEctoTest do
     Repo.insert!(issue(id: 2, project_id: 1, assignee_id: 10, title: "Other", position: 1))
     Repo.insert!(issue(id: 3, project_id: 1, assignee_id: 9, title: "First", position: 1))
 
-    result = Upkeep.Source.Loader.load_result(ProjectIssues, %{project_id: 1, user_id: 9})
+    result = Loader.load_result(ProjectIssues, %{project_id: 1, user_id: 9})
 
     assert Enum.map(result.value, & &1.title) == ["First", "Mine"]
   end
@@ -479,7 +481,7 @@ defmodule Upkeep.SourceEctoTest do
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
-    result = Upkeep.Source.Loader.load_result(RepeatingReadSource, %{project_id: 1})
+    result = Loader.load_result(RepeatingReadSource, %{project_id: 1})
     {first, second} = result.value
 
     assert first == second
@@ -493,7 +495,7 @@ defmodule Upkeep.SourceEctoTest do
     Repo.insert!(issue(id: 1, project_id: 1, column_id: 1, title: "Open", position: 1))
     Repo.insert!(issue(id: 2, project_id: 1, column_id: 1, status: "archived", title: "Archived"))
 
-    result = Upkeep.Source.Loader.load_result(BoardViewModel, %{project_id: 1})
+    result = Loader.load_result(BoardViewModel, %{project_id: 1})
 
     assert [%{column: "Backlog", issues: [%Issue{title: "Open"}]}] = result.value
 
@@ -686,7 +688,7 @@ defmodule Upkeep.SourceEctoTest do
     assert %{schema: Issue, reason: :fragment} in coverage.broad
     assert %{schema: Issue, reason: :unsupported_or} in coverage.broad
 
-    diagnostics = Upkeep.Source.Coverage.diagnostics(coverage)
+    diagnostics = Coverage.diagnostics(coverage)
 
     assert Enum.any?(diagnostics, &(&1.reason == :fragment and &1.action =~ "regular Ecto"))
     assert Enum.any?(diagnostics, &(&1.reason == :unsupported_or and &1.action =~ "equality/in"))
@@ -711,7 +713,7 @@ defmodule Upkeep.SourceEctoTest do
                label: "unsupported value expression"
              }
            ] =
-             Upkeep.Source.Coverage.diagnostics(coverage)
+             Coverage.diagnostics(coverage)
   end
 
   test "joined queries infer dependencies for every schema with equality filters" do
@@ -1054,8 +1056,7 @@ defmodule Upkeep.SourceEctoTest do
   end
 
   defp surface_keys(source, params) do
-    source
-    |> apply(:__upkeep_surface__, [params])
+    source.__upkeep_surface__(params)
     |> InvalidationSurface.keys()
   end
 

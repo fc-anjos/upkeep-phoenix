@@ -3,7 +3,9 @@ defmodule Upkeep.Invalidation.ReadCacheTest do
 
   import Ecto.Query
 
+  alias Ecto.Adapters.SQL
   alias Upkeep.Ecto.Source.QueryDeps
+  alias Upkeep.Invalidation.Bus
   alias Upkeep.Invalidation.ReadCache, as: ReadCache
   alias Upkeep.TestSupport.{LiveSocket, TelemetryMessages}
   alias Upkeep.TestSupport.Repo
@@ -319,7 +321,7 @@ defmodule Upkeep.Invalidation.ReadCacheTest do
 
   test "SourceInvalidator is a member of the cluster notification group" do
     members =
-      Group.members(Upkeep.Invalidation.Bus.group(), Upkeep.Invalidation.Bus.key())
+      Group.members(Bus.group(), Bus.key())
 
     pids = Enum.map(members, fn {pid, _meta} -> pid end)
     assert Process.whereis(Upkeep.Invalidation.SourceInvalidator) in pids
@@ -327,7 +329,7 @@ defmodule Upkeep.Invalidation.ReadCacheTest do
 
   defp fetch_query(query, holder \\ nil) do
     deps = QueryDeps.from_query(query)
-    {sql, params} = Ecto.Adapters.SQL.to_sql(:all, Repo, query)
+    {sql, params} = SQL.to_sql(:all, Repo, query)
     node_id = {:read, Repo, :erlang.phash2({sql, params})}
 
     ReadCache.fetch_or_load(node_id, deps, fn -> Repo.all(query) end, holder)

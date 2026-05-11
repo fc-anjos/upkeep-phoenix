@@ -71,9 +71,8 @@ defmodule Upkeep.Ecto.RepoCapture.InsertAllRecords do
   defp record(schema, %schema{} = entry) when is_atom(schema), do: {:ok, entry}
 
   defp record(schema, entry) when is_atom(schema) do
-    with {:ok, map} <- entry_map(entry) do
-      {:ok, struct(schema, map)}
-    else
+    case entry_map(entry) do
+      {:ok, map} -> {:ok, struct(schema, map)}
       :error -> {:deopt, :unmaterializable_entries}
     end
   rescue
@@ -103,7 +102,7 @@ defmodule Upkeep.Ecto.RepoCapture.InsertAllRecords do
          {:ok, entry_map} <- entry_map(entry) do
       merged =
         Map.merge(entry_map, record_map, fn _key, entry_value, record_value ->
-          if is_nil(record_value), do: entry_value, else: record_value
+          returning_value(entry_value, record_value)
         end)
 
       record(schema, merged)
@@ -111,6 +110,9 @@ defmodule Upkeep.Ecto.RepoCapture.InsertAllRecords do
       :error -> {:deopt, :unmaterializable_entries}
     end
   end
+
+  defp returning_value(entry_value, nil), do: entry_value
+  defp returning_value(_entry_value, record_value), do: record_value
 
   defp entry_map(%_{} = entry), do: {:ok, Map.from_struct(entry)}
   defp entry_map(entry) when is_map(entry), do: {:ok, entry}

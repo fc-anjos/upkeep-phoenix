@@ -52,23 +52,24 @@ defmodule Upkeep.Live.SourceLocation do
   end
 
   defp source_snippet(file, line_number) when is_binary(file) and is_integer(line_number) do
-    with {:ok, contents} <- File.read(file) do
-      lines = String.split(contents, "\n", trim: false)
-      first = max(line_number - @context_radius, 1)
-      last = min(line_number + @context_radius, length(lines))
-      width = last |> Integer.to_string() |> String.length()
-
-      first..last
-      |> Enum.map(fn number ->
-        marker = if number == line_number, do: ">", else: " "
-        source_line = Enum.at(lines, number - 1, "")
-        "#{marker} #{String.pad_leading(Integer.to_string(number), width)}  #{source_line}"
-      end)
-      |> Enum.join("\n")
-    else
+    case File.read(file) do
+      {:ok, contents} -> snippet(contents, line_number)
       {:error, _reason} -> nil
     end
   end
 
   defp source_snippet(_file, _line_number), do: nil
+
+  defp snippet(contents, line_number) do
+    lines = String.split(contents, "\n", trim: false)
+    first = max(line_number - @context_radius, 1)
+    last = min(line_number + @context_radius, length(lines))
+    width = last |> Integer.to_string() |> String.length()
+
+    Enum.map_join(first..last, "\n", fn number ->
+      marker = if number == line_number, do: ">", else: " "
+      source_line = Enum.at(lines, number - 1, "")
+      "#{marker} #{String.pad_leading(Integer.to_string(number), width)}  #{source_line}"
+    end)
+  end
 end

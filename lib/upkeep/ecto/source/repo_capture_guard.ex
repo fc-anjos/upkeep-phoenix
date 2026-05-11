@@ -9,12 +9,10 @@ defmodule Upkeep.Ecto.Source.RepoCaptureGuard do
   def verify_source!(source, params, opts \\ []) when is_atom(source) and is_map(params) do
     instance = Instance.build(source, params)
 
-    cond do
-      instance.query_source? or instance.repo_explicit? ->
-        ensure_repo_capture!(instance.repo, instance.source, instance.params, opts)
-
-      true ->
-        :ok
+    if instance.query_source? or instance.repo_explicit? do
+      ensure_repo_capture!(instance.repo, instance.source, instance.params, opts)
+    else
+      :ok
     end
   end
 
@@ -140,21 +138,23 @@ defmodule Upkeep.Ecto.Source.RepoCaptureGuard do
     file = Map.get(location, :file_label) || Map.get(location, :file)
     line = Map.get(location, :line)
     snippet = Map.get(location, :snippet) || Map.get(location, :code)
+    label = source_location_label(file, line)
 
-    label =
-      cond do
-        is_binary(file) and is_integer(line) -> "#{file}:#{line}"
-        is_binary(file) -> file
-        is_integer(line) -> "line #{line}"
-        true -> nil
-      end
-
-    cond do
-      is_binary(label) and is_binary(snippet) -> "Declared at #{label}\n#{snippet}"
-      is_binary(label) -> "Declared at #{label}"
-      true -> nil
-    end
+    source_location_message(label, snippet)
   end
+
+  defp source_location_label(file, line) when is_binary(file) and is_integer(line),
+    do: "#{file}:#{line}"
+
+  defp source_location_label(file, _line) when is_binary(file), do: file
+  defp source_location_label(_file, line) when is_integer(line), do: "line #{line}"
+  defp source_location_label(_file, _line), do: nil
+
+  defp source_location_message(label, snippet) when is_binary(label) and is_binary(snippet),
+    do: "Declared at #{label}\n#{snippet}"
+
+  defp source_location_message(label, _snippet) when is_binary(label), do: "Declared at #{label}"
+  defp source_location_message(_label, _snippet), do: nil
 
   defp status_label(:ok), do: :ok
   defp status_label({:error, _reason}), do: :error

@@ -112,8 +112,7 @@ defmodule Upkeep.Change do
     [fields(record), fields(from)]
     |> Enum.flat_map(&Map.keys/1)
     |> Enum.uniq()
-    |> Enum.filter(&is_atom/1)
-    |> Enum.filter(&(field_value(from, &1) != field_value(record, &1)))
+    |> Enum.filter(&(is_atom(&1) and field_value(from, &1) != field_value(record, &1)))
     |> MapSet.new()
   end
 

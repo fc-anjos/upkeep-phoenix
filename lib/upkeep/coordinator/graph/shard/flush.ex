@@ -1,12 +1,13 @@
 defmodule Upkeep.Coordinator.Graph.Shard.Flush do
   @moduledoc false
 
-  alias Upkeep.Coordinator.Graph.Shard.{Dispatch, Loaders, Retries}
-  alias Upkeep.Coordinator.LoadFailure
-  alias Upkeep.Coordinator.LoadedSource
-  alias Upkeep.Coordinator.Shards
-  alias Upkeep.DAG.Store
   alias Upkeep.Coordinator.DirtyBuffer
+  alias Upkeep.Coordinator.LoadedSource
+  alias Upkeep.Coordinator.LoadFailure
+  alias Upkeep.Coordinator.Shards
+
+  alias Upkeep.Coordinator.Graph.Shard.{Dispatch, Loaders, Retries}
+  alias Upkeep.DAG.Store
 
   @flush_interval_ms 1
 

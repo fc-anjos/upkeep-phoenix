@@ -125,8 +125,7 @@ defmodule Upkeep.DAG.Store do
 
           kind != :source and Enum.any?(deps, &MapSet.member?(changed, &1)) ->
             value = compute_value(store, id)
-            {store, value_changed?} = put_value(store, id, value)
-            changed = if value_changed?, do: MapSet.put(changed, id), else: changed
+            {store, changed} = put_recomputed_value(store, changed, id, value)
 
             {store, changed, [id | recomputed]}
 
@@ -173,6 +172,16 @@ defmodule Upkeep.DAG.Store do
     old = Map.get(store.values, id, :__upkeep_missing__)
     store = %{store | values: Map.put(store.values, id, value)}
     {store, old != value}
+  end
+
+  defp put_recomputed_value(store, changed, id, value) do
+    {store, value_changed?} = put_value(store, id, value)
+
+    if value_changed? do
+      {store, MapSet.put(changed, id)}
+    else
+      {store, changed}
+    end
   end
 
   defp compute_and_store(store, id) do

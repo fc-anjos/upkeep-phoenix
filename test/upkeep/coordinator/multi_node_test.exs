@@ -16,6 +16,7 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
   @moduletag :multi_node
 
   alias Upkeep.Invalidation.ReadCache, as: ReadCache
+  alias Upkeep.TestSupport.MultiNodeHarness
 
   defmodule FakeSchema, do: defstruct([:id])
 
@@ -84,7 +85,7 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
       value = {:loaded_on_peer, peer_node}
 
       {:ok, subscriber} =
-        :erpc.call(peer_node, Upkeep.TestSupport.MultiNodeHarness, :start_graph_subscriber, [
+        :erpc.call(peer_node, MultiNodeHarness, :start_graph_subscriber, [
           self(),
           node_id,
           event_name,
@@ -113,7 +114,7 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
     deps = %Upkeep.Ecto.Source.QueryDeps{schemas: MapSet.new([schema])}
     node_id = {:read, :synthetic_repo, fingerprint}
 
-    Upkeep.TestSupport.MultiNodeHarness.seed_read_node(node_id, deps)
+    MultiNodeHarness.seed_read_node(node_id, deps)
   end
 
   defp seed_peer_read_node(peer, schema, fingerprint) do
@@ -121,7 +122,7 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
     deps = %Upkeep.Ecto.Source.QueryDeps{schemas: MapSet.new([schema])}
     node_id = {:read, :synthetic_repo, fingerprint}
 
-    :erpc.call(peer_node, Upkeep.TestSupport.MultiNodeHarness, :seed_read_node, [node_id, deps])
+    :erpc.call(peer_node, MultiNodeHarness, :seed_read_node, [node_id, deps])
   end
 
   defp node_of(peer) do
@@ -195,7 +196,7 @@ defmodule Upkeep.Coordinator.MultiNodeTest do
     # Wait until both nodes can see *both* nodes in the notification
     # group. Group's pg-based replication is eventually consistent, so
     # we confirm bidirectional visibility before testing notify fanout.
-    harness = Upkeep.TestSupport.MultiNodeHarness
+    harness = MultiNodeHarness
     expected = Enum.sort([Node.self(), peer_node])
 
     diag = fn ->

@@ -5,6 +5,8 @@ defmodule Upkeep.Ecto.RepoCapture do
 
   defmacro __using__(_opts) do
     quote do
+      alias Upkeep.Ecto.RepoCapture
+
       def __upkeep_repo_capture_enabled__?, do: true
 
       defoverridable transaction: 2,
@@ -21,7 +23,7 @@ defmodule Upkeep.Ecto.RepoCapture do
                      delete!: 2
 
       def transaction(fun_or_multi, opts) do
-        {capture?, opts} = Upkeep.Ecto.RepoCapture.pop_capture_opt(opts)
+        {capture?, opts} = RepoCapture.pop_capture_opt(opts)
 
         if capture? do
           Upkeep.Mutation.with_transaction_journal(fn -> super(fun_or_multi, opts) end)
@@ -31,43 +33,43 @@ defmodule Upkeep.Ecto.RepoCapture do
       end
 
       def insert(changeset_or_struct, opts) do
-        {capture?, opts} = Upkeep.Ecto.RepoCapture.pop_capture_opt(opts)
+        {capture?, opts} = RepoCapture.pop_capture_opt(opts)
 
         changeset_or_struct
         |> super(opts)
-        |> Upkeep.Ecto.RepoCapture.capture_result(:inserted, changeset_or_struct, capture?)
+        |> RepoCapture.capture_result(:inserted, changeset_or_struct, capture?)
       end
 
       def update(changeset, opts) do
-        {capture?, opts} = Upkeep.Ecto.RepoCapture.pop_capture_opt(opts)
+        {capture?, opts} = RepoCapture.pop_capture_opt(opts)
 
         changeset
         |> super(opts)
-        |> Upkeep.Ecto.RepoCapture.capture_result(:updated, changeset, capture?)
+        |> RepoCapture.capture_result(:updated, changeset, capture?)
       end
 
       def insert_or_update(changeset, opts) do
-        {capture?, opts} = Upkeep.Ecto.RepoCapture.pop_capture_opt(opts)
-        action = Upkeep.Ecto.RepoCapture.insert_or_update_action(changeset)
+        {capture?, opts} = RepoCapture.pop_capture_opt(opts)
+        action = RepoCapture.insert_or_update_action(changeset)
 
         changeset
         |> super(opts)
-        |> Upkeep.Ecto.RepoCapture.capture_result(action, changeset, capture?)
+        |> RepoCapture.capture_result(action, changeset, capture?)
       end
 
       def delete(changeset_or_struct, opts) do
-        {capture?, opts} = Upkeep.Ecto.RepoCapture.pop_capture_opt(opts)
+        {capture?, opts} = RepoCapture.pop_capture_opt(opts)
 
         changeset_or_struct
         |> super(opts)
-        |> Upkeep.Ecto.RepoCapture.capture_result(:deleted, changeset_or_struct, capture?)
+        |> RepoCapture.capture_result(:deleted, changeset_or_struct, capture?)
       end
 
       def insert_all(schema_or_source, entries, opts) do
-        {capture?, capture_opts, opts} = Upkeep.Ecto.RepoCapture.pop_capture_opts(opts)
+        {capture?, capture_opts, opts} = RepoCapture.pop_capture_opts(opts)
 
         if capture? do
-          Upkeep.Ecto.RepoCapture.capture_insert_all(
+          RepoCapture.capture_insert_all(
             __MODULE__,
             schema_or_source,
             entries,
@@ -80,10 +82,10 @@ defmodule Upkeep.Ecto.RepoCapture do
       end
 
       def update_all(queryable, updates, opts) do
-        {capture?, capture_opts, opts} = Upkeep.Ecto.RepoCapture.pop_capture_opts(opts)
+        {capture?, capture_opts, opts} = RepoCapture.pop_capture_opts(opts)
 
         if capture? do
-          Upkeep.Ecto.RepoCapture.capture_update_all(
+          RepoCapture.capture_update_all(
             __MODULE__,
             queryable,
             updates,
@@ -97,10 +99,10 @@ defmodule Upkeep.Ecto.RepoCapture do
       end
 
       def delete_all(queryable, opts) do
-        {capture?, capture_opts, opts} = Upkeep.Ecto.RepoCapture.pop_capture_opts(opts)
+        {capture?, capture_opts, opts} = RepoCapture.pop_capture_opts(opts)
 
         if capture? do
-          Upkeep.Ecto.RepoCapture.capture_delete_all(
+          RepoCapture.capture_delete_all(
             __MODULE__,
             queryable,
             capture_opts,
@@ -112,36 +114,36 @@ defmodule Upkeep.Ecto.RepoCapture do
       end
 
       def insert!(changeset_or_struct, opts) do
-        {capture?, opts} = Upkeep.Ecto.RepoCapture.pop_capture_opt(opts)
+        {capture?, opts} = RepoCapture.pop_capture_opt(opts)
 
         changeset_or_struct
         |> super(opts)
-        |> Upkeep.Ecto.RepoCapture.capture_record!(:inserted, changeset_or_struct, capture?)
+        |> RepoCapture.capture_record!(:inserted, changeset_or_struct, capture?)
       end
 
       def update!(changeset, opts) do
-        {capture?, opts} = Upkeep.Ecto.RepoCapture.pop_capture_opt(opts)
+        {capture?, opts} = RepoCapture.pop_capture_opt(opts)
 
         changeset
         |> super(opts)
-        |> Upkeep.Ecto.RepoCapture.capture_record!(:updated, changeset, capture?)
+        |> RepoCapture.capture_record!(:updated, changeset, capture?)
       end
 
       def insert_or_update!(changeset, opts) do
-        {capture?, opts} = Upkeep.Ecto.RepoCapture.pop_capture_opt(opts)
-        action = Upkeep.Ecto.RepoCapture.insert_or_update_action(changeset)
+        {capture?, opts} = RepoCapture.pop_capture_opt(opts)
+        action = RepoCapture.insert_or_update_action(changeset)
 
         changeset
         |> super(opts)
-        |> Upkeep.Ecto.RepoCapture.capture_record!(action, changeset, capture?)
+        |> RepoCapture.capture_record!(action, changeset, capture?)
       end
 
       def delete!(changeset_or_struct, opts) do
-        {capture?, opts} = Upkeep.Ecto.RepoCapture.pop_capture_opt(opts)
+        {capture?, opts} = RepoCapture.pop_capture_opt(opts)
 
         changeset_or_struct
         |> super(opts)
-        |> Upkeep.Ecto.RepoCapture.capture_record!(:deleted, changeset_or_struct, capture?)
+        |> RepoCapture.capture_record!(:deleted, changeset_or_struct, capture?)
       end
     end
   end

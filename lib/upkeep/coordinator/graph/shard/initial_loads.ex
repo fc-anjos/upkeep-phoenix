@@ -1,10 +1,11 @@
 defmodule Upkeep.Coordinator.Graph.Shard.InitialLoads do
   @moduledoc false
 
-  alias Upkeep.Coordinator.Graph.Shard.Loaders
-  alias Upkeep.Coordinator.LoadFailure
   alias Upkeep.Coordinator.LoadedSource
+  alias Upkeep.Coordinator.LoadFailure
   alias Upkeep.Coordinator.Shards
+
+  alias Upkeep.Coordinator.Graph.Shard.Loaders
   alias Upkeep.DAG.Store
   alias Upkeep.SingleFlight
 

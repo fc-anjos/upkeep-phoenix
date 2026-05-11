@@ -2,9 +2,9 @@ defmodule Upkeep.Runtime.SpecsTest do
   use ExUnit.Case, async: true
 
   alias Upkeep.Runtime
-  alias Upkeep.Runtime.Specs
   alias Upkeep.Runtime.Materializer
   alias Upkeep.Runtime.Producer
+  alias Upkeep.Runtime.Specs
   alias Upkeep.Source.Instance
   alias Upkeep.TestSupport.LiveSocket
 

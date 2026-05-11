@@ -16,6 +16,10 @@ defmodule Upkeep.TestSupport.DataCase do
 
   use ExUnit.CaseTemplate
 
+  alias Ecto.Adapters.SQL.Sandbox
+  alias Upkeep.TestSupport.DataCase
+  alias Upkeep.TestSupport.Repo
+
   using do
     quote do
       alias Upkeep.TestSupport.Repo
@@ -28,7 +32,7 @@ defmodule Upkeep.TestSupport.DataCase do
   end
 
   setup tags do
-    Upkeep.TestSupport.DataCase.setup_sandbox(tags)
+    DataCase.setup_sandbox(tags)
     :ok
   end
 
@@ -38,8 +42,7 @@ defmodule Upkeep.TestSupport.DataCase do
   def setup_sandbox(tags) do
     Upkeep.Test.reset_graph()
 
-    pid =
-      Ecto.Adapters.SQL.Sandbox.start_owner!(Upkeep.TestSupport.Repo, shared: not tags[:async])
+    pid = Sandbox.start_owner!(Repo, shared: not tags[:async])
 
     Upkeep.Test.allow_sandbox()
 
@@ -48,7 +51,7 @@ defmodule Upkeep.TestSupport.DataCase do
         Upkeep.Test.drain()
       after
         Upkeep.Test.reset_graph()
-        Ecto.Adapters.SQL.Sandbox.stop_owner(pid)
+        Sandbox.stop_owner(pid)
       end
     end)
   end

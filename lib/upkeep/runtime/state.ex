@@ -77,12 +77,14 @@ defmodule Upkeep.Runtime.State do
     if MapSet.size(source_ids) == map_size(runtime.watches) do
       Map.to_list(runtime.watches)
     else
-      Enum.flat_map(source_ids, fn source_id ->
-        case Map.fetch(runtime.watches, source_id) do
-          {:ok, watch} -> [{source_id, watch}]
-          :error -> []
-        end
-      end)
+      Enum.flat_map(source_ids, &fetch_watch(runtime.watches, &1))
+    end
+  end
+
+  defp fetch_watch(watches, source_id) do
+    case Map.fetch(watches, source_id) do
+      {:ok, watch} -> [{source_id, watch}]
+      :error -> []
     end
   end
 

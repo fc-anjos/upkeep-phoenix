@@ -50,11 +50,12 @@ defmodule Upkeep.Ecto.Source.QueryDeps.Bindings do
     with {:ok, association} <- association(owner_schema, assoc) do
       association
       |> Map.get(:join_through)
-      |> then(fn
-        schema ->
-          if schema?(schema), do: {:ok, [{schema, :many_to_many_join}]}, else: {:ok, []}
-      end)
+      |> join_dependency()
     end
+  end
+
+  defp join_dependency(schema) do
+    if schema?(schema), do: {:ok, [{schema, :many_to_many_join}]}, else: {:ok, []}
   end
 
   defp join_schema(_bindings, %{source: source}) when not is_nil(source) do

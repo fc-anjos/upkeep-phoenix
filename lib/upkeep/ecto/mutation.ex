@@ -24,16 +24,22 @@ defmodule Upkeep.Ecto.Mutation do
 
   defp run_outer_mutation(repo, fun) do
     Upkeep.Mutation.with_isolated_journal(fn ->
-      case repo.transaction(fn -> {fun.(), Upkeep.Mutation.journal()} end) do
-        {:ok, {result, events}} ->
-          Upkeep.Mutation.dispatch_journal(events)
-          {:ok, result}
-
-        {:error, reason} ->
-          {:error, reason}
-      end
+      repo
+      |> transaction_with_journal(fun)
+      |> dispatch_transaction_journal()
     end)
   end
+
+  defp transaction_with_journal(repo, fun) do
+    repo.transaction(fn -> {fun.(), Upkeep.Mutation.journal()} end)
+  end
+
+  defp dispatch_transaction_journal({:ok, {result, events}}) do
+    Upkeep.Mutation.dispatch_journal(events)
+    {:ok, result}
+  end
+
+  defp dispatch_transaction_journal({:error, reason}), do: {:error, reason}
 
   defp run_outer_multi(repo, multi) do
     Upkeep.Mutation.with_isolated_journal(fn ->

@@ -82,6 +82,7 @@ defmodule Upkeep.MixProject do
       {:group, "~> 0.1"},
       {:boundary, "~> 0.10.4", runtime: false},
       {:benchee, "~> 1.3", only: [:dev, :test], runtime: false},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
@@ -94,6 +95,7 @@ defmodule Upkeep.MixProject do
         "xref graph --format cycles --label compile-connected --fail-above 0",
         "deps.unlock --unused",
         "format",
+        "credo --strict",
         "test",
         "dialyzer"
       ]

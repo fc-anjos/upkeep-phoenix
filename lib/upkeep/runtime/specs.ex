@@ -3,8 +3,8 @@ defmodule Upkeep.Runtime.Specs do
 
   alias Upkeep.Runtime.Dependencies
   alias Upkeep.Runtime.Ids
-  alias Upkeep.Runtime.NodeSpec
   alias Upkeep.Runtime.Materializer
+  alias Upkeep.Runtime.NodeSpec
   alias Upkeep.Runtime.Producer
   alias Upkeep.Runtime.ScopeCapture
   alias Upkeep.Runtime.State

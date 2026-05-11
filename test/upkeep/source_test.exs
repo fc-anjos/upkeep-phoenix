@@ -3,6 +3,8 @@ defmodule Upkeep.SourceTest do
 
   alias Upkeep.InvalidationSurface
   alias Upkeep.Live
+  alias Upkeep.Source.Coverage
+  alias Upkeep.Source.Loader
   alias Upkeep.TestSupport.{DagMessages, LiveSocket}
 
   defmodule Issue do
@@ -122,7 +124,7 @@ defmodule Upkeep.SourceTest do
   end
 
   test "source load result captures value, observed deps, surface, and coverage" do
-    result = Upkeep.Source.Loader.load_result(BoardColumns, %{project_id: 123})
+    result = Loader.load_result(BoardColumns, %{project_id: 123})
 
     assert result.instance == Upkeep.Source.instance(BoardColumns, %{project_id: 123})
     assert result.value == [:todo]
@@ -248,7 +250,7 @@ defmodule Upkeep.SourceTest do
     coverage = Upkeep.Source.coverage(HiddenLoad, %{})
 
     assert coverage.unknown == [%{reason: :no_invalidation_surface}]
-    assert Upkeep.Source.Coverage.summary(coverage) =~ "non-reactive"
+    assert Coverage.summary(coverage) =~ "non-reactive"
 
     assert [
              %{
@@ -256,7 +258,7 @@ defmodule Upkeep.SourceTest do
                severity: :error,
                action: action
              }
-           ] = Upkeep.Source.Coverage.diagnostics(coverage)
+           ] = Coverage.diagnostics(coverage)
 
     assert action =~ "Upkeep.read/1"
 
@@ -279,13 +281,13 @@ defmodule Upkeep.SourceTest do
       snippet: "> 42  socket |> watch(:hidden, HiddenLoad, %{})"
     }
 
-    explanation = Upkeep.Source.Coverage.explain(coverage, source_location: location)
+    explanation = Coverage.explain(coverage, source_location: location)
 
     assert explanation =~ "Declared at test/live_view.ex:42"
     assert explanation =~ "watch(:hidden, HiddenLoad"
 
     assert [%{location_label: "test/live_view.ex:42", source_excerpt: source_excerpt}] =
-             Upkeep.Source.Coverage.diagnostics(coverage, source_location: location)
+             Coverage.diagnostics(coverage, source_location: location)
 
     assert source_excerpt =~ "watch(:hidden, HiddenLoad"
   end
@@ -391,8 +393,7 @@ defmodule Upkeep.SourceTest do
   defp board_columns_source_id(project_id), do: {BoardColumns, %{project_id: project_id}}
 
   defp surface_keys(source, params) do
-    source
-    |> apply(:__upkeep_surface__, [params])
+    source.__upkeep_surface__(params)
     |> InvalidationSurface.keys()
   end
 

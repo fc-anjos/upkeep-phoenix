@@ -2,6 +2,7 @@ defmodule Upkeep.LiveRefreshTest do
   use ExUnit.Case, async: false
 
   alias Upkeep.Live
+  alias Upkeep.Runtime.Ids
 
   import Upkeep.TestSupport, only: [attach_telemetry: 1]
 
@@ -1712,8 +1713,8 @@ defmodule Upkeep.LiveRefreshTest do
     instance = Upkeep.Source.instance(source, params)
 
     source_ids = [
-      Upkeep.Runtime.Ids.scoped_source_id(instance, nil),
-      Upkeep.Runtime.Ids.scoped_source_id(instance, component)
+      Ids.scoped_source_id(instance, nil),
+      Ids.scoped_source_id(instance, component)
     ]
 
     subscribed? =

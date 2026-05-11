@@ -1,6 +1,11 @@
 defmodule Upkeep.Ecto.Source.QueryDeps do
   @moduledoc false
 
+  alias Upkeep.Change
+  alias Upkeep.Ecto.Source.QueryDeps.{Bindings, Expressions}
+  alias Upkeep.InvalidationSurface
+  alias Upkeep.Source.Coverage
+
   @actions [:inserted, :updated, :deleted]
   defstruct bindings: %{},
             schemas: MapSet.new(),
@@ -11,11 +16,11 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
             warnings: []
 
   def from_query(%Ecto.Query{} = query) do
-    bindings = Upkeep.Ecto.Source.QueryDeps.Bindings.from_query(query)
+    bindings = Bindings.from_query(query)
 
     %__MODULE__{
       bindings: bindings.by_index,
-      schemas: Upkeep.Ecto.Source.QueryDeps.Bindings.schemas(bindings),
+      schemas: Bindings.schemas(bindings),
       warnings: bindings.diagnostics
     }
     |> collect_query_fields(query)
@@ -32,28 +37,30 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
 
     deps.schemas
     |> Enum.reduce(
-      Upkeep.Source.Coverage.new(nil, %{}, unknown: unknown, warnings: warnings),
-      fn schema, coverage ->
-        reasons = broad_reasons(deps, schema)
-        filter_sets = equality_filter_sets(deps, schema)
-
-        cond do
-          reasons != [] ->
-            Enum.reduce(reasons, coverage, fn reason, coverage ->
-              append_broad(coverage, schema, reason)
-            end)
-
-          filter_sets == [] ->
-            append_broad(coverage, schema, :no_precise_filters)
-
-          true ->
-            append_precise(coverage, schema, filter_set_fields(filter_sets))
-        end
-      end
+      Coverage.new(nil, %{}, unknown: unknown, warnings: warnings),
+      fn schema, coverage -> coverage_for_schema(coverage, deps, schema) end
     )
   end
 
   def coverage(%Ecto.Query{} = query), do: query |> from_query() |> coverage()
+
+  defp coverage_for_schema(coverage, deps, schema) do
+    reasons = broad_reasons(deps, schema)
+    filter_sets = equality_filter_sets(deps, schema)
+
+    cond do
+      reasons != [] ->
+        Enum.reduce(reasons, coverage, fn reason, coverage ->
+          append_broad(coverage, schema, reason)
+        end)
+
+      filter_sets == [] ->
+        append_broad(coverage, schema, :no_precise_filters)
+
+      true ->
+        append_precise(coverage, schema, filter_set_fields(filter_sets))
+    end
+  end
 
   def label(%__MODULE__{} = deps) do
     schemas =
@@ -92,41 +99,43 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
       for action <- @actions, values <- value_sets do
         notification = %{name: action, schema: schema}
 
-        if values == :broad do
-          Upkeep.InvalidationSurface.notification_key(notification)
-        else
-          Upkeep.InvalidationSurface.notification_key(notification, values)
-        end
+        notification_key_for_values(notification, values)
       end
     end)
   end
 
   def keys(_query), do: []
 
+  defp notification_key_for_values(notification, :broad),
+    do: InvalidationSurface.notification_key(notification)
+
+  defp notification_key_for_values(notification, values),
+    do: InvalidationSurface.notification_key(notification, values)
+
   def surface(query_or_deps)
 
   def surface(%Ecto.Query{} = query), do: query |> from_query() |> surface()
 
   def surface(%__MODULE__{} = deps) do
-    Upkeep.InvalidationSurface.manual(
+    InvalidationSurface.manual(
       keys(deps),
       {__MODULE__, :matches_change?, [deps]}
     )
   end
 
-  def surface(_query), do: Upkeep.InvalidationSurface.empty()
+  def surface(_query), do: InvalidationSurface.empty()
 
   def matches_change?(query_or_deps, event)
 
   def matches_change?(%Ecto.Query{} = query, event),
     do: query |> from_query() |> matches_change?(event)
 
-  def matches_change?(%__MODULE__{} = deps, %Upkeep.Change{} = change)
+  def matches_change?(%__MODULE__{} = deps, %Change{} = change)
       when change.name in @actions do
     if MapSet.member?(deps.schemas, change.schema) do
       filter_sets = equality_filter_sets(deps, change.schema)
 
-      Upkeep.Change.broad_update?(change) or broad_schema?(deps, change.schema) or
+      Change.broad_update?(change) or broad_schema?(deps, change.schema) or
         filter_sets == [] or
         Enum.any?(filter_sets, &change_matches_filters?(change, &1))
     else
@@ -138,7 +147,7 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
 
   defp collect_query_fields(deps, query) do
     query
-    |> Upkeep.Ecto.Source.QueryDeps.Expressions.all()
+    |> Expressions.all()
     |> Enum.reduce(deps, fn expr, deps -> collect_fields(deps, expr) end)
   end
 
@@ -146,7 +155,7 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
     {_expr, deps} =
       Macro.prewalk(expr, deps, fn
         node, deps ->
-          case Upkeep.Ecto.Source.QueryDeps.Expressions.field_ref(node) do
+          case Expressions.field_ref(node) do
             {binding, field} -> {node, put_field(deps, binding, field)}
             nil -> {node, deps}
           end
@@ -247,19 +256,17 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
       filter_set
       |> filters_by_schema(deps)
       |> Enum.reduce(deps, fn {schema, filters}, deps ->
-        filters =
-          Enum.reduce(filters, %{}, fn {_binding, field, value}, filters ->
-            values = List.wrap(value)
-
-            Map.update(filters, field, values, fn existing ->
-              Enum.uniq(existing ++ values)
-            end)
-          end)
-
         deps
         |> put_fields(filter_set)
-        |> put_equality_filter_set(schema, filters)
+        |> put_equality_filter_set(schema, equality_filters(filters))
       end)
+    end)
+  end
+
+  defp equality_filters(filters) do
+    Enum.reduce(filters, %{}, fn {_binding, field, value}, filters ->
+      values = List.wrap(value)
+      Map.update(filters, field, values, &Enum.uniq(&1 ++ values))
     end)
   end
 
@@ -280,7 +287,7 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
   end
 
   defp maybe_add_field_filter(filters, field_side, value_side, params, deps, expr, value_fun) do
-    case Upkeep.Ecto.Source.QueryDeps.Expressions.field_ref(field_side) do
+    case Expressions.field_ref(field_side) do
       {binding, field} ->
         with :ok <- known_binding(deps, binding),
              {:ok, value} <- value_fun.(value_side, params) do
@@ -385,7 +392,7 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
 
   defp mark_fragment_broad_reasons(deps, query) do
     query
-    |> Upkeep.Ecto.Source.QueryDeps.Expressions.all()
+    |> Expressions.all()
     |> Enum.reduce(deps, &mark_fragments/2)
   end
 
@@ -410,16 +417,7 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
   defp schemas_for_expr(expr, deps) do
     {_expr, schemas} =
       Macro.prewalk(expr, MapSet.new(), fn node, schemas ->
-        case Upkeep.Ecto.Source.QueryDeps.Expressions.field_ref(node) do
-          {binding, _field} ->
-            case Map.fetch(deps.bindings, binding) do
-              {:ok, schema} -> {node, MapSet.put(schemas, schema)}
-              :error -> {node, schemas}
-            end
-
-          nil ->
-            {node, schemas}
-        end
+        {node, put_expr_schema(schemas, deps, node)}
       end)
 
     case MapSet.to_list(schemas) do
@@ -428,9 +426,23 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
     end
   end
 
+  defp put_expr_schema(schemas, deps, node) do
+    case Expressions.field_ref(node) do
+      {binding, _field} -> put_binding_schema(schemas, deps, binding)
+      nil -> schemas
+    end
+  end
+
+  defp put_binding_schema(schemas, deps, binding) do
+    case Map.fetch(deps.bindings, binding) do
+      {:ok, schema} -> MapSet.put(schemas, schema)
+      :error -> schemas
+    end
+  end
+
   defp collect_subquery_deps(deps, query) do
     query
-    |> Upkeep.Ecto.Source.QueryDeps.Expressions.structs()
+    |> Expressions.structs()
     |> Enum.flat_map(&Map.get(&1, :subqueries, []))
     |> Enum.reduce(deps, fn %Ecto.SubQuery{query: query}, deps ->
       merge_deps(deps, from_query(query))
@@ -580,14 +592,14 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
   end
 
   defp association_schema_reasons(owner_schema, assoc) do
-    case Upkeep.Ecto.Source.QueryDeps.Bindings.association_dependencies(owner_schema, assoc) do
+    case Bindings.association_dependencies(owner_schema, assoc) do
       {:ok, reasons} -> {reasons, []}
       {:error, diagnostic} -> {[], [diagnostic]}
     end
   end
 
   defp association_join_schema_reasons(owner_schema, assoc) do
-    case Upkeep.Ecto.Source.QueryDeps.Bindings.association_join_dependencies(owner_schema, assoc) do
+    case Bindings.association_join_dependencies(owner_schema, assoc) do
       {:ok, reasons} -> {reasons, []}
       {:error, diagnostic} -> {[], [diagnostic]}
     end
@@ -605,14 +617,14 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
     }
   end
 
-  defp append_precise(%Upkeep.Source.Coverage{} = coverage, schema, fields) do
+  defp append_precise(%Coverage{} = coverage, schema, fields) do
     entry = %{schema: schema, fields: Enum.sort(fields)}
-    %Upkeep.Source.Coverage{coverage | precise: [entry | coverage.precise]}
+    %Coverage{coverage | precise: [entry | coverage.precise]}
   end
 
-  defp append_broad(%Upkeep.Source.Coverage{} = coverage, schema, reason) do
+  defp append_broad(%Coverage{} = coverage, schema, reason) do
     entry = %{schema: schema, reason: reason}
-    %Upkeep.Source.Coverage{coverage | broad: [entry | coverage.broad]}
+    %Coverage{coverage | broad: [entry | coverage.broad]}
   end
 
   defp unknown_warning?(%{reason: reason})
@@ -707,25 +719,29 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
   end
 
   defp change_matches_filters?(change, filters) do
-    if Upkeep.Change.partial_update?(change) do
+    if Change.partial_update?(change) do
       partial_change_matches_filters?(change, filters)
     else
       change
-      |> Upkeep.Change.field_sets()
-      |> Enum.any?(fn fields ->
-        Enum.all?(filters, fn {field, values} -> Enum.member?(values, Map.get(fields, field)) end)
-      end)
+      |> Change.field_sets()
+      |> Enum.any?(&fields_match_filters?(&1, filters))
     end
   end
 
   defp partial_change_matches_filters?(change, filters) do
     change
-    |> Upkeep.Change.field_sets()
-    |> Enum.any?(fn fields ->
-      Enum.all?(filters, fn {field, values} ->
-        Upkeep.Change.field_change(change, field) == :changed or
-          Enum.member?(values, Map.get(fields, field))
-      end)
+    |> Change.field_sets()
+    |> Enum.any?(&partial_fields_match_filters?(change, &1, filters))
+  end
+
+  defp fields_match_filters?(fields, filters) do
+    Enum.all?(filters, fn {field, values} -> Enum.member?(values, Map.get(fields, field)) end)
+  end
+
+  defp partial_fields_match_filters?(change, fields, filters) do
+    Enum.all?(filters, fn {field, values} ->
+      Change.field_change(change, field) == :changed or
+        Enum.member?(values, Map.get(fields, field))
     end)
   end
 

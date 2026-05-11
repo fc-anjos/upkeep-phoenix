@@ -2,10 +2,10 @@ defmodule Upkeep.Coordinator.Graph.Shard do
   @moduledoc false
   use GenServer
 
-  alias Upkeep.Coordinator.Graph.Shard.{Flush, InitialLoads, Lifecycle, Nodes, Retries}
-  alias Upkeep.DAG.Store
   alias Upkeep.Coordinator.DirtyBuffer
+  alias Upkeep.Coordinator.Graph.Shard.{Flush, InitialLoads, Lifecycle, Nodes, Retries}
   alias Upkeep.Coordinator.Retry
+  alias Upkeep.DAG.Store
   alias Upkeep.SingleFlight
 
   ## Public

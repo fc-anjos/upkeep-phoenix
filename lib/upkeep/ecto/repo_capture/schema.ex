@@ -49,17 +49,21 @@ defmodule Upkeep.Ecto.RepoCapture.Schema do
   end
 
   def capture_query(repo, queryable, source) when is_binary(source) do
-    with {:ok, %{fields: [_ | _] = fields}} <- TableMetadata.metadata(repo, source) do
-      query =
-        queryable
-        |> Ecto.Queryable.to_query()
-        |> exclude(:select)
-        |> select([record], map(record, ^fields))
+    case TableMetadata.metadata(repo, source) do
+      {:ok, %{fields: [_ | _] = fields}} ->
+        query =
+          queryable
+          |> Ecto.Queryable.to_query()
+          |> exclude(:select)
+          |> select([record], map(record, ^fields))
 
-      {:ok, query}
-    else
-      {:ok, %{fields: []}} -> {:deopt, :no_table_fields}
-      {:deopt, reason} -> {:deopt, reason}
+        {:ok, query}
+
+      {:ok, %{fields: []}} ->
+        {:deopt, :no_table_fields}
+
+      {:deopt, reason} ->
+        {:deopt, reason}
     end
   end
 

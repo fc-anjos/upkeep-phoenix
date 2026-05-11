@@ -27,15 +27,7 @@ defmodule Upkeep.Runtime.Execution.Shared do
       ensure_graph_source_deps(socket, graph_dep_ids)
 
       dep_values = graph_dep_values(socket, local_to_graph)
-
-      graph_compute = fn graph_node_values ->
-        dep_pairs
-        |> Map.new(fn {dep, local_node_id} ->
-          graph_node_id = Map.fetch!(local_to_graph, local_node_id)
-          {dep, Map.fetch!(graph_node_values, graph_node_id)}
-        end)
-        |> fun.()
-      end
+      graph_compute = graph_compute_fun(dep_pairs, local_to_graph, fun)
 
       graph_node_id = {
         :derived,
@@ -146,6 +138,17 @@ defmodule Upkeep.Runtime.Execution.Shared do
       largest_shareable_subgraphs: Enum.map(plan.largest_subgraphs, & &1.node_ids),
       boundaries: plan.boundaries
     }
+  end
+
+  defp graph_compute_fun(dep_pairs, local_to_graph, fun) do
+    fn graph_node_values ->
+      dep_pairs
+      |> Map.new(fn {dep, local_node_id} ->
+        graph_node_id = Map.fetch!(local_to_graph, local_node_id)
+        {dep, Map.fetch!(graph_node_values, graph_node_id)}
+      end)
+      |> fun.()
+    end
   end
 
   defp local_initial_value(socket, dep_node_ids, compute, metadata, reason, extra \\ []) do

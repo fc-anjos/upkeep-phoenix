@@ -1,7 +1,7 @@
 defmodule Upkeep.Runtime.Watches do
   @moduledoc false
 
-  alias Upkeep.Runtime.{Ids, Patch, State, Telemetry}
+  alias Upkeep.Runtime.{Ids, Patch, State, Subscriptions, Telemetry}
 
   def remove_component(socket, component_id) when not is_nil(component_id) do
     node_id = Ids.component_node_id(component_id)
@@ -87,25 +87,29 @@ defmodule Upkeep.Runtime.Watches do
   defp remove_watch_assign(socket, source_id, assign_name) do
     case Map.fetch(State.watches(socket), source_id) do
       {:ok, watch} ->
-        assign_names = MapSet.delete(watch.assign_names, assign_name)
-
-        if Enum.empty?(assign_names) do
-          remove_watch(socket, source_id)
-        else
-          socket
-          |> State.put_existing_watch(source_id, %{watch | assign_names: assign_names})
-          |> State.delete_assign_node(assign_name)
-          |> then(fn socket ->
-            {socket,
-             [
-               {:telemetry, [:source, :unwatch], %{count: 1},
-                Telemetry.watch_alias_metadata(watch, assign_name)}
-             ]}
-          end)
-        end
+        remove_watch_assign(socket, source_id, watch, assign_name)
 
       :error ->
         {socket, []}
+    end
+  end
+
+  defp remove_watch_assign(socket, source_id, watch, assign_name) do
+    assign_names = MapSet.delete(watch.assign_names, assign_name)
+
+    if Enum.empty?(assign_names) do
+      remove_watch(socket, source_id)
+    else
+      socket
+      |> State.put_existing_watch(source_id, %{watch | assign_names: assign_names})
+      |> State.delete_assign_node(assign_name)
+      |> then(fn socket ->
+        {socket,
+         [
+           {:telemetry, [:source, :unwatch], %{count: 1},
+            Telemetry.watch_alias_metadata(watch, assign_name)}
+         ]}
+      end)
     end
   end
 
@@ -117,7 +121,7 @@ defmodule Upkeep.Runtime.Watches do
     if local_notifications_needed?(watches) do
       socket
     else
-      :ok = Upkeep.Runtime.Subscriptions.leave_local_notifications()
+      :ok = Subscriptions.leave_local_notifications()
       socket
     end
   end
@@ -125,7 +129,7 @@ defmodule Upkeep.Runtime.Watches do
   defp local_notifications_needed?(watches) do
     Enum.any?(watches, fn {_source_id, watch} ->
       not Map.get(watch, :registered?, false) and
-        not Upkeep.Runtime.Subscriptions.registered_source?(watch.source_id)
+        not Subscriptions.registered_source?(watch.source_id)
     end)
   end
 end

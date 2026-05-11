@@ -3,13 +3,15 @@ defmodule Upkeep.Invalidation.SourceInvalidator do
 
   use GenServer
 
+  alias Upkeep.Invalidation.{Bus, ReadCache}
+
   def start_link(_opts \\ []) do
     GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
   end
 
   @impl true
   def init(_) do
-    :ok = Upkeep.Invalidation.Bus.join(:read_node_watcher)
+    :ok = Bus.join(:read_node_watcher)
     {:ok, %{}}
   end
 
@@ -19,12 +21,12 @@ defmodule Upkeep.Invalidation.SourceInvalidator do
   end
 
   def handle_info({:upkeep_invalidation, _origin, event}, state) do
-    Upkeep.Invalidation.ReadCache.invalidate(event)
+    ReadCache.invalidate(event)
     {:noreply, state}
   end
 
   def handle_info({:upkeep_invalidation, event}, state) do
-    Upkeep.Invalidation.ReadCache.invalidate(event)
+    ReadCache.invalidate(event)
     {:noreply, state}
   end
 

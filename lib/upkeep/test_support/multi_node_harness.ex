@@ -1,7 +1,10 @@
 defmodule Upkeep.TestSupport.MultiNodeHarness do
   @moduledoc false
+
+  alias Upkeep.Coordinator.Graph
+
   def notification_group_node_view do
-    Upkeep.Coordinator.Graph.group()
+    Graph.group()
     |> Group.members(Upkeep.Invalidation.notification_key())
     |> Enum.map(fn {pid, _meta} -> node(pid) end)
     |> Enum.uniq()
@@ -22,7 +25,7 @@ defmodule Upkeep.TestSupport.MultiNodeHarness do
     pid =
       spawn(fn ->
         :ok =
-          Upkeep.Coordinator.Graph.register_loader(node_id, surface, fn ->
+          Graph.register_loader(node_id, surface, fn ->
             {value, surface}
           end)
 

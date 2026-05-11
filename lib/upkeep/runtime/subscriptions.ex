@@ -65,9 +65,6 @@ defmodule Upkeep.Runtime.Subscriptions do
   def tracking_policy(%Phoenix.LiveView.Socket{endpoint: nil, view: nil}), do: :eager
 
   def tracking_policy(%Phoenix.LiveView.Socket{} = socket) do
-    cond do
-      Phoenix.LiveView.connected?(socket) -> :auto
-      true -> :local
-    end
+    if Phoenix.LiveView.connected?(socket), do: :auto, else: :local
   end
 end

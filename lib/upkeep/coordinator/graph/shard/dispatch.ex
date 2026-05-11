@@ -20,16 +20,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Dispatch do
       # Value fanout deliberately batches per subscriber. Group.dispatch/3 is
       # ideal for single-key notification fanout, but DAG updates can contain
       # source and derived values that should arrive atomically for a LiveView.
-      pairs_by_pid =
-        Enum.reduce(pairs, %{}, fn {node_id, value}, acc ->
-          %Node{encoded_key: encoded_key} = Store.fetch_metadata!(state.store, node_id)
-
-          encoded_key
-          |> Subscriptions.members()
-          |> Enum.reduce(acc, fn {pid, _meta}, acc ->
-            Map.update(acc, pid, [{node_id, value}], &[{node_id, value} | &1])
-          end)
-        end)
+      pairs_by_pid = pairs_by_pid(state.store, pairs)
 
       pid_count = map_size(pairs_by_pid)
 
@@ -38,6 +29,18 @@ defmodule Upkeep.Coordinator.Graph.Shard.Dispatch do
       end)
 
       {:ok, Map.put(metadata, :pid_count, pid_count)}
+    end)
+  end
+
+  defp pairs_by_pid(store, pairs) do
+    Enum.reduce(pairs, %{}, fn {node_id, value}, acc ->
+      %Node{encoded_key: encoded_key} = Store.fetch_metadata!(store, node_id)
+
+      encoded_key
+      |> Subscriptions.members()
+      |> Enum.reduce(acc, fn {pid, _meta}, acc ->
+        Map.update(acc, pid, [{node_id, value}], &[{node_id, value} | &1])
+      end)
     end)
   end
 end

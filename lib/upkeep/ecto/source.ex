@@ -37,6 +37,10 @@ defmodule Upkeep.Ecto.Source do
     ],
     type: :strict
 
+  alias Ecto.Adapters.SQL
+  alias Upkeep.Ecto.Source.{QueryDeps, RepoCaptureGuard}
+  alias Upkeep.Source.Loader
+
   defmacro __using__(opts) do
     opts = Keyword.put(opts, :query_adapter, __MODULE__)
 
@@ -47,29 +51,18 @@ defmodule Upkeep.Ecto.Source do
 
   @doc false
   def read(%Ecto.Query{} = query) do
-    case Upkeep.Source.Loader.read_context() do
+    case Loader.read_context() do
       %{repo: repo, holder: holder, source: source, params: params} ->
-        Upkeep.Ecto.Source.RepoCaptureGuard.ensure_repo_capture!(repo, source, params,
-          boundary: :read
-        )
+        RepoCaptureGuard.ensure_repo_capture!(repo, source, params, boundary: :read)
 
-        deps = Upkeep.Ecto.Source.QueryDeps.from_query(query)
-        :ok = Upkeep.Source.Loader.track_dependency(deps)
+        deps = QueryDeps.from_query(query)
+        :ok = Loader.track_dependency(deps)
 
         fingerprint = read_fingerprint(repo, query)
 
-        Upkeep.Source.Loader.memoized_read(
+        Loader.memoized_read(
           fingerprint,
-          fn ->
-            node_id = {:read, repo, fingerprint}
-
-            Upkeep.Invalidation.fetch_read(
-              node_id,
-              deps,
-              fn -> repo.all(query) end,
-              holder
-            )
-          end
+          fn -> fetch_read(repo, query, fingerprint, deps, holder) end
         )
 
       _ ->
@@ -84,14 +77,14 @@ defmodule Upkeep.Ecto.Source do
 
   @doc false
   def verify_source!(source, params, opts \\ []) do
-    Upkeep.Ecto.Source.RepoCaptureGuard.verify_source!(source, params, opts)
+    RepoCaptureGuard.verify_source!(source, params, opts)
   end
 
   @doc false
   def query_surface(source, params) when is_atom(source) do
     source
     |> source_query(params)
-    |> Upkeep.Ecto.Source.QueryDeps.surface()
+    |> QueryDeps.surface()
   end
 
   @doc false
@@ -99,9 +92,9 @@ defmodule Upkeep.Ecto.Source do
     deps =
       source
       |> source_query(params)
-      |> Upkeep.Ecto.Source.QueryDeps.from_query()
+      |> QueryDeps.from_query()
 
-    Upkeep.Ecto.Source.QueryDeps.matches_change?(deps, event)
+    QueryDeps.matches_change?(deps, event)
   end
 
   defp source_query(source, params) do
@@ -109,7 +102,18 @@ defmodule Upkeep.Ecto.Source do
   end
 
   defp read_fingerprint(repo, query) do
-    {sql, params} = Ecto.Adapters.SQL.to_sql(:all, repo, query)
+    {sql, params} = SQL.to_sql(:all, repo, query)
     :erlang.phash2({sql, params})
+  end
+
+  defp fetch_read(repo, query, fingerprint, deps, holder) do
+    node_id = {:read, repo, fingerprint}
+
+    Upkeep.Invalidation.fetch_read(
+      node_id,
+      deps,
+      fn -> repo.all(query) end,
+      holder
+    )
   end
 end

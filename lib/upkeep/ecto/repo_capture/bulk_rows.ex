@@ -24,12 +24,7 @@ defmodule Upkeep.Ecto.RepoCapture.BulkRows do
         schema
         |> primary_key_query(primary_keys, before_records)
         |> repo.all()
-        |> Map.new(fn record -> {primary_key_values(record, primary_keys), record} end)
-        |> then(fn records_by_key ->
-          Enum.map(before_records, fn record ->
-            Map.get(records_by_key, primary_key_values(record, primary_keys), record)
-          end)
-        end)
+        |> reload_records_by_key(before_records, primary_keys)
     end
   end
 
@@ -47,12 +42,7 @@ defmodule Upkeep.Ecto.RepoCapture.BulkRows do
         source
         |> primary_key_query(primary_keys, before_records, fields)
         |> repo.all()
-        |> Map.new(fn record -> {primary_key_values(record, primary_keys), record} end)
-        |> then(fn records_by_key ->
-          Enum.map(before_records, fn record ->
-            Map.get(records_by_key, primary_key_values(record, primary_keys), record)
-          end)
-        end)
+        |> reload_records_by_key(before_records, primary_keys)
 
       {:deopt, _reason} ->
         before_records
@@ -109,5 +99,14 @@ defmodule Upkeep.Ecto.RepoCapture.BulkRows do
 
   defp primary_key_values(record, primary_keys) do
     Enum.map(primary_keys, &Map.fetch!(record, &1))
+  end
+
+  defp reload_records_by_key(after_records, before_records, primary_keys) do
+    records_by_key =
+      Map.new(after_records, fn record -> {primary_key_values(record, primary_keys), record} end)
+
+    Enum.map(before_records, fn record ->
+      Map.get(records_by_key, primary_key_values(record, primary_keys), record)
+    end)
   end
 end

@@ -3,6 +3,7 @@ defmodule Upkeep.Ecto.RepoCapture.UpdateAllReturning do
 
   import Ecto.Query
 
+  alias Ecto.Adapters.SQL
   alias Upkeep.Ecto.RepoCapture.Schema
 
   def run(repo, queryable, updates, opts, schema)
@@ -44,7 +45,7 @@ defmodule Upkeep.Ecto.RepoCapture.UpdateAllReturning do
   defp ensure_compiles(repo, query, updates) do
     if function_exported?(repo, :to_sql, 2) do
       :update_all
-      |> Ecto.Adapters.SQL.to_sql(repo, update_query(query, updates))
+      |> SQL.to_sql(repo, update_query(query, updates))
       |> case do
         {_sql, _params} -> :ok
       end

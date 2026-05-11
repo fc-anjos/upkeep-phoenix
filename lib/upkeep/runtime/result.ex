@@ -3,8 +3,8 @@ defmodule Upkeep.Runtime.Result do
 
   import Phoenix.Component, only: [assign: 3]
 
-  alias Upkeep.Runtime.Telemetry
   alias Upkeep.Runtime.Subscriptions
+  alias Upkeep.Runtime.Telemetry
 
   @type effect ::
           {:assign, atom(), term()}

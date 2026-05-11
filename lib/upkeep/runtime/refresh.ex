@@ -1,11 +1,11 @@
 defmodule Upkeep.Runtime.Refresh do
   @moduledoc false
 
-  alias Upkeep.Runtime.Telemetry
   alias Upkeep.Runtime.Patch
   alias Upkeep.Runtime.SourceLoads
   alias Upkeep.Runtime.State
   alias Upkeep.Runtime.Subscriptions
+  alias Upkeep.Runtime.Telemetry
   alias Upkeep.Runtime.Watches
   alias Upkeep.Source.Loader, as: Source
 

@@ -2,10 +2,10 @@ defmodule Upkeep.Runtime.SourceLoads do
   @moduledoc false
 
   alias Upkeep.Runtime.Telemetry
-  alias Upkeep.Source.Instance
-  alias Upkeep.Source.LoadResult
-  alias Upkeep.Source.Loader, as: Source
   alias Upkeep.SingleFlight.Registry
+  alias Upkeep.Source.Instance
+  alias Upkeep.Source.Loader, as: Source
+  alias Upkeep.Source.LoadResult
 
   def load(watch, reason) do
     load(watch.instance, watch.source_id, watch.component, reason)

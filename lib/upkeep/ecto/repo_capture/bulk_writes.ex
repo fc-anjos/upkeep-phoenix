@@ -58,49 +58,59 @@ defmodule Upkeep.Ecto.RepoCapture.BulkWrites do
 
   defp capture_update_all_with_reloaded_records(repo, queryable, schema, run) do
     case repo.transaction(fn ->
-           case BulkRows.load(repo, queryable, schema) do
-             {:ok, before_records} ->
-               result = run.()
-               after_records = BulkRows.reload(repo, schema, before_records)
-
-               before_records
-               |> Enum.zip(after_records)
-               |> Enum.each(fn {before_record, after_record} ->
-                 Notify.notify_change(:updated, schema, after_record, before_record)
-               end)
-
-               result
-
-             {:deopt, reason} ->
-               emit_bulk_capture_deopt(repo, schema, :update_all, reason)
-               run.()
-           end
+           update_with_loaded_rows(repo, queryable, schema, run)
          end) do
       {:ok, result} -> result
       {:error, reason} -> {:error, reason}
     end
   end
 
+  defp update_with_loaded_rows(repo, queryable, schema, run) do
+    case BulkRows.load(repo, queryable, schema) do
+      {:ok, before_records} ->
+        notify_update_all_with_reloaded_records(repo, schema, before_records, run)
+
+      {:deopt, reason} ->
+        emit_bulk_capture_deopt(repo, schema, :update_all, reason)
+        run.()
+    end
+  end
+
+  defp notify_update_all_with_reloaded_records(repo, schema, before_records, run) do
+    result = run.()
+    after_records = BulkRows.reload(repo, schema, before_records)
+
+    before_records
+    |> Enum.zip(after_records)
+    |> Enum.each(fn {before_record, after_record} ->
+      Notify.notify_change(:updated, schema, after_record, before_record)
+    end)
+
+    result
+  end
+
   def capture_delete_all(repo, queryable, capture_opts, run)
       when is_atom(repo) and is_function(run, 0) do
+    schema = Schema.queryable_schema(queryable, capture_opts)
+
     case repo.transaction(fn ->
-           schema = Schema.queryable_schema(queryable, capture_opts)
-
-           case BulkRows.load(repo, queryable, schema) do
-             {:ok, before_records} ->
-               result = run.()
-
-               Enum.each(before_records, &Notify.notify_change(:deleted, schema, &1))
-
-               result
-
-             {:deopt, reason} ->
-               emit_bulk_capture_deopt(repo, schema, :delete_all, reason)
-               run.()
-           end
+           delete_loaded_rows(repo, queryable, schema, run)
          end) do
       {:ok, result} -> result
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp delete_loaded_rows(repo, queryable, schema, run) do
+    case BulkRows.load(repo, queryable, schema) do
+      {:ok, before_records} ->
+        result = run.()
+        Enum.each(before_records, &Notify.notify_change(:deleted, schema, &1))
+        result
+
+      {:deopt, reason} ->
+        emit_bulk_capture_deopt(repo, schema, :delete_all, reason)
+        run.()
     end
   end
 

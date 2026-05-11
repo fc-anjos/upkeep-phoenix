@@ -26,27 +26,28 @@ defmodule Upkeep.Invalidation.ReadCache do
           value
 
         [] ->
-          Registry.coalesce(coalescer_name(), node_id, fn ->
-            # Re-check ETS inside the single-flight critical section:
-            # a concurrent caller may have settled while we waited to
-            # be the loader.
-            case :ets.lookup(@values, node_id) do
-              [{^node_id, value}] ->
-                value
-
-              [] ->
-                value = load.()
-                :ets.insert(@values, {node_id, value})
-                surface = Upkeep.Source.dependency_surface(List.wrap(deps))
-                SurfaceIndex.insert(@index, node_id, surface, surface)
-
-                value
-            end
-          end)
+          Registry.coalesce(coalescer_name(), node_id, fn -> load_cached(node_id, deps, load) end)
       end
 
     if holder, do: :ets.insert(@refs, {holder, node_id})
     value
+  end
+
+  defp load_cached(node_id, deps, load) do
+    # Re-check ETS inside the single-flight critical section: a concurrent
+    # caller may have settled while we waited to be the loader.
+    case :ets.lookup(@values, node_id) do
+      [{^node_id, value}] ->
+        value
+
+      [] ->
+        value = load.()
+        :ets.insert(@values, {node_id, value})
+        surface = Upkeep.Source.dependency_surface(List.wrap(deps))
+        SurfaceIndex.insert(@index, node_id, surface, surface)
+
+        value
+    end
   end
 
   def release(holder) do

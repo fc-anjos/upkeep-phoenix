@@ -1,7 +1,7 @@
 defmodule Upkeep.Source.Loader do
   @moduledoc false
 
-  alias Upkeep.Source.{Instance, LoadResult}
+  alias Upkeep.Source.{Coverage, Dependency, Instance, LoadResult}
 
   @context_key {__MODULE__, :read_context}
   @warn_dedup_key {__MODULE__, :no_invalidation_warned}
@@ -44,28 +44,28 @@ defmodule Upkeep.Source.Loader do
   @spec read(term()) :: term()
   def read(value), do: value
 
-  @spec coverage(module(), map()) :: Upkeep.Source.Coverage.t()
+  @spec coverage(module(), map()) :: Coverage.t()
   def coverage(source, params) when is_atom(source) and is_map(params) do
     source
     |> Instance.build(params)
     |> coverage()
   end
 
-  @spec coverage(Instance.t(), [term()]) :: Upkeep.Source.Coverage.t()
+  @spec coverage(Instance.t(), [term()]) :: Coverage.t()
   def coverage(%Instance{} = instance, deps) when is_list(deps) do
     deps
-    |> Enum.map(&Upkeep.Source.Dependency.coverage/1)
-    |> Enum.reduce(base_coverage(instance), &Upkeep.Source.Coverage.merge/2)
+    |> Enum.map(&Dependency.coverage/1)
+    |> Enum.reduce(base_coverage(instance), &Coverage.merge/2)
     |> attach_unknown_if_empty()
   end
 
-  @spec coverage(Instance.t()) :: Upkeep.Source.Coverage.t()
+  @spec coverage(Instance.t()) :: Coverage.t()
   def coverage(%Instance{} = instance) do
     {_value, deps} = execute(instance)
     coverage(instance, deps)
   end
 
-  @spec coverage(module(), map(), [term()]) :: Upkeep.Source.Coverage.t()
+  @spec coverage(module(), map(), [term()]) :: Coverage.t()
   def coverage(source, params, deps) when is_atom(source) and is_map(params) and is_list(deps) do
     source
     |> Instance.build(params)
@@ -139,7 +139,7 @@ defmodule Upkeep.Source.Loader do
   defp restore_read_context(nil), do: Process.delete(@context_key)
   defp restore_read_context(previous), do: Process.put(@context_key, previous)
 
-  defp emit_coverage(%Upkeep.Source.Coverage{} = coverage) do
+  defp emit_coverage(%Coverage{} = coverage) do
     :telemetry.execute(
       [:upkeep, :source, :coverage],
       %{count: 1},
@@ -147,25 +147,25 @@ defmodule Upkeep.Source.Loader do
         source: coverage.source,
         params: coverage.params,
         coverage: coverage,
-        severity: Upkeep.Source.Coverage.severity(coverage),
-        known?: Upkeep.Source.Coverage.known?(coverage)
+        severity: Coverage.severity(coverage),
+        known?: Coverage.known?(coverage)
       }
     )
   end
 
   defp base_coverage(%Instance{} = instance) do
-    Upkeep.Source.Coverage.new(instance.source, instance.params,
+    Coverage.new(instance.source, instance.params,
       explicit: Upkeep.InvalidationSurface.keys(instance.explicit_surface)
     )
   end
 
-  defp attach_unknown_if_empty(%Upkeep.Source.Coverage{} = coverage) do
+  defp attach_unknown_if_empty(%Coverage{} = coverage) do
     empty? =
       coverage.precise == [] and coverage.broad == [] and coverage.explicit == [] and
         coverage.unknown == []
 
     if empty? do
-      %Upkeep.Source.Coverage{
+      %Coverage{
         coverage
         | unknown: [%{reason: :no_invalidation_surface}]
       }
@@ -174,9 +174,9 @@ defmodule Upkeep.Source.Loader do
     end
   end
 
-  defp warn_if_no_invalidation_surface(%Upkeep.Source.Coverage{unknown: []}), do: :ok
+  defp warn_if_no_invalidation_surface(%Coverage{unknown: []}), do: :ok
 
-  defp warn_if_no_invalidation_surface(%Upkeep.Source.Coverage{} = coverage) do
+  defp warn_if_no_invalidation_surface(%Coverage{} = coverage) do
     if Enum.any?(coverage.unknown, &(&1.reason == :no_invalidation_surface)) do
       shape = {coverage.source, coverage.params}
       seen = :persistent_term.get(@warn_dedup_key, MapSet.new())
@@ -186,7 +186,7 @@ defmodule Upkeep.Source.Loader do
 
         require Logger
 
-        Logger.warning(Upkeep.Source.Coverage.explain(coverage))
+        Logger.warning(Coverage.explain(coverage))
       end
     end
 

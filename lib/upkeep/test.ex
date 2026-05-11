@@ -15,7 +15,10 @@ defmodule Upkeep.Test do
       Upkeep.Source
     ]
 
+  alias Ecto.Adapters.SQL.Sandbox
   alias Upkeep.Coordinator.Graph
+  alias Upkeep.Ecto.Repo
+  alias Upkeep.Source.Coverage
 
   @doc """
   Reset coordinator graph runtime state between tests.
@@ -54,13 +57,13 @@ defmodule Upkeep.Test do
   def assert_source_reactive!(source, params) when is_atom(source) and is_map(params) do
     coverage = Upkeep.Source.coverage(source, params)
 
-    if Upkeep.Source.Coverage.known?(coverage) do
+    if Coverage.known?(coverage) do
       coverage
     else
       raise ExUnit.AssertionError,
         message:
           "expected #{inspect(source)} with params #{inspect(params)} to have a known " <>
-            "Upkeep invalidation surface\n" <> Upkeep.Source.Coverage.explain(coverage)
+            "Upkeep invalidation surface\n" <> Coverage.explain(coverage)
     end
   end
 
@@ -74,7 +77,7 @@ defmodule Upkeep.Test do
   def assert_repo_capture_enabled!(repo \\ default_repo!())
 
   def assert_repo_capture_enabled!(repo) when is_atom(repo) do
-    if Upkeep.Ecto.Repo.capture_enabled?(repo) do
+    if Repo.capture_enabled?(repo) do
       :ok
     else
       raise ExUnit.AssertionError,
@@ -101,7 +104,7 @@ defmodule Upkeep.Test do
 
   def allow_sandbox(repo) when is_atom(repo) do
     Enum.each(allowable_pids(), fn pid ->
-      Ecto.Adapters.SQL.Sandbox.allow(repo, self(), pid)
+      Sandbox.allow(repo, self(), pid)
     end)
 
     :ok
