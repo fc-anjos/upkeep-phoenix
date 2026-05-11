@@ -98,6 +98,21 @@ defmodule Upkeep.InvalidationSurface do
     {:exact, candidate_keys(event), [Map.from_struct(event)]}
   end
 
+  @doc false
+  @spec event_metadata(struct()) :: map()
+  def event_metadata(%Upkeep.Change{} = change) do
+    %{
+      kind: :change,
+      name: change.name,
+      action: change.action,
+      schema: change.schema
+    }
+  end
+
+  def event_metadata(event) when is_struct(event) do
+    %{kind: :event, event_module: event.__struct__}
+  end
+
   @spec matches?(t(), struct()) :: boolean()
   def matches?(%__MODULE__{} = surface, event) when is_struct(event) do
     manual_match?(surface.matcher, event)

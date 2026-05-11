@@ -137,20 +137,7 @@ defmodule Upkeep.Invalidation.ReadCache do
         candidate_count: length(candidates),
         evicted_count: evicted_count
       },
-      event_metadata(event)
+      Upkeep.InvalidationSurface.event_metadata(event)
     )
-  end
-
-  defp event_metadata(%Upkeep.Change{} = change) do
-    %{
-      kind: :change,
-      name: change.name,
-      action: change.action,
-      schema: change.schema
-    }
-  end
-
-  defp event_metadata(event) when is_struct(event) do
-    %{kind: :event, event_module: event.__struct__}
   end
 end

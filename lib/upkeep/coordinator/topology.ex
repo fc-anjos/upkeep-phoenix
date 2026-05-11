@@ -229,20 +229,7 @@ defmodule Upkeep.Coordinator.Topology do
         candidate_count: length(candidate_node_ids),
         matched_count: length(matched_node_ids)
       },
-      event_metadata(event)
+      InvalidationSurface.event_metadata(event)
     )
-  end
-
-  defp event_metadata(%Upkeep.Change{} = change) do
-    %{
-      kind: :change,
-      name: change.name,
-      action: change.action,
-      schema: change.schema
-    }
-  end
-
-  defp event_metadata(event) when is_struct(event) do
-    %{kind: :event, event_module: event.__struct__}
   end
 end
