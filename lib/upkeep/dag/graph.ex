@@ -235,9 +235,13 @@ defmodule Upkeep.DAG.Graph do
       |> Enum.flat_map(&downstream_ids_depth_first(graph, &1, new_visited()))
       |> MapSet.new()
 
-    graph
-    |> topological_order!()
-    |> Enum.filter(&MapSet.member?(affected, &1))
+    if MapSet.size(affected) == 0 do
+      []
+    else
+      graph
+      |> topological_order!()
+      |> Enum.filter(&MapSet.member?(affected, &1))
+    end
   end
 
   defp downstream_ids_depth_first(graph, id, seen) do
