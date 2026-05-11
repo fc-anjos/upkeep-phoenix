@@ -2,8 +2,11 @@ defmodule Upkeep.Runtime.State do
   @moduledoc false
 
   alias Upkeep.DAG.Store
+  alias Upkeep.InvalidationSurface
+  alias Upkeep.InvalidationSurface.Index, as: SurfaceIndex
 
   defstruct watches: %{},
+            watch_index: SurfaceIndex.new(),
             store: nil,
             assign_nodes: %{},
             shared_derived_nodes: %{},
@@ -33,6 +36,7 @@ defmodule Upkeep.Runtime.State do
     watch = Map.put(watch, :source_id, source_id)
     runtime = fetch(socket)
     watches = Map.put(runtime.watches, source_id, watch)
+    runtime = runtime |> remove_watch_index(source_id) |> add_watch_index(source_id, watch)
 
     put(socket, %{runtime | watches: watches})
   end
@@ -49,19 +53,37 @@ defmodule Upkeep.Runtime.State do
   end
 
   def put_existing_watch(socket, source_id, watch) do
+    watch = Map.put(watch, :source_id, source_id)
     runtime = fetch(socket)
     watches = Map.put(runtime.watches, source_id, watch)
+    runtime = runtime |> remove_watch_index(source_id) |> add_watch_index(source_id, watch)
 
     put(socket, %{runtime | watches: watches})
   end
 
   def put_watches(socket, watches) when is_map(watches) do
     runtime = fetch(socket)
-    put(socket, %{runtime | watches: watches})
+    put(socket, %{runtime | watches: watches, watch_index: build_watch_index(watches)})
   end
 
   def watches(socket) do
     fetch(socket).watches
+  end
+
+  def matching_watches(socket, event) when is_struct(event) do
+    runtime = fetch(socket)
+    source_ids = SurfaceIndex.candidates(runtime.watch_index, event)
+
+    if MapSet.size(source_ids) == map_size(runtime.watches) do
+      Map.to_list(runtime.watches)
+    else
+      Enum.flat_map(source_ids, fn source_id ->
+        case Map.fetch(runtime.watches, source_id) do
+          {:ok, watch} -> [{source_id, watch}]
+          :error -> []
+        end
+      end)
+    end
   end
 
   def put_store(socket, store) do
@@ -153,4 +175,29 @@ defmodule Upkeep.Runtime.State do
 
     put(socket, %{runtime | pending_refreshes: pending})
   end
+
+  defp add_watch_index(runtime, source_id, watch) do
+    watch_index = SurfaceIndex.put(runtime.watch_index, source_id, watch_surface(watch))
+    %{runtime | watch_index: watch_index}
+  end
+
+  defp remove_watch_index(runtime, source_id) do
+    case Map.fetch(runtime.watches, source_id) do
+      {:ok, watch} ->
+        watch_index = SurfaceIndex.delete(runtime.watch_index, source_id, watch_surface(watch))
+        %{runtime | watch_index: watch_index}
+
+      :error ->
+        runtime
+    end
+  end
+
+  defp build_watch_index(watches) do
+    watches
+    |> Enum.map(fn {source_id, watch} -> {source_id, watch_surface(watch)} end)
+    |> SurfaceIndex.rebuild()
+  end
+
+  defp watch_surface(%{surface: %InvalidationSurface{} = surface}), do: surface
+  defp watch_surface(_watch), do: nil
 end

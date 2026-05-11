@@ -3,7 +3,9 @@ defmodule Upkeep.InvalidationSurface do
 
   use Boundary,
     top_level?: true,
-    exports: [],
+    exports: [
+      Index
+    ],
     deps: [
       Upkeep.Change
     ],
@@ -69,6 +71,31 @@ defmodule Upkeep.InvalidationSurface do
 
   def candidate_keys(event) when is_struct(event) do
     [notification_key(%{event: event.__struct__})]
+  end
+
+  @doc false
+  @spec index_query(struct()) ::
+          {:broad, [key()]}
+          | {:partial, [key()], MapSet.t(atom()), [map()]}
+          | {:exact, [key()], [map()]}
+  def index_query(%Upkeep.Change{} = change) do
+    notifications = candidate_keys(change)
+
+    cond do
+      Upkeep.Change.broad_update?(change) ->
+        {:broad, notifications}
+
+      Upkeep.Change.partial_update?(change) ->
+        {:partial, notifications, Upkeep.Change.changed_fields(change),
+         Upkeep.Change.field_sets(change)}
+
+      true ->
+        {:exact, notifications, Upkeep.Change.field_sets(change)}
+    end
+  end
+
+  def index_query(event) when is_struct(event) do
+    {:exact, candidate_keys(event), [Map.from_struct(event)]}
   end
 
   @spec matches?(t(), struct()) :: boolean()

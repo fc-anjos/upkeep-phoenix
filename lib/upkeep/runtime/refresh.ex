@@ -29,7 +29,7 @@ defmodule Upkeep.Runtime.Refresh do
 
   def queue_matching(socket, event, mode \\ :all) when is_struct(event) do
     socket
-    |> State.watches()
+    |> State.matching_watches(event)
     |> Enum.reduce({socket, []}, fn {_source_id, watch}, {socket, effects} ->
       if refresh_watch?(watch, event, mode) do
         socket = State.queue_refresh(socket, watch.source_id)
