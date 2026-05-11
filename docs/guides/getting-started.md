@@ -28,19 +28,11 @@ defmodule MyApp.Repo do
 end
 ```
 
-Configure the default repo and start the Upkeep supervisor:
+Configure the default repo:
 
 ```elixir
 # config/config.exs
 config :upkeep, repo: MyApp.Repo
-```
-
-```elixir
-# lib/my_app/application.ex
-children = [
-  MyApp.Repo,
-  {Upkeep, []}
-]
 ```
 
 `Upkeep.Ecto.Repo` keeps the normal Ecto API and captures committed inserts,

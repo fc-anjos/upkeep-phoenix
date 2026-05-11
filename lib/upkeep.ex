@@ -17,13 +17,6 @@ defmodule Upkeep do
           adapter: Ecto.Adapters.Postgres
       end
 
-  Add Upkeep to your application's supervision tree:
-
-      children = [
-        MyApp.Repo,
-        {Upkeep, []}
-      ]
-
   See the README for complete setup, source authoring, LiveView usage, tests,
   and inspector installation.
 
