@@ -51,8 +51,8 @@ defmodule Upkeep.Test do
   @doc """
   Assert that Upkeep can see a source's invalidation surface.
 
-  This executes the source once so custom `load/1` callbacks can report any
-  `Upkeep.read/1` queries they perform.
+  This executes the source once so custom `load/1` and `load/2` callbacks can
+  report any `Upkeep.read/1` queries they perform.
   """
   def assert_source_reactive!(source, params) when is_atom(source) and is_map(params) do
     coverage = Upkeep.Source.coverage(source, params)

@@ -11,6 +11,7 @@ defmodule Upkeep.Source do
     top_level?: true,
     exports: [
       Coverage,
+      Context,
       Dependency,
       Identity,
       Instance,
@@ -24,35 +25,43 @@ defmodule Upkeep.Source do
     ],
     type: :strict
 
-  alias Upkeep.Source.{Dependency, Instance, Loader, Spec}
+  alias Upkeep.Source.{Context, Dependency, Instance, Loader, Spec}
 
   @type params :: map()
   @type source_module :: module()
   @type retry_config :: :default | false | keyword()
 
   @callback load(params()) :: term()
+  @callback load(params(), Context.t()) :: term()
   @callback query(params()) :: term()
+  @callback query(params(), Context.t()) :: term()
   @callback reacts_to?(struct(), params()) :: boolean()
   @callback __upkeep_repo__() :: module() | nil
   @callback __upkeep_repo_explicit__?() :: boolean()
   @callback __upkeep_query_source__?() :: boolean()
+  @callback __upkeep_identity_aware__?() :: boolean()
   @callback __upkeep_retry__() :: retry_config()
   @callback __upkeep_sharing_partition__(params()) :: term()
   @callback __upkeep_verify__!(params(), keyword()) :: :ok
   @callback __upkeep_surface__(params()) :: Upkeep.InvalidationSurface.t()
+  @callback __upkeep_surface__(params(), Context.t() | nil) :: Upkeep.InvalidationSurface.t()
   @callback __upkeep_explicit_surface__(params()) :: Upkeep.InvalidationSurface.t()
   @callback __upkeep_explicit_surface_matches__?(params(), struct()) :: boolean()
 
   @optional_callbacks load: 1,
+                      load: 2,
                       query: 1,
+                      query: 2,
                       reacts_to?: 2,
                       __upkeep_repo__: 0,
                       __upkeep_repo_explicit__?: 0,
                       __upkeep_query_source__?: 0,
+                      __upkeep_identity_aware__?: 0,
                       __upkeep_retry__: 0,
                       __upkeep_sharing_partition__: 1,
                       __upkeep_verify__!: 2,
                       __upkeep_surface__: 1,
+                      __upkeep_surface__: 2,
                       __upkeep_explicit_surface__: 1,
                       __upkeep_explicit_surface_matches__?: 2
 
@@ -82,6 +91,12 @@ defmodule Upkeep.Source do
   def read(value), do: Loader.read(value)
 
   @doc """
+  Return the Phoenix `:current_scope` value available to an identity-aware
+  source callback.
+  """
+  def current_scope!(%Context{} = context), do: Context.current_scope!(context)
+
+  @doc """
   Return Upkeep's inferred invalidation coverage for a source and params.
   """
   def coverage(source, params), do: Loader.coverage(source, params)
@@ -90,7 +105,7 @@ defmodule Upkeep.Source do
   def coverage(source, params, deps), do: Loader.coverage(source, params, deps)
 
   @doc false
-  def instance(source, params), do: Instance.build(source, params)
+  def instance(source, params, opts \\ []), do: Instance.build(source, params, opts)
 
   @doc false
   def dependency_label(deps), do: Dependency.label(deps)

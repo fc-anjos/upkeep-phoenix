@@ -114,6 +114,29 @@ defmodule Upkeep.LiveRefreshTest do
     invalidated_by(Issue, :updated, on: :issue_id, as: :user_id)
   end
 
+  defmodule ScopedLimitCards do
+    use Upkeep.Source
+    alias Upkeep.TestSupport.LiveRefreshFixture, as: Fixture
+
+    def load(s, upkeep) do
+      %{max_card_value: max_card_value} = Upkeep.current_scope!(upkeep)
+
+      send(s.test_pid, {:scoped_limit_cards_load_started, self(), max_card_value})
+
+      receive do
+        :continue -> :ok
+      after
+        1_000 -> raise "scoped-limit source was not released"
+      end
+
+      :cards
+      |> Fixture.load_source_value(s.project_id)
+      |> Enum.filter(&(&1.value <= max_card_value))
+    end
+
+    invalidated_by(Issue, :updated, on: :project_id)
+  end
+
   setup do
     Upkeep.Test.reset_graph()
 
@@ -233,6 +256,60 @@ defmodule Upkeep.LiveRefreshTest do
     assert socket_a.assigns.issues == [:user_issue]
     assert socket_b.assigns.issues == [:user_issue]
     assert Fixture.load_count(:scoped_issues, user_id) == 1
+  end
+
+  test "identity-aware source authorization does not share values across subscribers" do
+    test_pid = self()
+    project_id = System.unique_integer([:positive])
+
+    Fixture.seed_source(:cards, project_id, [
+      %{id: :safe_for_all, value: 50},
+      %{id: :unsafe_for_low_limit, value: 100},
+      %{id: :unsafe_for_both, value: 150}
+    ])
+
+    task_a =
+      Task.async(fn ->
+        scoped_connected_socket(%{max_card_value: 100})
+        |> Live.watch(:cards, ScopedLimitCards, project_id: project_id, test_pid: test_pid)
+      end)
+
+    assert_receive {:scoped_limit_cards_load_started, loader_a, 100}
+
+    task_b =
+      Task.async(fn ->
+        scoped_connected_socket(%{max_card_value: 50})
+        |> Live.watch(:cards, ScopedLimitCards, project_id: project_id, test_pid: test_pid)
+      end)
+
+    assert_receive {:scoped_limit_cards_load_started, loader_b, 50}
+
+    send(loader_a, :continue)
+    send(loader_b, :continue)
+
+    socket_a = Task.await(task_a)
+    socket_b = Task.await(task_b)
+
+    assert socket_a.assigns.cards == [
+             %{id: :safe_for_all, value: 50},
+             %{id: :unsafe_for_low_limit, value: 100}
+           ]
+
+    assert socket_b.assigns.cards == [
+             %{id: :safe_for_all, value: 50}
+           ]
+
+    assert Fixture.load_count(:cards, project_id) == 2
+  end
+
+  test "identity-aware source raises when current_scope is missing" do
+    project_id = System.unique_integer([:positive])
+    Fixture.seed_source(:cards, project_id, [%{id: :safe_for_all, value: 50}])
+
+    assert_raise ArgumentError, ~r/current_scope/, fn ->
+      connected_socket()
+      |> Live.watch(:cards, ScopedLimitCards, project_id: project_id, test_pid: self())
+    end
   end
 
   test "connected watches do not share initial values across different source params" do

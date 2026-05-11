@@ -25,7 +25,7 @@ defmodule Upkeep.Runtime.SpecsTest do
   end
 
   test "builds source node specs from watch inputs" do
-    spec = Specs.source(:issues, ProjectIssues, %{project_id: 1}, nil)
+    spec = Specs.source(LiveSocket.socket(), :issues, ProjectIssues, %{project_id: 1}, nil)
 
     source_id = {ProjectIssues, %{project_id: 1}}
     instance = Instance.build(ProjectIssues, %{project_id: 1})

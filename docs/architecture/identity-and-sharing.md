@@ -29,7 +29,8 @@ session flag affects authorization.
 Upkeep's package-level identities are therefore:
 
 - **Source identity:** source module plus normalized params, optionally scoped
-  under a component identity.
+  under a component identity, and for identity-aware sources an opaque
+  `current_scope` envelope.
 - **Source sharing partition:** the source-defined partition used to colocate
   source and derived graph work.
 - **Scope identity:** the opaque value assigned at `:current_scope`.
@@ -78,8 +79,8 @@ params, the Graph coordinator can run the initial source load once and feed the
 loaded value to every subscriber. On later writes, Graph can also reload the
 dirty source once per flush and fan out the value.
 
-If user identity affects the source value, it must be visible in the source
-identity or in an upstream dependency. For example:
+If stable domain identity affects the source value, it can be part of the
+source params. For example:
 
 ```elixir
 watch(:my_issues, Sources.MyIssues, project_id: 123, user_id: 456)
@@ -87,6 +88,28 @@ watch(:my_issues, Sources.MyIssues, project_id: 123, user_id: 456)
 
 does not share across users because `user_id` is part of the source params. It
 can still share across two sockets for the same user and same project.
+
+When viewer identity or permissions come from Phoenix `:current_scope`, the
+source uses `load/2` or `query/2` and reads the scope through the Upkeep source
+context:
+
+```elixir
+def query(%{project_id: project_id}, upkeep) do
+  scope = Upkeep.current_scope!(upkeep)
+
+  from card in Card,
+    where:
+      card.project_id == ^project_id and
+        card.account_id == ^scope.account_id and
+        card.value <= ^scope.max_card_value
+end
+```
+
+The callback shape is the pre-load signal that the source is identity-aware.
+Before coalescing or graph registration, Upkeep qualifies the source identity
+with an opaque envelope for the whole `current_scope` value. Two subscribers
+watching the same source params but different scopes therefore do not share the
+source load or graph node.
 
 ### External Derived Values
 
@@ -171,6 +194,9 @@ end)
 Upkeep can derive identity without app-specific knowledge when:
 
 - two watches use the same source module and normalized params;
+- an identity-aware `load/2` or `query/2` source reads `current_scope` through
+  the Upkeep source context, causing the whole scope value to qualify source
+  identity before sharing;
 - a source declares a sharing partition and dependencies are in that same
   partition;
 - Phoenix has assigned `:current_scope`, and Upkeep treats the whole value as
@@ -185,6 +211,8 @@ Examples:
   sockets that watch that exact project stats source.
 - `watch(:my_issues, Sources.MyIssues, project_id: 123, user_id: 456)` is
   shared only across sockets with that exact user-specific source identity.
+- A `query/2` source that calls `Upkeep.current_scope!(upkeep)` is shared only
+  across sockets with the same source params and the same opaque scope envelope.
 - `derive(:stats, [:issues], &Stats.from_issues/1)` is shareable when `:issues`
   is graph-backed and partition-compatible.
 - A private function that reads `%{current_scope: scope}` from its dependency
@@ -197,7 +225,7 @@ Upkeep cannot prove identity when:
 - a derive function closes over `socket`, `current_scope`, `current_user`, or a
   session map;
 - a source load reads identity from process state, application state, or a value
-  that is not in source params;
+  that is not in source params or the Upkeep source context;
 - a function component boundary has no stable id;
 - source params contain extra values whose effect on the loaded value cannot be
   proven;
@@ -205,8 +233,10 @@ Upkeep cannot prove identity when:
 - authorization changes data after a shared source load but before the socket
   sends the value to the browser, outside the graph.
 
-The runtime response is conservative: keep the value local, raise in dev for
-scope captures, and emit telemetry for diagnostics.
+The runtime response is conservative for shapes it can detect: derived scope
+captures stay local or raise by policy. Hidden identity reads inside a source
+are outside Upkeep's observation boundary; source authors must use `load/2` or
+`query/2` for identity-sensitive source values.
 
 ## How The DAG Finds The Biggest Safe Unit
 

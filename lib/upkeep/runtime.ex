@@ -25,7 +25,7 @@ defmodule Upkeep.Runtime do
   alias Upkeep.Runtime.{Telemetry, Watches}
 
   def mount_source(socket, assign_name, source, params, component, source_location \\ nil) do
-    spec = Specs.source(assign_name, source, params, component, source_location)
+    spec = Specs.source(socket, assign_name, source, params, component, source_location)
     announce_registration(spec, source_location)
     mount(socket, spec)
   end

@@ -64,7 +64,13 @@ defmodule Upkeep.Live do
     location = Keyword.get(opts, :source_location)
 
     with_current_scope(socket, fn socket ->
-      Source.verify_source!(source, params, source_location: location)
+      Source.verify_source!(
+        source,
+        params,
+        current_scope: Map.get(socket.assigns, :current_scope),
+        source_location: location
+      )
+
       Upkeep.Runtime.mount_source(socket, assign_name, source, params, component, location)
     end)
   end

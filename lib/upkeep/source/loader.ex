@@ -18,7 +18,7 @@ defmodule Upkeep.Source.Loader do
   @spec verify_source!(module(), map(), keyword()) :: :ok
   def verify_source!(source, params, opts \\ []) when is_atom(source) and is_map(params) do
     source
-    |> Instance.build(params)
+    |> Instance.build(params, current_scope: Keyword.get(opts, :current_scope))
     |> Instance.verify!(opts)
   end
 
@@ -84,7 +84,7 @@ defmodule Upkeep.Source.Loader do
 
       _ ->
         raise "Upkeep.Source.Loader.track_dependency/1 called outside a source context. " <>
-                "This usually means a Task spawned inside load/1 lost the context — " <>
+                "This usually means a Task spawned inside a load callback lost the context; " <>
                 "explicit propagation is required for concurrent reads."
     end
   end
@@ -112,10 +112,23 @@ defmodule Upkeep.Source.Loader do
       instance.source,
       instance.params,
       fn ->
-        value = instance.source.load(instance.params)
+        value = load_value(instance)
         {value, tracked_deps()}
       end
     )
+  end
+
+  defp load_value(%Instance{
+         identity_aware?: true,
+         source: source,
+         params: params,
+         context: context
+       }) do
+    source.load(params, context)
+  end
+
+  defp load_value(%Instance{source: source, params: params}) do
+    source.load(params)
   end
 
   defp with_read_context(repo, holder, source, params, fun) do

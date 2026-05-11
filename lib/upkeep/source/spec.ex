@@ -68,16 +68,24 @@ defmodule Upkeep.Source.Spec do
       repo: Module.get_attribute(env.module, :upkeep_repo),
       retry: Module.get_attribute(env.module, :upkeep_retry),
       query_adapter: Module.get_attribute(env.module, :upkeep_query_adapter),
-      defines_load?: Module.defines?(env.module, {:load, 1}),
-      defines_query?: Module.defines?(env.module, {:query, 1}),
+      defines_load_1?: Module.defines?(env.module, {:load, 1}),
+      defines_load_2?: Module.defines?(env.module, {:load, 2}),
+      defines_query_1?: Module.defines?(env.module, {:query, 1}),
+      defines_query_2?: Module.defines?(env.module, {:query, 2}),
       defines_sharing_partition?: Module.defines?(env.module, {:__upkeep_sharing_partition__, 1})
     }
   end
 
-  defp validate_query_source!(%{defines_query?: true, query_adapter: nil, module: module}) do
+  defp validate_query_source!(%{
+         defines_query_1?: query_1?,
+         defines_query_2?: query_2?,
+         query_adapter: nil,
+         module: module
+       })
+       when query_1? or query_2? do
     raise ArgumentError,
-          "#{inspect(module)} defines query/1 but uses Upkeep.Source. " <>
-            "Use load/1 for generic sources or use Upkeep.Ecto.Source for Ecto-backed query sources."
+          "#{inspect(module)} defines query/1 or query/2 but uses Upkeep.Source. " <>
+            "Use load/1 or load/2 for generic sources or use Upkeep.Ecto.Source for Ecto-backed query sources."
   end
 
   defp validate_query_source!(_context), do: :ok
@@ -96,20 +104,41 @@ defmodule Upkeep.Source.Spec do
 
       def __upkeep_repo__, do: unquote(context.repo)
       def __upkeep_repo_explicit__?, do: unquote(not is_nil(context.repo))
-      def __upkeep_query_source__?, do: unquote(context.defines_query?)
+
+      def __upkeep_query_source__?,
+        do: unquote(context.defines_query_1? or context.defines_query_2?)
+
+      def __upkeep_identity_aware__?,
+        do: unquote(context.defines_load_2? or context.defines_query_2?)
+
       def __upkeep_retry__, do: unquote(Macro.escape(context.retry))
 
       def reacts_to?(event, params),
         do:
-          unquote(reacts_to_body(explicit_checks, context.defines_query?, context.query_adapter))
+          unquote(
+            reacts_to_body(
+              explicit_checks,
+              context.defines_query_1? or context.defines_query_2?,
+              context.query_adapter
+            )
+          )
 
       def __upkeep_explicit_surface_matches__?(params, event),
         do: unquote(explicit_match_body(explicit_checks))
 
       def __upkeep_surface__(params) do
+        __upkeep_surface__(params, nil)
+      end
+
+      def __upkeep_surface__(params, context) do
         Upkeep.InvalidationSurface.merge(
           __upkeep_explicit_surface__(params),
-          unquote(query_surface(context.defines_query?, context.query_adapter))
+          unquote(
+            query_surface(
+              context.defines_query_1? or context.defines_query_2?,
+              context.query_adapter
+            )
+          )
         )
       end
 
@@ -189,15 +218,16 @@ defmodule Upkeep.Source.Spec do
 
   defp query_check(true, query_adapter) when not is_nil(query_adapter) do
     quote do
-      unquote(query_adapter).query_reacts_to?(__MODULE__, event, params)
+      unquote(query_adapter).query_reacts_to?(__MODULE__, event, params, nil)
     end
   end
 
   defp query_check(_defines_query?, _query_adapter), do: false
 
-  defp load_definition(%{defines_load?: true}), do: []
+  defp load_definition(%{defines_load_1?: true}), do: []
+  defp load_definition(%{defines_load_2?: true}), do: []
 
-  defp load_definition(%{defines_query?: true, query_adapter: query_adapter})
+  defp load_definition(%{defines_query_1?: true, query_adapter: query_adapter})
        when not is_nil(query_adapter) do
     quote do
       def load(params) do
@@ -208,11 +238,27 @@ defmodule Upkeep.Source.Spec do
     end
   end
 
+  defp load_definition(%{defines_query_2?: true, query_adapter: query_adapter})
+       when not is_nil(query_adapter) do
+    quote do
+      def load(params, context) do
+        params
+        |> __MODULE__.query(context)
+        |> unquote(query_adapter).read()
+      end
+    end
+  end
+
   defp load_definition(_context) do
     quote do
       def load(_params) do
         raise ArgumentError,
-              "#{inspect(__MODULE__)} must define load/1 or query/1 to be used as an Upkeep source"
+              "#{inspect(__MODULE__)} must define load/1, load/2, query/1, or query/2 to be used as an Upkeep source"
+      end
+
+      def load(_params, _context) do
+        raise ArgumentError,
+              "#{inspect(__MODULE__)} must define load/1, load/2, query/1, or query/2 to be used as an Upkeep source"
       end
     end
   end
@@ -234,7 +280,7 @@ defmodule Upkeep.Source.Spec do
 
   defp query_surface(true, query_adapter) when not is_nil(query_adapter) do
     quote do
-      unquote(query_adapter).query_surface(__MODULE__, params)
+      unquote(query_adapter).query_surface(__MODULE__, params, context)
     end
   end
 

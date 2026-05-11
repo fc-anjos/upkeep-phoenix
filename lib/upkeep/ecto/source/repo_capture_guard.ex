@@ -7,7 +7,7 @@ defmodule Upkeep.Ecto.Source.RepoCaptureGuard do
   @default_repo_capture_policy if(Mix.env() in [:dev, :test], do: :raise, else: :warn)
 
   def verify_source!(source, params, opts \\ []) when is_atom(source) and is_map(params) do
-    instance = Instance.build(source, params)
+    instance = Instance.build(source, params, current_scope: Keyword.get(opts, :current_scope))
 
     if instance.query_source? or instance.repo_explicit? do
       ensure_repo_capture!(instance.repo, instance.source, instance.params, opts)

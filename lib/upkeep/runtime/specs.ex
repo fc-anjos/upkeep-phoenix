@@ -10,9 +10,11 @@ defmodule Upkeep.Runtime.Specs do
   alias Upkeep.Runtime.State
   alias Upkeep.Source.Instance
 
-  def source(assign_name, source, params, component, source_location \\ nil)
+  def source(socket, assign_name, source, params, component, source_location \\ nil)
       when is_atom(assign_name) and is_map(params) do
-    instance = Instance.build(source, params)
+    instance =
+      Instance.build(source, params, current_scope: Map.get(socket.assigns, :current_scope))
+
     source_id = Ids.scoped_source_id(instance, component)
     node_id = Ids.source_node_id(source_id)
 

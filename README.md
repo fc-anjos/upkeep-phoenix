@@ -140,8 +140,8 @@ Upkeep derives invalidation keys from supported Ecto equality and membership
 filters. Unsupported but visible query shapes fall back to broad schema/table
 invalidation for correctness.
 
-Custom `load/1` sources are supported when they either call `Upkeep.read/1` for
-Ecto reads or declare explicit invalidators:
+Custom `load/1` and `load/2` sources are supported when they either call
+`Upkeep.read/1` for Ecto reads or declare explicit invalidators:
 
 ```elixir
 defmodule MyApp.Catalog.ProjectSummary do
@@ -161,8 +161,34 @@ defmodule MyApp.Catalog.ProjectSummary do
 end
 ```
 
+Sources whose value depends on Phoenix's `:current_scope` use `load/2` or
+`query/2`. The second argument is an Upkeep source context; reading
+`current_scope` through that context makes the source identity include an
+opaque scope envelope before source loads are coalesced or shared:
+
+```elixir
+defmodule MyApp.Catalog.VisibleProjectItems do
+  use Upkeep.Ecto.Source, repo: MyApp.Repo
+
+  import Ecto.Query
+
+  def query(%{project_id: project_id}, upkeep) do
+    scope = Upkeep.current_scope!(upkeep)
+
+    from item in MyApp.Catalog.Item,
+      where:
+        item.project_id == ^project_id and
+          item.account_id == ^scope.account_id and
+          item.value <= ^scope.max_item_value,
+      order_by: [asc: item.position]
+  end
+end
+```
+
 Non-Ecto reads, spawned task reads, ETS, files, caches, external APIs, and
-process state need explicit invalidators:
+process state need explicit invalidators. Hidden process or session state must
+not carry viewer identity for a shared source; use `load/2` or `query/2` and
+`Upkeep.current_scope!/1` when the source value is identity-sensitive:
 
 ```elixir
 defmodule MyApp.Search.Results do
@@ -202,10 +228,11 @@ defmodule MyAppWeb.ProjectLive do
 end
 ```
 
-Source params are the default source identity. Keep params explicit and stable;
-do not hide identity in process state or session-only reads. If user identity,
-tenant identity, or permissions affect a source value, include that identity in
-the params or derive a local value from `current_scope`.
+Source params are the default source identity. Keep params explicit and stable.
+If user identity, tenant identity, or permissions affect the source value, use
+an identity-aware `load/2` or `query/2` source. If the shared source value is
+safe for every subscriber and only the presentation is viewer-specific, derive a
+local value from `current_scope`.
 
 ```elixir
 socket

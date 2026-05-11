@@ -1,10 +1,22 @@
 defmodule Upkeep.Source.Identity do
   @moduledoc false
 
-  @type source_id :: {module(), map()}
+  alias Upkeep.Source.Context
+
+  @type source_id :: {module(), map()} | {:identity, {module(), map()}, term()}
 
   @spec source_id(module(), map()) :: source_id()
   def source_id(source, params) when is_atom(source) and is_map(params), do: {source, params}
+
+  @spec source_id(module(), map(), Context.t() | nil) :: source_id()
+  def source_id(source, params, nil) when is_atom(source) and is_map(params) do
+    source_id(source, params)
+  end
+
+  def source_id(source, params, %Context{identity_envelope: identity_envelope})
+      when is_atom(source) and is_map(params) do
+    {:identity, source_id(source, params), identity_envelope}
+  end
 
   @spec sharing_partition(module(), map()) :: term()
   def sharing_partition(source, params) when is_atom(source) and is_map(params) do

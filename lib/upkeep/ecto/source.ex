@@ -17,7 +17,7 @@ defmodule Upkeep.Ecto.Source do
         end
       end
 
-  Non-Ecto or opaque reads should use `Upkeep.Source` with `load/1` and
+  Non-Ecto or opaque reads should use `Upkeep.Source` with `load/1` or `load/2` and
   explicit invalidators.
   """
 
@@ -68,7 +68,7 @@ defmodule Upkeep.Ecto.Source do
       _ ->
         raise ArgumentError,
               "Upkeep.read/1 must be called inside a source context. " <>
-                "Use it only inside a source's load/1 or query/1 callback. " <>
+                "Use it only inside a source's load/1, load/2, query/1, or query/2 callback. " <>
                 "For ad-hoc queries, call Repo.all/1 directly."
     end
   end
@@ -81,24 +81,29 @@ defmodule Upkeep.Ecto.Source do
   end
 
   @doc false
-  def query_surface(source, params) when is_atom(source) do
+  def query_surface(source, params, context \\ nil) when is_atom(source) do
     source
-    |> source_query(params)
+    |> source_query(params, context)
     |> QueryDeps.surface()
   end
 
   @doc false
-  def query_reacts_to?(source, event, params) when is_atom(source) and is_struct(event) do
+  def query_reacts_to?(source, event, params, context \\ nil)
+      when is_atom(source) and is_struct(event) do
     deps =
       source
-      |> source_query(params)
+      |> source_query(params, context)
       |> QueryDeps.from_query()
 
     QueryDeps.matches_change?(deps, event)
   end
 
-  defp source_query(source, params) do
-    if function_exported?(source, :query, 1), do: source.query(params), else: nil
+  defp source_query(source, params, context) do
+    cond do
+      function_exported?(source, :query, 2) -> source.query(params, context)
+      function_exported?(source, :query, 1) -> source.query(params)
+      true -> nil
+    end
   end
 
   defp read_fingerprint(repo, query) do

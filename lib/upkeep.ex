@@ -37,6 +37,7 @@ defmodule Upkeep do
   - `notify/1` — publish a domain event.
   - `inserted/2`, `updated/2`, `deleted/2`, `changed/3` — typed event helpers.
   - `read/1` — Ecto-backed read inside a source context.
+  - `current_scope!/1` — identity read inside an identity-aware source context.
   - `recent_events/1`, `clear_events/0` — observability buffer.
 
   `updated(record, from: old_record)` has full field-change knowledge.
@@ -134,6 +135,12 @@ defmodule Upkeep do
   source's invalidation surface.
   """
   defdelegate read(query), to: Upkeep.Ecto.Source
+
+  @doc """
+  Return Phoenix's `:current_scope` value inside an identity-aware source
+  callback.
+  """
+  defdelegate current_scope!(context), to: Upkeep.Source
 
   @doc """
   Return recent diagnostic runtime events.

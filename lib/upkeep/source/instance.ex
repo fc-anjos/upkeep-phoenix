@@ -1,12 +1,15 @@
 defmodule Upkeep.Source.Instance do
   @moduledoc false
 
+  alias Upkeep.Source.Context
   alias Upkeep.Source.Identity
 
   @enforce_keys [
     :source,
     :params,
     :id,
+    :context,
+    :identity_aware?,
     :repo,
     :repo_explicit?,
     :query_source?,
@@ -18,6 +21,8 @@ defmodule Upkeep.Source.Instance do
   defstruct source: nil,
             params: %{},
             id: nil,
+            context: nil,
+            identity_aware?: false,
             repo: nil,
             repo_explicit?: false,
             query_source?: false,
@@ -30,6 +35,8 @@ defmodule Upkeep.Source.Instance do
           source: module(),
           params: Upkeep.Source.params(),
           id: term(),
+          context: Context.t() | nil,
+          identity_aware?: boolean(),
           repo: module() | nil,
           repo_explicit?: boolean(),
           query_source?: boolean(),
@@ -39,20 +46,24 @@ defmodule Upkeep.Source.Instance do
           explicit_surface: Upkeep.InvalidationSurface.t()
         }
 
-  @spec build(module(), map() | keyword()) :: t()
-  def build(source, params) when is_atom(source) do
+  @spec build(module(), map() | keyword(), keyword()) :: t()
+  def build(source, params, opts \\ []) when is_atom(source) do
     params = normalize_params(params)
+    identity_aware? = identity_aware?(source)
+    context = context(identity_aware?, opts)
 
     %__MODULE__{
       source: source,
       params: params,
-      id: Identity.source_id(source, params),
+      id: Identity.source_id(source, params, context),
+      context: context,
+      identity_aware?: identity_aware?,
       repo: repo(source),
       repo_explicit?: repo_explicit?(source),
       query_source?: query_source?(source),
       retry: Identity.retry_config(source),
       sharing_partition: Identity.sharing_partition(source, params),
-      surface: surface(source, params),
+      surface: surface(source, params, context),
       explicit_surface: explicit_surface(source, params)
     }
   end
@@ -68,6 +79,9 @@ defmodule Upkeep.Source.Instance do
 
   defp normalize_params(params) when is_list(params), do: Map.new(params)
   defp normalize_params(params) when is_map(params), do: params
+
+  defp context(true, opts), do: Context.new(Keyword.get(opts, :current_scope))
+  defp context(false, _opts), do: nil
 
   defp repo(source) do
     source_repo(source) || Application.get_env(:upkeep, :repo)
@@ -86,10 +100,22 @@ defmodule Upkeep.Source.Instance do
     function_exported?(source, :__upkeep_query_source__?, 0) and source.__upkeep_query_source__?()
   end
 
-  defp surface(source, params) do
-    if function_exported?(source, :__upkeep_surface__, 1),
-      do: source.__upkeep_surface__(params),
-      else: Upkeep.InvalidationSurface.empty()
+  defp identity_aware?(source) do
+    function_exported?(source, :__upkeep_identity_aware__?, 0) and
+      source.__upkeep_identity_aware__?()
+  end
+
+  defp surface(source, params, context) do
+    cond do
+      function_exported?(source, :__upkeep_surface__, 2) ->
+        source.__upkeep_surface__(params, context)
+
+      function_exported?(source, :__upkeep_surface__, 1) ->
+        source.__upkeep_surface__(params)
+
+      true ->
+        Upkeep.InvalidationSurface.empty()
+    end
   end
 
   defp explicit_surface(source, params) do

@@ -21,7 +21,7 @@ defmodule Upkeep.Runtime.ResultTest do
 
   test "runtime mount returns effects instead of applying them" do
     socket = LiveSocket.socket()
-    spec = Specs.source(:issues, ProjectIssues, %{project_id: 1}, nil)
+    spec = Specs.source(socket, :issues, ProjectIssues, %{project_id: 1}, nil)
 
     assert {:ok, socket, effects} = Runtime.mount(socket, spec)
 

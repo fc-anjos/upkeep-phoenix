@@ -149,6 +149,11 @@ defmodule Upkeep.Coordinator.Topology do
     SourceIdentity.sharing_partition(source, params)
   end
 
+  def node_partition({:identity, {source, params}, identity_envelope})
+      when is_atom(source) and is_map(params) do
+    {:identity, SourceIdentity.sharing_partition(source, params), identity_envelope}
+  end
+
   def node_partition({:derived, _view, _assign_name, dep_node_ids, _fun}) do
     case shared_partition(dep_node_ids) do
       {:ok, partition} -> partition

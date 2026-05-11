@@ -25,7 +25,7 @@ defmodule Upkeep.MixProject do
   def application do
     [
       mod: {Upkeep.Application, []},
-      extra_applications: [:logger]
+      extra_applications: [:crypto, :logger]
     ]
   end
 

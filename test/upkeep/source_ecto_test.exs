@@ -102,6 +102,22 @@ defmodule Upkeep.SourceEctoTest do
     end
   end
 
+  defmodule ScopedProjectIssues do
+    use Upkeep.Ecto.Source, repo: Upkeep.TestSupport.Repo
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.Issue
+
+    def query(%{project_id: project_id}, upkeep) do
+      %{user_id: user_id} = Upkeep.current_scope!(upkeep)
+
+      from i in Issue,
+        where: i.project_id == ^project_id and i.assignee_id == ^user_id,
+        order_by: [asc: i.position]
+    end
+  end
+
   defmodule BroadProjectIssues do
     use Upkeep.Ecto.Source
 
@@ -553,6 +569,22 @@ defmodule Upkeep.SourceEctoTest do
     issues = assert_project_issues_refresh(1, 9, ["Before", "After"])
     socket = Live.apply_dag_value(socket, project_issues_source_id(1, 9), issues)
     assert Enum.map(socket.assigns.issues, & &1.title) == ["Before", "After"]
+  end
+
+  test "query/2 source identity includes current_scope before sharing" do
+    Repo.insert!(issue(id: 1, project_id: 1, assignee_id: 9, title: "Mine", position: 1))
+    Repo.insert!(issue(id: 2, project_id: 1, assignee_id: 10, title: "Yours", position: 2))
+
+    socket_a =
+      LiveSocket.scoped_connected_socket(%{user_id: 9})
+      |> Live.watch(:issues, ScopedProjectIssues, project_id: 1)
+
+    socket_b =
+      LiveSocket.scoped_connected_socket(%{user_id: 10})
+      |> Live.watch(:issues, ScopedProjectIssues, project_id: 1)
+
+    assert Enum.map(socket_a.assigns.issues, & &1.title) == ["Mine"]
+    assert Enum.map(socket_b.assigns.issues, & &1.title) == ["Yours"]
   end
 
   test "plain query/1 sources react to inserts, updates, and deletes entering or leaving the query" do
