@@ -4,7 +4,8 @@ defmodule Upkeep.InvalidationSurface do
   use Boundary,
     top_level?: true,
     exports: [
-      Index
+      Index,
+      Index.ETS
     ],
     deps: [
       Upkeep.Change

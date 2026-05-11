@@ -1,6 +1,7 @@
 defmodule Upkeep.Invalidation.ReadCache do
   @moduledoc false
 
+  alias Upkeep.InvalidationSurface.Index.ETS, as: SurfaceIndex
   alias Upkeep.SingleFlight.Registry
 
   @values :upkeep_read_node_values
@@ -37,10 +38,7 @@ defmodule Upkeep.Invalidation.ReadCache do
                 value = load.()
                 :ets.insert(@values, {node_id, value})
                 surface = Upkeep.Source.dependency_surface(List.wrap(deps))
-
-                Enum.each(Upkeep.InvalidationSurface.index_keys(surface), fn key ->
-                  :ets.insert(@index, {key, {node_id, surface}})
-                end)
+                SurfaceIndex.insert(@index, node_id, surface, surface)
 
                 value
             end
@@ -77,22 +75,17 @@ defmodule Upkeep.Invalidation.ReadCache do
 
   defp evict_unheld(node_id) do
     :ets.delete(@values, node_id)
-    :ets.match_delete(@index, {:_, {node_id, :_}})
+    SurfaceIndex.delete(@index, node_id)
     :ok
   end
 
   def invalidate(event) when is_struct(event) do
-    candidate_keys = Upkeep.InvalidationSurface.candidate_keys(event)
-
-    candidates =
-      candidate_keys
-      |> Enum.flat_map(&:ets.lookup(@index, &1))
-      |> Enum.uniq_by(fn {_key, {node_id, _surface}} -> node_id end)
+    {candidate_keys, candidates} = SurfaceIndex.candidates(@index, event)
 
     evicted_count =
-      Enum.reduce(candidates, 0, fn {_key, {node_id, surface}}, acc ->
+      Enum.reduce(candidates, 0, fn {node_id, surface}, acc ->
         if Upkeep.InvalidationSurface.matches?(surface, event) do
-          evict(node_id, surface)
+          evict(node_id)
           acc + 1
         else
           acc
@@ -116,12 +109,9 @@ defmodule Upkeep.Invalidation.ReadCache do
   def count, do: :ets.info(@values, :size)
   def coalescer_name, do: Upkeep.Invalidation.ReadCache.Coalescer
 
-  defp evict(node_id, surface) do
+  defp evict(node_id) do
     :ets.delete(@values, node_id)
-
-    Enum.each(Upkeep.InvalidationSurface.index_keys(surface), fn key ->
-      :ets.match_delete(@index, {key, {node_id, :_}})
-    end)
+    SurfaceIndex.delete(@index, node_id)
 
     # Refs from holders to this read-node are stale once the value is
     # gone; let the next fetch_or_load re-establish them.

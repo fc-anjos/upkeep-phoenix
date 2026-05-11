@@ -2,6 +2,7 @@ defmodule Upkeep.Coordinator.Topology do
   @moduledoc false
 
   alias Upkeep.InvalidationSurface
+  alias Upkeep.InvalidationSurface.Index.ETS, as: SurfaceIndex
   alias Upkeep.Source.Identity, as: SourceIdentity
 
   @nodes_table :upkeep_topology_nodes
@@ -38,10 +39,8 @@ defmodule Upkeep.Coordinator.Topology do
   ## Mutations
 
   def register_source(node_id, shard_idx, %InvalidationSurface{} = surface) do
-    index_keys = InvalidationSurface.index_keys(surface)
-
     :ets.insert(@nodes_table, {node_id, shard_idx, %{kind: :source, surface: surface, deps: []}})
-    Enum.each(index_keys, &:ets.insert(@index_table, {&1, node_id}))
+    SurfaceIndex.insert(@index_table, node_id, surface)
     :ok
   end
 
@@ -54,17 +53,8 @@ defmodule Upkeep.Coordinator.Topology do
     :ok
   end
 
-  def reconcile_source(node_id, shard_idx, old_surface, new_surface) do
-    old_set = old_surface |> InvalidationSurface.index_keys() |> MapSet.new()
-    new_set = new_surface |> InvalidationSurface.index_keys() |> MapSet.new()
-
-    Enum.each(MapSet.difference(old_set, new_set), fn key ->
-      :ets.delete_object(@index_table, {key, node_id})
-    end)
-
-    Enum.each(MapSet.difference(new_set, old_set), fn key ->
-      :ets.insert(@index_table, {key, node_id})
-    end)
+  def reconcile_source(node_id, shard_idx, _old_surface, new_surface) do
+    SurfaceIndex.replace(@index_table, node_id, new_surface)
 
     :ets.insert(
       @nodes_table,
@@ -76,11 +66,8 @@ defmodule Upkeep.Coordinator.Topology do
 
   def unregister(node_id) do
     case lookup(node_id) do
-      {:ok, %{kind: :source, surface: surface}} ->
-        surface
-        |> InvalidationSurface.index_keys()
-        |> Enum.each(&:ets.delete_object(@index_table, {&1, node_id}))
-
+      {:ok, %{kind: :source}} ->
+        SurfaceIndex.delete(@index_table, node_id)
         :ets.delete(@nodes_table, node_id)
         :ok
 
@@ -116,13 +103,8 @@ defmodule Upkeep.Coordinator.Topology do
   end
 
   def affected_source_node_ids(event) when is_struct(event) do
-    candidate_keys = InvalidationSurface.candidate_keys(event)
-
-    candidate_node_ids =
-      candidate_keys
-      |> Enum.flat_map(&:ets.lookup(@index_table, &1))
-      |> Enum.map(fn {_key, node_id} -> node_id end)
-      |> Enum.uniq()
+    {candidate_keys, candidates} = SurfaceIndex.candidates(@index_table, event)
+    candidate_node_ids = Enum.map(candidates, fn {node_id, _payload} -> node_id end)
 
     matched_node_ids = Enum.filter(candidate_node_ids, &source_node_matches?(&1, event))
 

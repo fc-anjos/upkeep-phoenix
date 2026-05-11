@@ -57,9 +57,34 @@ defmodule Upkeep.InvalidationSurface.Index do
 
   def candidates(%__MODULE__{} = index, event) when is_struct(event) do
     event
-    |> InvalidationSurface.index_query()
-    |> query_ids(index)
-    |> MapSet.union(index.unindexed)
+    |> lookup_terms(&registered_field_names(&1, index))
+    |> elem(1)
+    |> Enum.reduce(MapSet.new(), fn term, ids ->
+      index
+      |> lookup_ids(term)
+      |> MapSet.union(ids)
+    end)
+  end
+
+  def surface_terms(%InvalidationSurface{} = surface) do
+    case index_entries(surface) do
+      {:indexed, keys} -> indexed_terms(keys)
+      {:mixed, keys} -> [:unindexed | indexed_terms(keys)]
+      :unindexed -> [:unindexed]
+    end
+  end
+
+  def surface_terms(_surface), do: [:unindexed]
+
+  def lookup_terms(event, field_names_fun)
+      when is_struct(event) and is_function(field_names_fun, 1) do
+    terms =
+      event
+      |> InvalidationSurface.index_query()
+      |> query_terms(field_names_fun)
+      |> Enum.uniq()
+
+    {terms, Enum.uniq([:unindexed | terms])}
   end
 
   defp put_indexed_keys(index, id, keys) do
@@ -197,82 +222,100 @@ defmodule Upkeep.InvalidationSurface.Index do
     %{index | unindexed: MapSet.delete(index.unindexed, id)}
   end
 
-  defp query_ids({:broad, notifications}, index) do
-    notification_ids(index, notifications)
+  defp lookup_ids(index, {:exact, key}) do
+    Map.get(index.exact, key, MapSet.new())
   end
 
-  defp query_ids({:partial, notifications, changed_fields, field_maps}, index) do
-    partial_ids(index, notifications, changed_fields, field_maps)
+  defp lookup_ids(index, {:notification, notification}) do
+    Map.get(index.notifications, notification, MapSet.new())
   end
 
-  defp query_ids({:exact, notifications, field_maps}, index) do
-    exact_ids(index, notifications, field_maps)
+  defp lookup_ids(index, {:field_set, field_set_key}) do
+    Map.get(index.field_set_index, field_set_key, MapSet.new())
   end
 
-  defp notification_ids(index, notifications) do
-    Enum.reduce(notifications, MapSet.new(), fn notification, ids ->
-      index.notifications
-      |> Map.get(notification, MapSet.new())
-      |> MapSet.union(ids)
+  defp lookup_ids(index, :unindexed) do
+    index.unindexed
+  end
+
+  defp query_terms({:broad, notifications}, _field_names_fun) do
+    Enum.map(notifications, &{:notification, &1})
+  end
+
+  defp query_terms({:partial, notifications, changed_fields, field_maps}, field_names_fun) do
+    Enum.flat_map(notifications, fn notification ->
+      [
+        {:exact, notification}
+        | partial_field_terms(notification, changed_fields, field_maps, field_names_fun)
+      ]
     end)
   end
 
-  defp exact_ids(index, notifications, field_maps) do
-    Enum.reduce(notifications, MapSet.new(), fn notification, ids ->
-      ids =
-        index.exact
-        |> Map.get(notification, MapSet.new())
-        |> MapSet.union(ids)
-
-      notification
-      |> registered_field_names(index)
-      |> Enum.reduce(ids, fn field_names, ids ->
-        field_maps
-        |> Enum.reduce(ids, fn fields, ids ->
-          case field_key(notification, field_names, fields) do
-            nil ->
-              ids
-
-            key ->
-              index.exact
-              |> Map.get(key, MapSet.new())
-              |> MapSet.union(ids)
-          end
-        end)
-      end)
+  defp query_terms({:exact, notifications, field_maps}, field_names_fun) do
+    Enum.flat_map(notifications, fn notification ->
+      [
+        {:exact, notification}
+        | exact_terms_for_registered_fields(notification, field_maps, field_names_fun)
+      ]
     end)
   end
 
-  defp partial_ids(index, notifications, changed_fields, field_maps) do
-    Enum.reduce(notifications, MapSet.new(), fn notification, ids ->
-      ids =
-        index.exact
-        |> Map.get(notification, MapSet.new())
-        |> MapSet.union(ids)
-
-      notification
-      |> registered_field_names(index)
-      |> Enum.reduce(ids, fn field_names, ids ->
-        if field_names |> Tuple.to_list() |> Enum.any?(&MapSet.member?(changed_fields, &1)) do
-          index.field_set_index
-          |> Map.get({notification, field_names}, MapSet.new())
-          |> MapSet.union(ids)
-        else
-          field_maps
-          |> Enum.reduce(ids, fn fields, ids ->
-            case field_key(notification, field_names, fields) do
-              nil ->
-                ids
-
-              key ->
-                index.exact
-                |> Map.get(key, MapSet.new())
-                |> MapSet.union(ids)
-            end
-          end)
-        end
-      end)
+  defp partial_field_terms(notification, changed_fields, field_maps, field_names_fun) do
+    notification
+    |> field_names_fun.()
+    |> Enum.flat_map(fn field_names ->
+      if changed_field_set?(field_names, changed_fields) do
+        [{:field_set, {notification, field_names}}]
+      else
+        exact_terms_for_field_names(notification, field_names, field_maps)
+      end
     end)
+  end
+
+  defp exact_terms_for_registered_fields(notification, field_maps, field_names_fun) do
+    notification
+    |> field_names_fun.()
+    |> Enum.flat_map(&exact_terms_for_field_names(notification, &1, field_maps))
+  end
+
+  defp exact_terms_for_field_names(notification, field_names, field_maps) do
+    Enum.flat_map(field_maps, fn fields ->
+      case field_key(notification, field_names, fields) do
+        nil -> []
+        key -> [{:exact, key}]
+      end
+    end)
+  end
+
+  defp changed_field_set?(field_names, changed_fields) do
+    field_names
+    |> Tuple.to_list()
+    |> Enum.any?(&MapSet.member?(changed_fields, &1))
+  end
+
+  defp indexed_terms(keys) do
+    keys
+    |> Enum.flat_map(fn key ->
+      [{:exact, key} | notification_terms(key) ++ field_set_terms(key)]
+    end)
+    |> Enum.uniq()
+  end
+
+  defp notification_terms(key) do
+    case notification_key(key) do
+      nil -> []
+      notification -> [{:notification, notification}]
+    end
+  end
+
+  defp field_set_terms(key) do
+    case field_set_key(key) do
+      nil ->
+        []
+
+      {notification, field_names} = field_set_key ->
+        [{:field_set, field_set_key}, {:field_names, notification, field_names}]
+    end
   end
 
   defp registered_field_names(notification, index) do
