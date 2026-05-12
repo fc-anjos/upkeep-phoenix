@@ -20,7 +20,10 @@ config :upkeep,
     _sqlite ->
       {Ecto.Adapters.SQLite3,
        [
-         database: Path.expand("../upkeep_test.db", __DIR__)
+         database: Path.expand("../upkeep_test.db", __DIR__),
+         journal_mode: :wal,
+         busy_timeout: 30_000,
+         default_transaction_mode: :immediate
        ]}
   end
 

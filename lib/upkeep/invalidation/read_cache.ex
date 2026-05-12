@@ -7,6 +7,7 @@ defmodule Upkeep.Invalidation.ReadCache do
   @values :upkeep_read_node_values
   @index :upkeep_read_node_index
   @refs :upkeep_read_node_refs
+  @generations :upkeep_read_node_generations
   def values_table, do: @values
   def index_table, do: @index
   def refs_table, do: @refs
@@ -15,17 +16,19 @@ defmodule Upkeep.Invalidation.ReadCache do
     [
       {@values, [:set, :public, :named_table, read_concurrency: true, write_concurrency: true]},
       {@index, [:bag, :public, :named_table, read_concurrency: true, write_concurrency: true]},
-      {@refs, [:bag, :public, :named_table, read_concurrency: true, write_concurrency: true]}
+      {@refs, [:bag, :public, :named_table, read_concurrency: true, write_concurrency: true]},
+      {@generations,
+       [:set, :public, :named_table, read_concurrency: true, write_concurrency: true]}
     ]
   end
 
   def fetch_or_load(node_id, deps, load, holder \\ nil) when is_function(load, 0) do
     value =
       case :ets.lookup(@values, node_id) do
-        [{^node_id, value}] ->
+        [{^node_id, :loaded, value, _gen}] ->
           value
 
-        [] ->
+        _ ->
           Registry.coalesce(coalescer_name(), node_id, fn -> load_cached(node_id, deps, load) end)
       end
 
@@ -34,20 +37,53 @@ defmodule Upkeep.Invalidation.ReadCache do
   end
 
   defp load_cached(node_id, deps, load) do
-    # Re-check ETS inside the single-flight critical section: a concurrent
-    # caller may have settled while we waited to be the loader.
     case :ets.lookup(@values, node_id) do
-      [{^node_id, value}] ->
+      [{^node_id, :loaded, value, _gen}] -> value
+      _ -> load_fresh(node_id, deps, load)
+    end
+  end
+
+  defp load_fresh(node_id, deps, load) do
+    surface = Upkeep.Source.dependency_surface(List.wrap(deps))
+    SurfaceIndex.insert(@index, node_id, surface, surface)
+
+    gen_before = read_gen(node_id)
+    :ets.delete(@values, node_id)
+    true = :ets.insert_new(@values, {node_id, :loading, nil, gen_before})
+
+    if read_gen(node_id) != gen_before do
+      :ets.delete(@values, node_id)
+      SurfaceIndex.delete(@index, node_id)
+      load.()
+    else
+      commit_load(node_id, load.(), gen_before)
+    end
+  end
+
+  # Atomic compare-and-swap: the row is promoted only if its `gen` field is
+  # still `gen_before`. `evict/1` bumps the generation in @generations AND
+  # deletes the @values row, so either condition breaks the match. Tuple
+  # values nested in the body must be wrapped in `{:const, term}` or ETS
+  # rejects the match spec.
+  defp commit_load(node_id, value, gen_before) do
+    match_spec = [
+      {{node_id, :loading, :_, gen_before}, [],
+       [{{{:const, node_id}, :loaded, {:const, value}, gen_before}}]}
+    ]
+
+    case :ets.select_replace(@values, match_spec) do
+      1 ->
         value
 
-      [] ->
-        value = load.()
-        :ets.insert(@values, {node_id, value})
-        surface = Upkeep.Source.dependency_surface(List.wrap(deps))
-        SurfaceIndex.insert(@index, node_id, surface, surface)
-
+      0 ->
+        SurfaceIndex.delete(@index, node_id)
+        :ets.delete(@values, node_id)
         value
     end
+  end
+
+  defp read_gen(node_id) do
+    :ets.update_counter(@generations, node_id, {2, 0}, {node_id, 0})
   end
 
   def release(holder) do
@@ -104,18 +140,20 @@ defmodule Upkeep.Invalidation.ReadCache do
     :ets.delete_all_objects(@values)
     :ets.delete_all_objects(@index)
     :ets.delete_all_objects(@refs)
+    :ets.delete_all_objects(@generations)
     :ok
   end
 
   def count, do: :ets.info(@values, :size)
   def coalescer_name, do: Upkeep.Invalidation.ReadCache.Coalescer
 
+  # Bump the generation BEFORE deleting the @values row so an in-flight
+  # loader's `commit_load` CAS finds either a missing row or a row with a
+  # stale gen and skips caching.
   defp evict(node_id) do
+    :ets.update_counter(@generations, node_id, {2, 1}, {node_id, 0})
     :ets.delete(@values, node_id)
     SurfaceIndex.delete(@index, node_id)
-
-    # Refs from holders to this read-node are stale once the value is
-    # gone; let the next fetch_or_load re-establish them.
     :ets.match_delete(@refs, {:_, node_id})
   end
 

@@ -35,6 +35,10 @@ Configure the default repo:
 config :upkeep, repo: MyApp.Repo
 ```
 
+Upkeep starts through its own OTP application when it is included as a normal
+runtime dependency, so Phoenix applications should not add `{Upkeep, []}` to
+their own supervision tree.
+
 `Upkeep.Ecto.Repo` keeps the normal Ecto API and captures committed inserts,
 updates, deletes, bulk writes, direct transactions, and `Ecto.Multi`
 operations. A specific write can opt out with `upkeep: false`.

@@ -17,6 +17,11 @@ defmodule Upkeep do
           adapter: Ecto.Adapters.Postgres
       end
 
+  Upkeep starts through its own OTP application when included as a normal
+  runtime dependency. Do not add `{Upkeep, []}` to your Phoenix application's
+  supervision tree unless you have intentionally disabled dependency
+  application startup and are managing Upkeep manually.
+
   See the README for complete setup, source authoring, LiveView usage, tests,
   and inspector installation.
 

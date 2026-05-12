@@ -101,6 +101,10 @@ Configure the default repo:
 config :upkeep, repo: MyApp.Repo
 ```
 
+Upkeep starts through its own OTP application when it is included as a normal
+runtime dependency, so Phoenix applications should not add `{Upkeep, []}` to
+their own supervision tree.
+
 `Upkeep.Ecto.Repo` wraps `Ecto.Repo` and captures committed inserts, updates,
 deletes, bulk writes, direct transactions, and `Ecto.Multi` operations. Sources
 can still opt out of individual writes with `upkeep: false`.
@@ -112,6 +116,23 @@ policy raises in dev/test and warns in prod:
 ```elixir
 config :upkeep, repo_capture_misconfiguration: :raise
 # or :warn / :ignore
+```
+
+### SQLite
+
+`ecto_sqlite3` apps must set `default_transaction_mode: :immediate` in
+every environment (`dev`, `test`, `runtime`). Without it, pool
+connections under WAL can hold stale read snapshots that miss commits
+made through sibling connections — producing intermittent source
+staleness under write bursts even with Upkeep's caches race-free:
+
+```elixir
+config :my_app, MyApp.Repo,
+  database: "...",
+  pool_size: 5,
+  journal_mode: :wal,
+  busy_timeout: 30_000,
+  default_transaction_mode: :immediate
 ```
 
 ## A Source
