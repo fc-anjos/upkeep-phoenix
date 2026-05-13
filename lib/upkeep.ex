@@ -131,6 +131,9 @@ defmodule Upkeep do
   @doc """
   Execute an Ecto read inside a source context so Upkeep can capture the
   source's invalidation surface.
+
+  This is only valid from a source `load/1`, `load/2`, `query/1`, or `query/2`
+  callback. For ad-hoc queries outside a source, call your repo directly.
   """
   defdelegate read(query), to: Upkeep.Ecto.Source
 

@@ -143,6 +143,10 @@ Use the narrowest shape that makes every input to the source value visible:
 | Non-Ecto reads, cache reads, external APIs, ETS, files, or process state | `use Upkeep.Source`, `load/1` or `load/2`, and explicit invalidators |
 | Shared source value with viewer-specific presentation | shared `watch/4`, then local `derive/4` from `%{current_scope: scope}` |
 
+`Upkeep.read/1` is only for Ecto reads inside source callbacks, where it
+captures the read's invalidation surface. For ad-hoc queries outside a source,
+call your repo directly.
+
 `query/2` and `load/2` receive an Upkeep source context as their second
 argument. Read Phoenix's `:current_scope` through that context when identity,
 tenant, permissions, or policy checks affect the source value:

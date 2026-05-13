@@ -159,8 +159,10 @@ Upkeep derives invalidation keys from supported Ecto equality and membership
 filters. Unsupported but visible query shapes fall back to broad schema/table
 invalidation for correctness.
 
-Custom `load/1` and `load/2` sources are supported when they either call
-`Upkeep.read/1` for Ecto reads or declare explicit invalidators:
+Custom `load/1` and `load/2` sources are supported when they either track
+Ecto reads from inside the source callback or declare explicit invalidators.
+Inside an Ecto source callback, call `Upkeep.read/1` instead of `Repo.all/1`
+so Upkeep can capture the read's invalidation surface:
 
 ```elixir
 defmodule MyApp.Catalog.ProjectSummary do
@@ -179,6 +181,9 @@ defmodule MyApp.Catalog.ProjectSummary do
   end
 end
 ```
+
+`Upkeep.read/1` is not a top-level ad-hoc query API. Outside a source's
+`load/1`, `load/2`, `query/1`, or `query/2` callback, call your repo directly.
 
 Sources whose value depends on Phoenix's `:current_scope` use `load/2` or
 `query/2`. The second argument is an Upkeep source context; reading
