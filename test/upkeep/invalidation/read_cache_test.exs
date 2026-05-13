@@ -143,6 +143,39 @@ defmodule Upkeep.Invalidation.ReadCacheTest do
     assert ReadCache.count() == 0
   end
 
+  test "invalidate/1 during an in-flight cold load prevents caching that load" do
+    q = from(p in Project)
+    deps = QueryDeps.from_query(q)
+    node_id = {:read, Repo, {:in_flight, System.unique_integer()}}
+    parent = self()
+
+    task =
+      Task.async(fn ->
+        ReadCache.fetch_or_load(node_id, deps, fn ->
+          send(parent, {:load_started, self()})
+
+          receive do
+            :finish_load -> [:stale_snapshot]
+          end
+        end)
+      end)
+
+    assert_receive {:load_started, loader_pid}, 5_000
+
+    assert ReadCache.invalidate(Upkeep.Change.inserted(%Project{id: 2, name: "beta"})) == 1
+    assert ReadCache.count() == 0
+
+    send(loader_pid, :finish_load)
+    assert Task.await(task) == [:stale_snapshot]
+    assert ReadCache.count() == 0
+
+    assert ReadCache.fetch_or_load(node_id, deps, fn -> [:fresh_snapshot] end) == [
+             :fresh_snapshot
+           ]
+
+    assert ReadCache.count() == 1
+  end
+
   test "concurrent fetch_or_load for the same query collapses into one DB hit" do
     for id <- 1..20, do: Repo.insert!(%Project{id: id, name: "p#{id}"})
 

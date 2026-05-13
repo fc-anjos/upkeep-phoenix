@@ -45,9 +45,9 @@ defmodule Upkeep.Invalidation.ReadCache do
 
   defp load_fresh(node_id, deps, load) do
     surface = Upkeep.Source.dependency_surface(List.wrap(deps))
-    SurfaceIndex.insert(@index, node_id, surface, surface)
-
     gen_before = read_gen(node_id)
+
+    SurfaceIndex.insert(@index, node_id, surface, surface)
     :ets.delete(@values, node_id)
     true = :ets.insert_new(@values, {node_id, :loading, nil, gen_before})
 
