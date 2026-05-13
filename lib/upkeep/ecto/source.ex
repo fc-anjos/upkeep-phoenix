@@ -23,18 +23,9 @@ defmodule Upkeep.Ecto.Source do
 
   use Boundary,
     top_level?: true,
-    exports: [
-      QueryAdapter,
-      Reader
-    ],
+    exports: [],
     deps: [
-      Ecto.Adapters.SQL,
-      Ecto.Query,
-      Ecto.SubQuery,
-      Logger,
-      Upkeep.Change,
-      Upkeep.Invalidation,
-      Upkeep.InvalidationSurface,
+      Upkeep.Ecto.Source.QueryAdapter,
       Upkeep.Source,
       {Mix, :compile}
     ],
@@ -44,7 +35,7 @@ defmodule Upkeep.Ecto.Source do
     opts = Keyword.put(opts, :query_adapter, Upkeep.Ecto.Source.QueryAdapter)
 
     quote do
-      use Upkeep.Source.Spec, unquote(opts)
+      use Upkeep.Source, unquote(opts)
     end
   end
 end

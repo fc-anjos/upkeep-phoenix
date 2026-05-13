@@ -1,6 +1,16 @@
 defmodule Upkeep.Source.Instance do
   @moduledoc false
 
+  use Boundary,
+    top_level?: true,
+    exports: [],
+    deps: [
+      Upkeep.InvalidationSurface,
+      Upkeep.Source.Context,
+      Upkeep.Source.Identity
+    ],
+    type: :strict
+
   alias Upkeep.Source.Context
   alias Upkeep.Source.Identity
 
@@ -33,14 +43,14 @@ defmodule Upkeep.Source.Instance do
 
   @type t :: %__MODULE__{
           source: module(),
-          params: Upkeep.Source.params(),
+          params: map(),
           id: term(),
           context: Context.t() | nil,
           identity_aware?: boolean(),
           repo: module() | nil,
           repo_explicit?: boolean(),
           query_source?: boolean(),
-          retry: Upkeep.Source.retry_config(),
+          retry: Upkeep.Source.Identity.retry_config(),
           sharing_partition: term(),
           surface: Upkeep.InvalidationSurface.t(),
           explicit_surface: Upkeep.InvalidationSurface.t()

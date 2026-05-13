@@ -7,6 +7,12 @@ defmodule Upkeep.Source.Coverage do
   that may make the source non-reactive unless the app declares them explicitly.
   """
 
+  use Boundary,
+    top_level?: true,
+    exports: [],
+    deps: [],
+    type: :strict
+
   @enforce_keys [:source, :params]
   defstruct source: nil,
             params: %{},
@@ -31,7 +37,7 @@ defmodule Upkeep.Source.Coverage do
         }
   @type t :: %__MODULE__{
           source: module(),
-          params: Upkeep.Source.params(),
+          params: map(),
           precise: [entry()],
           broad: [entry()],
           explicit: [entry()],

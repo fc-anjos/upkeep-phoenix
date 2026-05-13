@@ -1,6 +1,19 @@
 defmodule Upkeep.Source.Loader do
   @moduledoc false
 
+  use Boundary,
+    top_level?: true,
+    exports: [],
+    deps: [
+      Logger,
+      Upkeep.InvalidationSurface,
+      Upkeep.Source.Coverage,
+      Upkeep.Source.Dependency,
+      Upkeep.Source.Instance,
+      Upkeep.Source.LoadResult
+    ],
+    type: :strict
+
   alias Upkeep.Source.{Coverage, Dependency, Instance, LoadResult}
 
   @context_key {__MODULE__, :read_context}
@@ -11,7 +24,7 @@ defmodule Upkeep.Source.Loader do
           required(:deps) => [term()],
           required(:holder) => term(),
           required(:source) => module(),
-          required(:params) => Upkeep.Source.params(),
+          required(:params) => map(),
           optional(:reads) => map()
         }
 

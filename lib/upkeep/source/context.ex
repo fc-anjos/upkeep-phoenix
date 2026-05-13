@@ -1,6 +1,12 @@
 defmodule Upkeep.Source.Context do
   @moduledoc false
 
+  use Boundary,
+    top_level?: true,
+    exports: [],
+    deps: [],
+    type: :strict
+
   @enforce_keys [:current_scope, :identity_envelope]
   defstruct current_scope: nil,
             identity_envelope: nil

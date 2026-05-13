@@ -1,6 +1,18 @@
 defmodule Upkeep.Ecto.Source.QueryAdapter do
   @moduledoc false
 
+  use Boundary,
+    top_level?: true,
+    exports: [],
+    deps: [
+      Upkeep.Ecto.Source.QueryDeps,
+      Upkeep.Ecto.Source.Reader,
+      Upkeep.Ecto.Source.RepoCaptureGuard,
+      Upkeep.InvalidationSurface,
+      Upkeep.Source.Context
+    ],
+    type: :strict
+
   alias Upkeep.Ecto.Source.{QueryDeps, RepoCaptureGuard}
 
   @spec read(term()) :: term()

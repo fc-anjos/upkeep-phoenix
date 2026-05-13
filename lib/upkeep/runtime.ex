@@ -14,6 +14,9 @@ defmodule Upkeep.Runtime do
       Upkeep.Invalidation,
       Upkeep.InvalidationSurface,
       Upkeep.Source,
+      Upkeep.Source.Instance,
+      Upkeep.Source.Loader,
+      Upkeep.Source.LoadResult,
       Upkeep.SingleFlight,
       {Mix, :compile}
     ],

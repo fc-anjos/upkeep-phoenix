@@ -1,6 +1,18 @@
 defmodule Upkeep.TestSupport.MultiNodeHarness do
   @moduledoc false
 
+  use Boundary,
+    top_level?: true,
+    exports: [],
+    deps: [
+      Group,
+      Upkeep.Change,
+      Upkeep.Coordinator,
+      Upkeep.Invalidation,
+      Upkeep.InvalidationSurface
+    ],
+    type: :strict
+
   alias Upkeep.Coordinator.Graph
 
   def notification_group_node_view do

@@ -184,7 +184,8 @@ and the repo emits committed writes. A specific write can opt out with
 
 Upkeep starts through its own OTP application when it is included as a normal
 runtime dependency, so Phoenix applications should not add `{Upkeep, []}` to
-their own supervision tree.
+their own supervision tree. Applications that disable dependency application
+startup can start `{Upkeep.Supervision, name: Upkeep.Supervisor}` manually.
 
 If an Ecto-backed source uses a plain `Ecto.Repo`, Upkeep catches that at
 watch/read time. The default policy raises in dev/test and warns in prod:

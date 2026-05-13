@@ -1,6 +1,14 @@
 defmodule Upkeep.Source.Identity do
   @moduledoc false
 
+  use Boundary,
+    top_level?: true,
+    exports: [],
+    deps: [
+      Upkeep.Source.Context
+    ],
+    type: :strict
+
   alias Upkeep.Source.Context
 
   @type source_id :: {module(), map()} | {:identity, {module(), map()}, term()}
@@ -27,7 +35,9 @@ defmodule Upkeep.Source.Identity do
     end
   end
 
-  @spec retry_config(module()) :: Upkeep.Source.retry_config()
+  @type retry_config :: :default | false | keyword()
+
+  @spec retry_config(module()) :: retry_config()
   def retry_config(source) when is_atom(source) do
     if function_exported?(source, :__upkeep_retry__, 0) do
       source.__upkeep_retry__()

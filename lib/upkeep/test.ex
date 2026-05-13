@@ -12,7 +12,8 @@ defmodule Upkeep.Test do
       Upkeep.Coordinator,
       Upkeep.Ecto,
       Upkeep.Invalidation,
-      Upkeep.Source
+      Upkeep.Source,
+      Upkeep.Source.Coverage
     ]
 
   alias Ecto.Adapters.SQL.Sandbox

@@ -10,6 +10,10 @@ defmodule Upkeep.Coordinator do
       Upkeep.Invalidation,
       Upkeep.InvalidationSurface,
       Upkeep.Source,
+      Upkeep.Source.Identity,
+      Upkeep.Source.Instance,
+      Upkeep.Source.Loader,
+      Upkeep.Source.LoadResult,
       Upkeep.SingleFlight,
       Group
     ],

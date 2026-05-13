@@ -1,6 +1,21 @@
 defmodule Upkeep.Ecto.Source.QueryDeps do
   @moduledoc false
 
+  use Boundary,
+    top_level?: true,
+    exports: [
+      Bindings,
+      Expressions
+    ],
+    deps: [
+      Ecto.Query,
+      Ecto.SubQuery,
+      Upkeep.Change,
+      Upkeep.InvalidationSurface,
+      Upkeep.Source.Coverage
+    ],
+    type: :strict
+
   alias Upkeep.Change
   alias Upkeep.Ecto.Source.QueryDeps.{Bindings, Expressions}
   alias Upkeep.InvalidationSurface

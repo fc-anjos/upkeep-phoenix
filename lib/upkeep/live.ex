@@ -48,6 +48,7 @@ defmodule Upkeep.Live do
       Upkeep.Mutation,
       Upkeep.Runtime,
       Upkeep.Source,
+      Upkeep.Source.Loader,
       {Mix, :compile}
     ],
     type: :strict

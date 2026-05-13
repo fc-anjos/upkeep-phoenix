@@ -1,6 +1,15 @@
 defmodule Upkeep.Source.Dependencies do
   @moduledoc false
 
+  use Boundary,
+    top_level?: true,
+    exports: [],
+    deps: [
+      Upkeep.InvalidationSurface,
+      Upkeep.Source.Dependency
+    ],
+    type: :strict
+
   alias Upkeep.Source.Dependency
 
   @spec surface([term()]) :: Upkeep.InvalidationSurface.t()

@@ -1,6 +1,19 @@
 defmodule Upkeep.Ecto.Source.Reader do
   @moduledoc false
 
+  use Boundary,
+    top_level?: true,
+    exports: [],
+    deps: [
+      Ecto.Adapters.SQL,
+      Ecto.Query,
+      Upkeep.Ecto.Source.QueryDeps,
+      Upkeep.Ecto.Source.RepoCaptureGuard,
+      Upkeep.Invalidation,
+      Upkeep.Source.Loader
+    ],
+    type: :strict
+
   alias Ecto.Adapters.SQL
   alias Upkeep.Ecto.Source.{QueryDeps, RepoCaptureGuard}
   alias Upkeep.Source.Loader

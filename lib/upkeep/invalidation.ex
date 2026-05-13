@@ -10,6 +10,7 @@ defmodule Upkeep.Invalidation do
       Upkeep.Change,
       Upkeep.InvalidationSurface,
       Upkeep.Source,
+      Upkeep.Source.Dependencies,
       Upkeep.SingleFlight
     ],
     type: :strict

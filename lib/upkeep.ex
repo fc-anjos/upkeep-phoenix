@@ -17,7 +17,7 @@ defmodule Upkeep do
   Upkeep starts through its own OTP application when included as a normal
   runtime dependency. Do not add `{Upkeep, []}` to your Phoenix application's
   supervision tree unless you have intentionally disabled dependency
-  application startup and are managing Upkeep manually.
+  application startup and are managing `Upkeep.Supervision` manually.
 
   See the README for complete setup, source authoring, LiveView usage, and
   tests.
@@ -47,41 +47,14 @@ defmodule Upkeep do
       Observability
     ],
     deps: [
-      Group,
       Upkeep.Change,
-      Upkeep.Coordinator,
-      Upkeep.DAG,
       Upkeep.Ecto,
       Upkeep.Ecto.Source,
-      Upkeep.InvalidationSurface,
-      Upkeep.Invalidation,
+      Upkeep.Ecto.Source.Reader,
       Upkeep.Mutation,
-      Upkeep.Runtime,
-      Upkeep.SingleFlight,
       Upkeep.Source,
       {Mix, :compile}
     ]
-
-  use Supervisor
-
-  def start_link(opts \\ []) do
-    Supervisor.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
-  end
-
-  @impl true
-  def init(_opts) do
-    children = [
-      Upkeep.Observability,
-      {Group, name: Upkeep.Group, log: false},
-      {Upkeep.Invalidation, []},
-      {Upkeep.SingleFlight.Registry,
-       name: Upkeep.Runtime.source_load_coalescer_name(),
-       telemetry_prefix: [:upkeep, :source, :initial_load]},
-      {Upkeep.Coordinator.Graph, []}
-    ]
-
-    Supervisor.init(children, strategy: :one_for_one)
-  end
 
   @doc """
   Run a mutation inside the configured repo transaction and dispatch any

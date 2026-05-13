@@ -9,20 +9,11 @@ defmodule Upkeep.Source do
 
   use Boundary,
     top_level?: true,
-    exports: [
-      Coverage,
-      Context,
-      Dependencies,
-      Dependency,
-      Identity,
-      Instance,
-      LoadResult,
-      Loader
-    ],
+    exports: [],
     deps: [
-      Upkeep.Change,
       Upkeep.InvalidationSurface,
-      Logger
+      Upkeep.Source.Context,
+      Upkeep.Source.Loader
     ],
     type: :strict
 

@@ -1,18 +1,19 @@
 defmodule Upkeep.Application do
-  # See https://hexdocs.pm/elixir/Application.html
-  # for more information on OTP Applications
   @moduledoc false
+
+  use Boundary,
+    top_level?: true,
+    exports: [],
+    deps: [
+      Upkeep.Supervision
+    ],
+    type: :strict
 
   use Application
 
   @impl true
   def start(_type, _args) do
-    children = [
-      {Upkeep, []}
-    ]
-
-    opts = [strategy: :one_for_one, name: Upkeep.Supervisor]
-    Supervisor.start_link(children, opts)
+    Upkeep.Supervision.start_link(name: Upkeep.Supervisor)
   end
 
   @impl true

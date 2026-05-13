@@ -1,6 +1,16 @@
 defmodule Upkeep.Ecto.Source.RepoCaptureGuard do
   @moduledoc false
 
+  use Boundary,
+    top_level?: true,
+    exports: [],
+    deps: [
+      Logger,
+      Mix,
+      Upkeep.Source.Instance
+    ],
+    type: :strict
+
   alias Upkeep.Source.Instance
 
   @warn_dedup_key {__MODULE__, :repo_capture_warned}

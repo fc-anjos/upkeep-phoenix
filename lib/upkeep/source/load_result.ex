@@ -1,6 +1,17 @@
 defmodule Upkeep.Source.LoadResult do
   @moduledoc false
 
+  use Boundary,
+    top_level?: true,
+    exports: [],
+    deps: [
+      Upkeep.InvalidationSurface,
+      Upkeep.Source.Coverage,
+      Upkeep.Source.Dependencies,
+      Upkeep.Source.Instance
+    ],
+    type: :strict
+
   alias Upkeep.Source.{Dependencies, Instance}
 
   @enforce_keys [:instance, :value, :tracked_deps, :surface, :coverage]
