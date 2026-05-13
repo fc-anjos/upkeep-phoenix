@@ -55,6 +55,17 @@ defmodule Upkeep.SourceTest do
     end)
   end
 
+  defmodule SearchResults do
+    use Upkeep.Source
+
+    invalidated_by(:search_index_rebuilt, on: :project_id)
+
+    def load(s) do
+      [{_key, value}] = :ets.lookup(Upkeep.SourceTest, {:search_results, s.project_id})
+      value
+    end
+  end
+
   defmodule HiddenLoad do
     use Upkeep.Source
 
@@ -83,6 +94,7 @@ defmodule Upkeep.SourceTest do
     table = :ets.new(__MODULE__, [:set, :public, :named_table])
     :ets.insert(table, {{:board_columns, 123}, [:todo]})
     :ets.insert(table, {{:my_issues, 123, 9}, [:mine]})
+    :ets.insert(table, {{:search_results, 123}, [:indexed]})
 
     on_exit(fn ->
       if :ets.info(__MODULE__) != :undefined do
@@ -246,6 +258,27 @@ defmodule Upkeep.SourceTest do
     refute ColumnIssues.reacts_to?(change, %{column_id: 3})
   end
 
+  test "bare named invalidators cover and match map-payload semantic changes" do
+    params = %{project_id: 123}
+    coverage = Upkeep.Source.coverage(SearchResults, params)
+
+    assert coverage.unknown == []
+
+    assert coverage.explicit == [
+             {:upkeep_change, :search_index_rebuilt, :_, [project_id: 123]}
+           ]
+
+    assert SearchResults.reacts_to?(
+             Upkeep.Change.changed(:search_index_rebuilt, %{project_id: 123}),
+             params
+           )
+
+    refute SearchResults.reacts_to?(
+             Upkeep.Change.changed(:search_index_rebuilt, %{project_id: 456}),
+             params
+           )
+  end
+
   test "coverage reports unknown sources that do not declare or track reads" do
     coverage = Upkeep.Source.coverage(HiddenLoad, %{})
 
@@ -378,6 +411,22 @@ defmodule Upkeep.SourceTest do
     assert_board_columns_refresh(project_id, [:todo])
     assert_my_issues_refresh(project_id, user_id, [:mine])
     refute_source_refresh()
+  end
+
+  test "coordinator refreshes bare named invalidators from map-payload semantic changes", %{
+    table: table
+  } do
+    socket = LiveSocket.socket()
+
+    socket = Live.watch(socket, :results, SearchResults, project_id: 123)
+    assert socket.assigns.results == [:indexed]
+
+    :ets.insert(table, {{:search_results, 123}, [:reindexed]})
+
+    assert :ok = Upkeep.changed(:search_index_rebuilt, %{project_id: 123})
+    :ok = Upkeep.Test.await_idle()
+
+    assert DagMessages.receive_value({SearchResults, %{project_id: 123}}) == [:reindexed]
   end
 
   defp assert_board_columns_refresh(project_id, columns) do

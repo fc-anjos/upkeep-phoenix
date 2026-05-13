@@ -25,7 +25,7 @@ defmodule Upkeep.Change do
           name: atom(),
           action: atom() | nil,
           schema: module() | nil,
-          record: struct() | nil,
+          record: struct() | map() | nil,
           from: struct() | map() | nil,
           payload: term(),
           changed_fields: [field()] | nil,
@@ -162,6 +162,7 @@ defmodule Upkeep.Change do
   end
 
   defp record_payload(%_{} = payload), do: payload
+  defp record_payload(payload) when is_map(payload), do: payload
   defp record_payload(_payload), do: nil
 
   defp schema(%schema{}), do: schema
