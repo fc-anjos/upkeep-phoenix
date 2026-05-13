@@ -31,6 +31,8 @@ defmodule Upkeep.Source.Loader do
 
   @spec load_result(Instance.t()) :: LoadResult.t()
   def load_result(%Instance{} = instance) do
+    Instance.verify!(instance, boundary: :load)
+
     {value, deps} = execute(instance)
     coverage = coverage(instance, deps)
     result = LoadResult.new(instance, value, deps, coverage)

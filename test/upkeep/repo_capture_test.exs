@@ -3,6 +3,7 @@ defmodule Upkeep.RepoCaptureTest do
 
   alias Ecto.Changeset
   alias Upkeep.Live
+  alias Upkeep.Source.Loader
   alias Upkeep.TestSupport.{Config, DagMessages, LiveSocket, TelemetryMessages}
   import ExUnit.CaptureLog
   import Upkeep.TestSupport, only: [attach_telemetry: 1]
@@ -163,6 +164,32 @@ defmodule Upkeep.RepoCaptureTest do
                  event.metadata.policy == :warn
              end)
     end)
+  end
+
+  test "direct source loads enforce repo capture policy" do
+    Upkeep.clear_events()
+
+    Config.with_upkeep(:repo_capture_misconfiguration, :raise, fn ->
+      error =
+        assert_raise ArgumentError, fn ->
+          Loader.load_result(PlainRepoExplicitLoad, %{project_id: 1})
+        end
+
+      assert error.message =~ "does not use `Upkeep.Ecto.Repo`"
+      assert error.message =~ "PlainRepoExplicitLoad"
+    end)
+
+    _ = :sys.get_state(Upkeep.Observability)
+
+    assert Enum.any?(Upkeep.recent_events(), fn event ->
+             event.event == [:upkeep, :repo, :capture_check] and
+               event.metadata.repo == PlainRepo and
+               event.metadata.source == PlainRepoExplicitLoad and
+               event.metadata.status == :error and
+               event.metadata.reason == :repo_capture_disabled and
+               event.metadata.boundary == :load and
+               event.metadata.policy == :raise
+           end)
   end
 
   test "repo insert capture refreshes Ecto query sources after mutate commits" do
