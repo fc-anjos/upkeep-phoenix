@@ -7,6 +7,7 @@ defmodule Upkeep.Coordinator.Topology do
 
   @nodes_table :upkeep_topology_nodes
   @index_table :upkeep_topology_index
+  @generations_table :upkeep_topology_generations
 
   ## ETS lifecycle
 
@@ -28,11 +29,21 @@ defmodule Upkeep.Coordinator.Topology do
         read_concurrency: true,
         write_concurrency: true
       ])
+
+    :ok =
+      ensure_named_table!(@generations_table, [
+        :set,
+        :public,
+        :named_table,
+        read_concurrency: true,
+        write_concurrency: true
+      ])
   end
 
   def reset do
     :ets.delete_all_objects(@nodes_table)
     :ets.delete_all_objects(@index_table)
+    :ets.delete_all_objects(@generations_table)
     :ok
   end
 
@@ -40,6 +51,7 @@ defmodule Upkeep.Coordinator.Topology do
 
   def register_source(node_id, shard_idx, %InvalidationSurface{} = surface) do
     :ets.insert(@nodes_table, {node_id, shard_idx, %{kind: :source, surface: surface, deps: []}})
+    ensure_generation(node_id)
     SurfaceIndex.insert(@index_table, node_id, surface)
     :ok
   end
@@ -69,6 +81,7 @@ defmodule Upkeep.Coordinator.Topology do
       {:ok, %{kind: :source}} ->
         SurfaceIndex.delete(@index_table, node_id)
         :ets.delete(@nodes_table, node_id)
+        :ets.delete(@generations_table, node_id)
         :ok
 
       {:ok, %{kind: :derived}} ->
@@ -102,11 +115,16 @@ defmodule Upkeep.Coordinator.Topology do
     match?({:ok, _}, lookup(node_id))
   end
 
+  def generation(node_id) do
+    :ets.update_counter(@generations_table, node_id, {2, 0}, {node_id, 0})
+  end
+
   def affected_source_node_ids(event) when is_struct(event) do
     {candidate_keys, candidates} = SurfaceIndex.candidates(@index_table, event)
     candidate_node_ids = Enum.map(candidates, fn {node_id, _payload} -> node_id end)
 
     matched_node_ids = Enum.filter(candidate_node_ids, &source_node_matches?(&1, event))
+    bump_generations(matched_node_ids)
 
     emit_invalidation(event, candidate_keys, candidate_node_ids, matched_node_ids)
 
@@ -198,6 +216,17 @@ defmodule Upkeep.Coordinator.Topology do
       _ ->
         :ok
     end
+  end
+
+  defp ensure_generation(node_id) do
+    :ets.insert_new(@generations_table, {node_id, 0})
+    :ok
+  end
+
+  defp bump_generations(node_ids) do
+    Enum.each(node_ids, fn node_id ->
+      :ets.update_counter(@generations_table, node_id, {2, 1}, {node_id, 0})
+    end)
   end
 
   defp source_node_matches?(node_id, event) do

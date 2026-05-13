@@ -5,6 +5,7 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
   alias Upkeep.Coordinator.LoadedSource
   alias Upkeep.Coordinator.LoadFailure
   alias Upkeep.Coordinator.Shards
+  alias Upkeep.Coordinator.Topology
 
   alias Upkeep.Coordinator.Graph.Shard.{Dispatch, Loaders, Retries}
   alias Upkeep.DAG.Store
@@ -67,9 +68,15 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
         node_ids,
         fn node_id ->
           node = Store.fetch_metadata!(state.store, node_id)
-          metadata = LoadedSource.load_metadata(state, node_id, node, :refresh)
+          generation = Topology.generation(node_id)
+
+          metadata =
+            state
+            |> LoadedSource.load_metadata(node_id, node, :refresh)
+            |> Map.put(:source_generation, generation)
 
           Loaders.run_with_deps(node_id, node, metadata)
+          |> LoadedSource.with_generation(generation)
         end,
         ordered: true,
         timeout: 30_000,
@@ -82,9 +89,14 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
       |> Enum.reduce({[], state}, fn
         {_node_id, {:ok, %LoadedSource{node_id: node_id} = loaded}}, {results, state} ->
           state = Retries.clear(state, node_id)
-          state = LoadedSource.apply(state, loaded)
 
-          {[LoadedSource.pair(loaded) | results], state}
+          case LoadedSource.apply_if_current(state, loaded) do
+            {:applied, state} ->
+              {[LoadedSource.pair(loaded) | results], state}
+
+            {:stale, state} ->
+              {results, requeue_stale(state, node_id)}
+          end
 
         {node_id, {:exit, reason}}, {results, state} ->
           node = Store.fetch_metadata!(state.store, node_id)
@@ -96,5 +108,16 @@ defmodule Upkeep.Coordinator.Graph.Shard.Flush do
       end)
 
     {Enum.reverse(results), state}
+  end
+
+  defp requeue_stale(state, node_id) do
+    buffer = DirtyBuffer.put(state.buffer, [node_id])
+
+    if buffer.scheduled? do
+      %{state | buffer: buffer}
+    else
+      Process.send_after(self(), :flush, @flush_interval_ms)
+      %{state | buffer: %{buffer | scheduled?: true}}
+    end
   end
 end

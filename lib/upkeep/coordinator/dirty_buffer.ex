@@ -13,12 +13,16 @@ defmodule Upkeep.Coordinator.DirtyBuffer do
 
   def members(%__MODULE__{dirty: dirty}), do: MapSet.to_list(dirty)
 
+  def put(%__MODULE__{} = buffer, items) do
+    dirty = Enum.reduce(items, buffer.dirty, &MapSet.put(&2, &1))
+    %{buffer | dirty: dirty}
+  end
+
   def enqueue(%__MODULE__{} = buffer, items) do
-    new_dirty = Enum.reduce(items, buffer.dirty, &MapSet.put(&2, &1))
-    buffer = %{buffer | dirty: new_dirty}
+    buffer = put(buffer, items)
 
     cond do
-      MapSet.size(new_dirty) >= buffer.threshold -> {:flush_now, buffer}
+      MapSet.size(buffer.dirty) >= buffer.threshold -> {:flush_now, buffer}
       buffer.scheduled? -> {:wait, buffer}
       true -> {:schedule, %{buffer | scheduled?: true}}
     end

@@ -238,6 +238,53 @@ defmodule Upkeep.Coordinator.GraphTest do
       Graph.unregister(node_id)
     end
 
+    test "refresh results that race a later invalidation are reloaded before dispatch" do
+      counter = :counters.new(1, [:atomics])
+      parent = self()
+      event = %Ev{id: 205, tenant_id: 1}
+      surface = event_surface(event)
+      node_id = {:generation_guarded_refresh, System.unique_integer()}
+
+      load_fn = fn ->
+        :counters.add(counter, 1, 1)
+
+        case :counters.get(counter, 1) do
+          1 ->
+            send(parent, {:refresh_started, self()})
+
+            receive do
+              :finish_refresh -> {:stale_value, surface}
+            after
+              5_000 -> raise "timed out waiting to finish refresh"
+            end
+
+          2 ->
+            {:fresh_value, surface}
+        end
+      end
+
+      :ok = Graph.register_loader(node_id, surface, load_fn)
+
+      notify(event)
+      drain = Task.async(fn -> Graph.drain() end)
+
+      assert_receive {:refresh_started, loader_pid}, 5_000
+
+      notify(event)
+      :ok = Notifier.drain()
+
+      send(loader_pid, :finish_refresh)
+      assert Task.await(drain, 5_000) == :ok
+
+      :ok = Graph.drain()
+
+      assert DagMessages.receive_value(node_id) == :fresh_value
+      DagMessages.refute_any()
+      assert :counters.get(counter, 1) == 2
+
+      Graph.unregister(node_id)
+    end
+
     test "load_fn returning new keys reconciles the index" do
       surface_a = event_surface(%Ev{id: 1, tenant_id: 1})
       surface_b = event_surface(%Ev{id: 1, tenant_id: 2})

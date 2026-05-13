@@ -9,6 +9,7 @@ defmodule Upkeep.Coordinator.LoadedSource do
   defstruct [
     :node_id,
     :node,
+    :generation,
     :source_result,
     :value,
     :surface,
@@ -38,6 +39,18 @@ defmodule Upkeep.Coordinator.LoadedSource do
       tracked_deps: [],
       surface: surface
     }
+  end
+
+  def with_generation(%__MODULE__{} = loaded, generation) when is_integer(generation) do
+    %{loaded | generation: generation}
+  end
+
+  def apply_if_current(state, %__MODULE__{} = loaded) do
+    if current_generation?(loaded) do
+      {:applied, __MODULE__.apply(state, loaded)}
+    else
+      {:stale, state}
+    end
   end
 
   def apply(state, %__MODULE__{node_id: node_id, node: %Node{} = node} = loaded) do
@@ -82,5 +95,11 @@ defmodule Upkeep.Coordinator.LoadedSource do
 
   defp subscriber_count(%Node{encoded_key: encoded_key}) do
     Subscriptions.member_count(encoded_key)
+  end
+
+  defp current_generation?(%__MODULE__{generation: nil}), do: true
+
+  defp current_generation?(%__MODULE__{node_id: node_id, generation: generation}) do
+    Topology.generation(node_id) == generation
   end
 end
