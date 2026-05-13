@@ -130,7 +130,7 @@ defmodule Upkeep do
   This is only valid from a source `load/1`, `load/2`, `query/1`, or `query/2`
   callback. For ad-hoc queries outside a source, call your repo directly.
   """
-  defdelegate read(query), to: Upkeep.Ecto.Source
+  defdelegate read(query), to: Upkeep.Ecto.Source.Reader
 
   @doc """
   Return Phoenix's `:current_scope` value inside an identity-aware source

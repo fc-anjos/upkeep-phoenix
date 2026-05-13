@@ -1,13 +1,15 @@
 defmodule Upkeep.Ecto.Mutation do
   @moduledoc false
 
+  alias Upkeep.Mutation
+
   def mutate(repo_or_fun_or_multi, fun_or_multi \\ nil)
 
   def mutate(fun, nil) when is_function(fun, 0), do: mutate(default_repo!(), fun)
   def mutate(%Ecto.Multi{} = multi, nil), do: mutate(default_repo!(), multi)
 
   def mutate(repo, fun) when is_atom(repo) and is_function(fun, 0) do
-    if Upkeep.Mutation.journal_active?() do
+    if Mutation.journal_active?() do
       {:ok, fun.()}
     else
       run_outer_mutation(repo, fun)
@@ -15,7 +17,7 @@ defmodule Upkeep.Ecto.Mutation do
   end
 
   def mutate(repo, %Ecto.Multi{} = multi) when is_atom(repo) do
-    if Upkeep.Mutation.journal_active?() do
+    if Mutation.journal_active?() do
       run_nested_multi(repo, multi)
     else
       run_outer_multi(repo, multi)
@@ -23,7 +25,7 @@ defmodule Upkeep.Ecto.Mutation do
   end
 
   defp run_outer_mutation(repo, fun) do
-    Upkeep.Mutation.with_isolated_journal(fn ->
+    Mutation.with_isolated_journal(fn ->
       repo
       |> transaction_with_journal(fun)
       |> dispatch_transaction_journal()
@@ -31,21 +33,21 @@ defmodule Upkeep.Ecto.Mutation do
   end
 
   defp transaction_with_journal(repo, fun) do
-    repo.transaction(fn -> {fun.(), Upkeep.Mutation.journal()} end)
+    repo.transaction(fn -> {fun.(), Mutation.journal()} end)
   end
 
   defp dispatch_transaction_journal({:ok, {result, events}}) do
-    Upkeep.Mutation.dispatch_journal(events)
+    Mutation.dispatch_journal(events)
     {:ok, result}
   end
 
   defp dispatch_transaction_journal({:error, reason}), do: {:error, reason}
 
   defp run_outer_multi(repo, multi) do
-    Upkeep.Mutation.with_isolated_journal(fn ->
+    Mutation.with_isolated_journal(fn ->
       case repo.transaction(multi) do
         {:ok, changes} ->
-          Upkeep.Mutation.dispatch_journal(Upkeep.Mutation.journal())
+          Mutation.dispatch_journal(Mutation.journal())
           {:ok, changes}
 
         {:error, _operation, _value, _changes} = error ->
@@ -55,14 +57,14 @@ defmodule Upkeep.Ecto.Mutation do
   end
 
   defp run_nested_multi(repo, multi) do
-    previous = Upkeep.Mutation.journal()
+    previous = Mutation.journal()
 
     case repo.transaction(multi) do
       {:ok, _changes} = ok ->
         ok
 
       {:error, _operation, _value, _changes} = error ->
-        Upkeep.Mutation.put_journal(previous)
+        Mutation.put_journal(previous)
         error
     end
   end

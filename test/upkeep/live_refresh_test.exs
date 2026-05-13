@@ -3,6 +3,7 @@ defmodule Upkeep.LiveRefreshTest do
 
   alias Upkeep.Live
   alias Upkeep.Runtime.Ids
+  alias Upkeep.Source.Instance
 
   import Upkeep.TestSupport, only: [attach_telemetry: 1]
 
@@ -1792,7 +1793,7 @@ defmodule Upkeep.LiveRefreshTest do
   end
 
   defp member_count(source, params, component \\ :issue_detail) do
-    instance = Upkeep.Source.instance(source, params)
+    instance = Instance.build(source, params)
 
     source_ids = [
       Ids.scoped_source_id(instance, nil),

@@ -12,6 +12,7 @@ defmodule Upkeep.Source do
     exports: [
       Coverage,
       Context,
+      Dependencies,
       Dependency,
       Identity,
       Instance,
@@ -25,7 +26,7 @@ defmodule Upkeep.Source do
     ],
     type: :strict
 
-  alias Upkeep.Source.{Context, Dependency, Instance, Loader, Spec}
+  alias Upkeep.Source.{Context, Loader, Spec}
 
   @type params :: map()
   @type source_module :: module()
@@ -88,9 +89,6 @@ defmodule Upkeep.Source do
     Spec.reacts_to_definition(schema, action, fun, __CALLER__)
   end
 
-  @doc false
-  def read(value), do: Loader.read(value)
-
   @doc """
   Return the Phoenix `:current_scope` value available to an identity-aware
   source callback.
@@ -101,23 +99,4 @@ defmodule Upkeep.Source do
   Return Upkeep's inferred invalidation coverage for a source and params.
   """
   def coverage(source, params), do: Loader.coverage(source, params)
-
-  @doc false
-  def coverage(source, params, deps), do: Loader.coverage(source, params, deps)
-
-  @doc false
-  def instance(source, params, opts \\ []), do: Instance.build(source, params, opts)
-
-  @doc false
-  def dependency_label(deps), do: Dependency.label(deps)
-
-  @doc false
-  def dependency_surface([]), do: Upkeep.InvalidationSurface.empty()
-
-  @doc false
-  def dependency_surface(deps) when is_list(deps) do
-    deps
-    |> Enum.map(&Dependency.surface/1)
-    |> Upkeep.InvalidationSurface.merge_all()
-  end
 end

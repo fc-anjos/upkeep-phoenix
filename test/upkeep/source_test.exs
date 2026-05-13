@@ -4,6 +4,7 @@ defmodule Upkeep.SourceTest do
   alias Upkeep.InvalidationSurface
   alias Upkeep.Live
   alias Upkeep.Source.Coverage
+  alias Upkeep.Source.Instance
   alias Upkeep.Source.Loader
   alias Upkeep.TestSupport.{DagMessages, LiveSocket}
 
@@ -119,7 +120,7 @@ defmodule Upkeep.SourceTest do
   end
 
   test "source instance captures identity and static source facts" do
-    instance = Upkeep.Source.instance(BoardColumns, project_id: 123)
+    instance = Instance.build(BoardColumns, project_id: 123)
 
     assert instance.source == BoardColumns
     assert instance.params == %{project_id: 123}
@@ -138,7 +139,7 @@ defmodule Upkeep.SourceTest do
   test "source load result captures value, observed deps, surface, and coverage" do
     result = Loader.load_result(BoardColumns, %{project_id: 123})
 
-    assert result.instance == Upkeep.Source.instance(BoardColumns, %{project_id: 123})
+    assert result.instance == Instance.build(BoardColumns, %{project_id: 123})
     assert result.value == [:todo]
     assert result.tracked_deps == []
     assert result.surface == result.instance.surface
@@ -360,15 +361,15 @@ defmodule Upkeep.SourceTest do
   end
 
   test "sources expose retry configuration" do
-    assert Upkeep.Source.instance(NoRetryLoad, %{}).retry == false
+    assert Instance.build(NoRetryLoad, %{}).retry == false
 
-    assert Upkeep.Source.instance(CustomRetryLoad, %{}).retry == [
+    assert Instance.build(CustomRetryLoad, %{}).retry == [
              max_attempts: 1,
              base_delay_ms: 0,
              max_delay_ms: 0
            ]
 
-    assert Upkeep.Source.instance(BoardColumns, %{project_id: 123}).retry == :default
+    assert Instance.build(BoardColumns, %{project_id: 123}).retry == :default
   end
 
   test "watch joins source interest and notify dispatches through the coordinator", %{

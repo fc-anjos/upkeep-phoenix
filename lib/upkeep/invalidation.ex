@@ -6,6 +6,7 @@ defmodule Upkeep.Invalidation do
     exports: [],
     deps: [
       Group,
+      Logger,
       Upkeep.Change,
       Upkeep.InvalidationSurface,
       Upkeep.Source,
@@ -15,7 +16,7 @@ defmodule Upkeep.Invalidation do
 
   use Supervisor
 
-  alias Upkeep.Invalidation.{Bus, ReadCache}
+  alias Upkeep.Invalidation.{BroadUpdateDiagnostics, Bus, ReadCache}
 
   def start_link(opts \\ []) do
     Supervisor.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
@@ -63,7 +64,7 @@ defmodule Upkeep.Invalidation do
   def release_read_holder(holder), do: ReadCache.release(holder)
 
   defp dispatch_one(event) do
-    Upkeep.Change.diagnose_broad_update(event)
+    BroadUpdateDiagnostics.emit(event)
     ReadCache.invalidate(event)
     Bus.dispatch(event)
   end

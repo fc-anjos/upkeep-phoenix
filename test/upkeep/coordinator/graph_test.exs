@@ -8,6 +8,7 @@ defmodule Upkeep.Coordinator.GraphTest do
   alias Upkeep.Coordinator.Graph.Notifier
   alias Upkeep.Invalidation.Bus
   alias Upkeep.InvalidationSurface
+  alias Upkeep.Source.Instance
   alias Upkeep.TestSupport.{DagMessages, TelemetryMessages}
 
   defmodule Ev do
@@ -528,7 +529,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       table = :ets.new(:no_retry_source, [:set, :public])
       event = %Ev{id: 13, tenant_id: 1}
       params = %{id: event.id, tenant_id: event.tenant_id, table: table}
-      instance = Upkeep.Source.instance(NoRetrySource, params)
+      instance = Instance.build(NoRetrySource, params)
       node_id = instance.id
 
       assert {:ok, result} =
@@ -571,7 +572,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       table = :ets.new(:one_retry_source, [:set, :public])
       event = %Ev{id: 14, tenant_id: 1}
       params = %{id: event.id, tenant_id: event.tenant_id, table: table}
-      instance = Upkeep.Source.instance(OneRetrySource, params)
+      instance = Instance.build(OneRetrySource, params)
       node_id = instance.id
 
       assert {:ok, result} =

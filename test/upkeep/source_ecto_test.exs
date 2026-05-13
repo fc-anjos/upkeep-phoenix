@@ -4,6 +4,7 @@ defmodule Upkeep.SourceEctoTest do
   alias Upkeep.InvalidationSurface
   alias Upkeep.Live
   alias Upkeep.Source.Coverage
+  alias Upkeep.Source.Dependencies
   alias Upkeep.Source.Loader
   alias Upkeep.TestSupport.{DagMessages, LiveSocket}
 
@@ -522,12 +523,12 @@ defmodule Upkeep.SourceEctoTest do
     assert {:upkeep_change, :updated, Issue, [project_id: 1, status: "open"]} in result_keys
 
     assert InvalidationSurface.matches?(
-             Upkeep.Source.dependency_surface(result.tracked_deps),
+             Dependencies.surface(result.tracked_deps),
              issue(project_id: 1, column_id: 1, status: "open") |> Upkeep.Change.inserted()
            )
 
     refute InvalidationSurface.matches?(
-             Upkeep.Source.dependency_surface(result.tracked_deps),
+             Dependencies.surface(result.tracked_deps),
              issue(project_id: 1, column_id: 1, status: "archived") |> Upkeep.Change.inserted()
            )
   end

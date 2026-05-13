@@ -156,7 +156,9 @@ defmodule Upkeep.Live do
     with_current_scope(socket, &Upkeep.Runtime.refresh_local_matching(&1, event))
   end
 
-  @doc false
+  @doc """
+  Return the current Upkeep graph state for diagnostics.
+  """
   def graph_snapshot(socket) do
     Upkeep.Runtime.graph_snapshot(socket)
   end

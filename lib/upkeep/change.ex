@@ -12,10 +12,7 @@ defmodule Upkeep.Change do
   """
 
   use Boundary,
-    top_level?: true,
-    deps: [
-      Logger
-    ]
+    top_level?: true
 
   defstruct [:name, :action, :schema, :record, :from, :payload, :changed_fields, meta: %{}]
 
@@ -118,19 +115,6 @@ defmodule Upkeep.Change do
 
   def changed_fields(%__MODULE__{}), do: MapSet.new()
 
-  @doc false
-  @spec diagnose_broad_update(term()) :: :ok
-  def diagnose_broad_update(%__MODULE__{} = change) do
-    if broad_update?(change) do
-      emit_broad_update(change)
-      maybe_log_broad_update(change)
-    end
-
-    :ok
-  end
-
-  def diagnose_broad_update(_event), do: :ok
-
   @spec old(t(), field()) :: term()
   def old(%__MODULE__{from: from}, field) when is_atom(field), do: field_value(from, field)
 
@@ -195,57 +179,4 @@ defmodule Upkeep.Change do
 
   defp field_value(map, field) when is_map(map), do: Map.get(map, field)
   defp field_value(_term, _field), do: nil
-
-  defp emit_broad_update(%__MODULE__{} = change) do
-    :telemetry.execute(
-      [:upkeep, :change, :broad_update],
-      %{count: 1},
-      %{
-        schema: change.schema,
-        name: change.name,
-        action: change.action,
-        reason: :missing_old_state,
-        policy: broad_update_policy()
-      }
-    )
-  end
-
-  defp maybe_log_broad_update(%__MODULE__{} = change) do
-    case broad_update_policy() do
-      :warn ->
-        warn_broad_update_once(change)
-
-      :ignore ->
-        :ok
-    end
-  end
-
-  defp warn_broad_update_once(%__MODULE__{} = change) do
-    key = {__MODULE__, :broad_update_warned}
-    shape = {change.schema, change.name}
-    seen = :persistent_term.get(key, MapSet.new())
-
-    unless MapSet.member?(seen, shape) do
-      :persistent_term.put(key, MapSet.put(seen, shape))
-
-      require Logger
-
-      Logger.warning(
-        "Upkeep.updated/2 was notified for #{inspect(change.schema)} without `from: old_record`. " <>
-          "Upkeep will refresh all matching `:updated` sources for correctness. " <>
-          "Pass `from: old_record` or use `Upkeep.Ecto.Repo` capture for field-aware invalidation."
-      )
-    end
-  end
-
-  defp broad_update_policy do
-    case Application.get_env(:upkeep, :update_without_old_state, :warn) do
-      policy when policy in [:warn, :ignore] ->
-        policy
-
-      other ->
-        raise ArgumentError,
-              "expected :upkeep, :update_without_old_state to be :warn or :ignore, got: #{inspect(other)}"
-    end
-  end
 end

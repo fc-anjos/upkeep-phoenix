@@ -12,6 +12,8 @@ defmodule Upkeep.InvalidationSurface do
     ],
     type: :strict
 
+  alias Upkeep.Change
+
   defstruct keys: [],
             index_keys: [],
             matcher: nil
@@ -62,7 +64,7 @@ defmodule Upkeep.InvalidationSurface do
   def index_keys(%__MODULE__{index_keys: keys}), do: keys
 
   @spec candidate_keys(struct()) :: [key()]
-  def candidate_keys(%Upkeep.Change{} = change) do
+  def candidate_keys(%Change{} = change) do
     [
       notification_key(%{name: change.name, schema: change.schema}),
       notification_key(%{name: change.name, schema: :_})
@@ -74,24 +76,22 @@ defmodule Upkeep.InvalidationSurface do
     [notification_key(%{event: event.__struct__})]
   end
 
-  @doc false
   @spec index_query(struct()) ::
           {:broad, [key()]}
           | {:partial, [key()], MapSet.t(atom()), [map()]}
           | {:exact, [key()], [map()]}
-  def index_query(%Upkeep.Change{} = change) do
+  def index_query(%Change{} = change) do
     notifications = candidate_keys(change)
 
     cond do
-      Upkeep.Change.broad_update?(change) ->
+      Change.broad_update?(change) ->
         {:broad, notifications}
 
-      Upkeep.Change.partial_update?(change) ->
-        {:partial, notifications, Upkeep.Change.changed_fields(change),
-         Upkeep.Change.field_sets(change)}
+      Change.partial_update?(change) ->
+        {:partial, notifications, Change.changed_fields(change), Change.field_sets(change)}
 
       true ->
-        {:exact, notifications, Upkeep.Change.field_sets(change)}
+        {:exact, notifications, Change.field_sets(change)}
     end
   end
 
@@ -99,9 +99,8 @@ defmodule Upkeep.InvalidationSurface do
     {:exact, candidate_keys(event), [Map.from_struct(event)]}
   end
 
-  @doc false
   @spec event_metadata(struct()) :: map()
-  def event_metadata(%Upkeep.Change{} = change) do
+  def event_metadata(%Change{} = change) do
     %{
       kind: :change,
       name: change.name,
@@ -120,7 +119,7 @@ defmodule Upkeep.InvalidationSurface do
   end
 
   @spec matches_notification?(struct(), notification() | event_notification()) :: boolean()
-  def matches_notification?(%Upkeep.Change{} = change, %{name: name, schema: schema}) do
+  def matches_notification?(%Change{} = change, %{name: name, schema: schema}) do
     change.name == name and schema_matches?(change.schema, schema)
   end
 
@@ -131,21 +130,21 @@ defmodule Upkeep.InvalidationSurface do
   def matches_notification?(_event, _notification), do: false
 
   @spec equal_fields?(struct(), map(), [atom()], [atom()]) :: boolean()
-  def equal_fields?(%Upkeep.Change{} = change, params, event_fields, source_fields) do
+  def equal_fields?(%Change{} = change, params, event_fields, source_fields) do
     cond do
-      Upkeep.Change.partial_update?(change) ->
+      Change.partial_update?(change) ->
         change
-        |> Upkeep.Change.field_sets()
+        |> Change.field_sets()
         |> Enum.any?(fn fields ->
           partial_equal_field_set?(change, fields, params, event_fields, source_fields)
         end)
 
-      Upkeep.Change.broad_update?(change) ->
+      Change.broad_update?(change) ->
         true
 
       true ->
         change
-        |> Upkeep.Change.field_sets()
+        |> Change.field_sets()
         |> Enum.any?(fn fields ->
           equal_field_set?(fields, params, event_fields, source_fields)
         end)

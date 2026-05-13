@@ -1,7 +1,7 @@
 defmodule Upkeep.Source.LoadResult do
   @moduledoc false
 
-  alias Upkeep.Source.Instance
+  alias Upkeep.Source.{Dependencies, Instance}
 
   @enforce_keys [:instance, :value, :tracked_deps, :surface, :coverage]
   defstruct instance: nil,
@@ -37,7 +37,7 @@ defmodule Upkeep.Source.LoadResult do
   defp surface(%Instance{} = instance, tracked_deps) do
     Upkeep.InvalidationSurface.merge(
       instance.surface,
-      Upkeep.Source.dependency_surface(tracked_deps)
+      Dependencies.surface(tracked_deps)
     )
   end
 end

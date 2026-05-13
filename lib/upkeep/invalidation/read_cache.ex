@@ -3,6 +3,7 @@ defmodule Upkeep.Invalidation.ReadCache do
 
   alias Upkeep.InvalidationSurface.Index.ETS, as: SurfaceIndex
   alias Upkeep.SingleFlight.Registry
+  alias Upkeep.Source.Dependencies
 
   @values :upkeep_read_node_values
   @index :upkeep_read_node_index
@@ -44,7 +45,7 @@ defmodule Upkeep.Invalidation.ReadCache do
   end
 
   defp load_fresh(node_id, deps, load) do
-    surface = Upkeep.Source.dependency_surface(List.wrap(deps))
+    surface = Dependencies.surface(List.wrap(deps))
     gen_before = read_gen(node_id)
 
     SurfaceIndex.insert(@index, node_id, surface, surface)
