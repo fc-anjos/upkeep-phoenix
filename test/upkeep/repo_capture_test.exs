@@ -192,6 +192,20 @@ defmodule Upkeep.RepoCaptureTest do
            end)
   end
 
+  test "direct source loads enforce repo capture policy for unloaded source modules" do
+    source = unloaded_plain_repo_source!("ColdPlainRepoIssues")
+
+    Config.with_upkeep(:repo_capture_misconfiguration, :raise, fn ->
+      error =
+        assert_raise ArgumentError, fn ->
+          Loader.load_result(source, %{project_id: 1})
+        end
+
+      assert error.message =~ "does not use `Upkeep.Ecto.Repo`"
+      assert error.message =~ inspect(source)
+    end)
+  end
+
   test "repo insert capture refreshes Ecto query sources after mutate commits" do
     socket = watch_project(user_id: 9)
 
@@ -718,6 +732,52 @@ defmodule Upkeep.RepoCaptureTest do
     after
       0 -> Enum.reverse(queries)
     end
+  end
+
+  defp unloaded_plain_repo_source!(name) do
+    module = Module.concat(__MODULE__, "#{name}#{System.unique_integer([:positive])}")
+
+    dir =
+      Path.join(
+        System.tmp_dir!(),
+        "upkeep_repo_capture_test_#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(dir)
+
+    source = """
+    defmodule #{inspect(module)} do
+      use Upkeep.Ecto.Source, repo: Upkeep.RepoCaptureTest.PlainRepo
+
+      import Ecto.Query
+
+      def query(%{project_id: project_id}) do
+        from i in Upkeep.RepoCaptureTest.Issue,
+          where: i.project_id == ^project_id
+      end
+    end
+    """
+
+    [{^module, beam}] = Code.compile_string(source)
+    beam_path = Path.join(dir, "#{module}.beam")
+    File.write!(beam_path, beam)
+
+    :code.purge(module)
+    :code.delete(module)
+    :code.purge(module)
+    true = :code.add_patha(String.to_charlist(dir))
+
+    on_exit(fn ->
+      :code.purge(module)
+      :code.delete(module)
+      :code.purge(module)
+      :code.del_path(String.to_charlist(dir))
+      File.rm_rf(dir)
+    end)
+
+    assert :code.is_loaded(module) == false
+
+    module
   end
 
   defp update_returning_query?(query) do

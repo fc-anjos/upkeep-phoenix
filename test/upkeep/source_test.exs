@@ -279,6 +279,40 @@ defmodule Upkeep.SourceTest do
            )
   end
 
+  test "unloaded source modules are loaded before surface introspection" do
+    source =
+      unloaded_source_module!("ColdSearchResults", """
+      use Upkeep.Source
+
+      invalidated_by(:cold_search_rebuilt, on: :project_id)
+
+      def load(%{project_id: project_id}) do
+        {:cold, project_id}
+      end
+      """)
+
+    params = %{project_id: 123}
+    assert :code.is_loaded(source) == false
+
+    result = Loader.load_result(source, params)
+
+    assert result.value == {:cold, 123}
+    assert result.coverage.unknown == []
+
+    assert result.coverage.explicit == [
+             {:upkeep_change, :cold_search_rebuilt, :_, [project_id: 123]}
+           ]
+
+    assert InvalidationSurface.keys(result.surface) == [
+             {:upkeep_change, :cold_search_rebuilt, :_, [project_id: 123]}
+           ]
+
+    assert source.reacts_to?(
+             Upkeep.Change.changed(:cold_search_rebuilt, %{project_id: 123}),
+             params
+           )
+  end
+
   test "coverage reports unknown sources that do not declare or track reads" do
     coverage = Upkeep.Source.coverage(HiddenLoad, %{})
 
@@ -447,6 +481,31 @@ defmodule Upkeep.SourceTest do
   defp surface_keys(source, params) do
     source.__upkeep_surface__(params)
     |> InvalidationSurface.keys()
+  end
+
+  defp unloaded_source_module!(name, body) do
+    module = Module.concat(__MODULE__, "#{name}#{System.unique_integer([:positive])}")
+    dir = Path.join(System.tmp_dir!(), "upkeep_source_test_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+
+    [{^module, beam}] = Code.compile_string("defmodule #{inspect(module)} do\n#{body}\nend")
+    beam_path = Path.join(dir, "#{module}.beam")
+    File.write!(beam_path, beam)
+
+    :code.purge(module)
+    :code.delete(module)
+    :code.purge(module)
+    true = :code.add_patha(String.to_charlist(dir))
+
+    on_exit(fn ->
+      :code.purge(module)
+      :code.delete(module)
+      :code.purge(module)
+      :code.del_path(String.to_charlist(dir))
+      File.rm_rf(dir)
+    end)
+
+    module
   end
 
   defp inserted_issue(attrs) do

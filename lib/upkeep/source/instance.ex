@@ -48,6 +48,8 @@ defmodule Upkeep.Source.Instance do
 
   @spec build(module(), map() | keyword(), keyword()) :: t()
   def build(source, params, opts \\ []) when is_atom(source) do
+    ensure_source_loaded!(source)
+
     params = normalize_params(params)
     identity_aware? = identity_aware?(source)
     context = context(identity_aware?, opts)
@@ -79,6 +81,17 @@ defmodule Upkeep.Source.Instance do
 
   defp normalize_params(params) when is_list(params), do: Map.new(params)
   defp normalize_params(params) when is_map(params), do: params
+
+  defp ensure_source_loaded!(source) do
+    case Code.ensure_loaded(source) do
+      {:module, ^source} ->
+        :ok
+
+      {:error, reason} ->
+        raise ArgumentError,
+              "could not load Upkeep source #{inspect(source)}: #{inspect(reason)}"
+    end
+  end
 
   defp context(true, opts), do: Context.new(Keyword.get(opts, :current_scope))
   defp context(false, _opts), do: nil
