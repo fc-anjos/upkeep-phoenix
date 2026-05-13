@@ -73,8 +73,6 @@ alpha.
 | Watch | A LiveView calls `watch(:assign_name, SourceModule, params)` to load a source into an assign and keep it fresh. |
 | Derive | A LiveView calls `derive(:assign_name, deps, fun)` to compute one assign from watched or derived assigns. |
 | Mutation | A write that changes domain data. Ecto writes are captured automatically; non-Ecto writes emit explicit facts with `Upkeep.changed(name, metadata)`. |
-| Invalidation | The match between a committed write or domain fact and the sources that should reload. |
-| Current scope | Phoenix's `:current_scope` assign, treated as viewer identity when a source or derive depends on it. |
 
 ## Quick Start
 
@@ -94,8 +92,7 @@ end
 
 Use `Upkeep.Ecto.Repo` for every repo whose committed writes should refresh
 watched sources. Replace `use Ecto.Repo` with `use Upkeep.Ecto.Repo` and keep
-the repo's existing options, including whichever Ecto adapter your app already
-uses:
+the repo's existing options, including its Ecto adapter:
 
 ```diff
 - use Ecto.Repo, ...
@@ -109,23 +106,9 @@ Configure the default repo:
 config :upkeep, repo: MyApp.Repo
 ```
 
-`Upkeep.Ecto.Repo` keeps the normal Ecto API and captures committed inserts,
-updates, deletes, bulk writes, direct transactions, and `Ecto.Multi` operations.
-A specific write can opt out with `upkeep: false`.
-
-Upkeep starts through its own OTP application when it is included as a normal
-runtime dependency, so Phoenix applications should not add `{Upkeep, []}` to
-their own supervision tree.
-
-Ecto-backed sources refresh automatically when the source exposes what it reads
-and the repo emits committed writes. If an Ecto-backed source uses a plain
-`Ecto.Repo`, Upkeep catches that at watch/read time. The default policy raises
-in dev/test and warns in prod:
-
-```elixir
-config :upkeep, repo_capture_misconfiguration: :raise
-# or :warn / :ignore
-```
+`Upkeep.Ecto.Repo` provides the same public Ecto Repo API while capturing
+committed inserts, updates, deletes, bulk writes, direct transactions, and
+`Ecto.Multi` operations.
 
 ### 3. Define A Source
 
@@ -177,7 +160,7 @@ end
 `socket.assigns.items`. `derive(:item_count, [:items], fun)` computes another
 assign from watched values or earlier derived values.
 
-### 5. Mutate Normally
+### 5. Keep Write Handlers Focused
 
 Writes through a repo that uses `Upkeep.Ecto.Repo` notify Upkeep after the
 transaction commits. Mutation handlers do the domain action and leave watched
@@ -193,10 +176,28 @@ end
 After the commit, Upkeep reloads `ProjectItems`, recomputes `:item_count`, and
 pushes the new assigns to the LiveView.
 
+## Repo Capture Details
+
+Ecto-backed sources refresh automatically when the source exposes what it reads
+and the repo emits committed writes. A specific write can opt out with
+`upkeep: false`.
+
+Upkeep starts through its own OTP application when it is included as a normal
+runtime dependency, so Phoenix applications should not add `{Upkeep, []}` to
+their own supervision tree.
+
+If an Ecto-backed source uses a plain `Ecto.Repo`, Upkeep catches that at
+watch/read time. The default policy raises in dev/test and warns in prod:
+
+```elixir
+config :upkeep, repo_capture_misconfiguration: :raise
+# or :warn / :ignore
+```
+
 ## Source Shapes
 
-The Quick Start source is the common case: an Ecto query with the same result
-for every LiveView watching the same params.
+The Quick Start source covers the standard Ecto path: every LiveView watching
+the same source module and params can share the same loaded value.
 
 Upkeep derives invalidation keys from supported Ecto equality and membership
 filters. Query filters it cannot narrow still refresh correctly, but at a
@@ -266,8 +267,8 @@ Upkeep.updated(new_item, from: old_item)
 ```
 
 When `from:` is omitted, Upkeep cannot prove which field-indexed sources the
-record may have moved out of. It refreshes all matching `:updated` sources
-broadly for correctness and emits `[:upkeep, :change, :broad_update]`.
+record may have moved out of. It refreshes every matching `:updated` source and
+emits `[:upkeep, :change, :broad_update]`.
 
 ## Identity And Authorization
 
@@ -294,8 +295,8 @@ defmodule MyApp.Catalog.Sources.VisibleProjectItems do
 end
 ```
 
-If every viewer may receive the same loaded rows and only the presentation
-changes, keep the source shared and derive the viewer-specific value locally:
+If every viewer may receive the same loaded rows, keep the source shared and
+derive viewer-specific assigns locally:
 
 ```elixir
 socket
@@ -355,8 +356,8 @@ setup do
 end
 ```
 
-When a synchronous test performs a mutation and immediately asserts on
-graph-pushed values, wrap the mutation with `Upkeep.Test.sync(fn -> ... end)`:
+When a synchronous test performs a mutation and immediately asserts on refreshed
+assigns, wrap the mutation with `Upkeep.Test.sync(fn -> ... end)`:
 
 ```elixir
 Upkeep.Test.sync(fn ->
