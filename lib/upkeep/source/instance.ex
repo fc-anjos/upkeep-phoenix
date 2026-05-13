@@ -71,7 +71,7 @@ defmodule Upkeep.Source.Instance do
   @spec verify!(t(), keyword()) :: :ok
   def verify!(%__MODULE__{} = instance, opts \\ []) do
     if function_exported?(instance.source, :__upkeep_verify__!, 2) do
-      instance.source.__upkeep_verify__!(instance.params, opts)
+      instance.source.__upkeep_verify__!(instance.params, verify_opts(instance, opts))
     else
       :ok
     end
@@ -82,6 +82,12 @@ defmodule Upkeep.Source.Instance do
 
   defp context(true, opts), do: Context.new(Keyword.get(opts, :current_scope))
   defp context(false, _opts), do: nil
+
+  defp verify_opts(%__MODULE__{context: %Context{current_scope: current_scope}}, opts) do
+    Keyword.put_new(opts, :current_scope, current_scope)
+  end
+
+  defp verify_opts(%__MODULE__{}, opts), do: opts
 
   defp repo(source) do
     source_repo(source) || Application.get_env(:upkeep, :repo)
