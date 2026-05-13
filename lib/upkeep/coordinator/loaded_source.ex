@@ -47,13 +47,17 @@ defmodule Upkeep.Coordinator.LoadedSource do
 
   def apply_if_current(state, %__MODULE__{} = loaded) do
     if current_generation?(loaded) do
-      {:applied, __MODULE__.apply(state, loaded)}
+      {:applied, apply_loaded(state, loaded)}
     else
       {:stale, state}
     end
   end
 
-  def apply(state, %__MODULE__{node_id: node_id, node: %Node{} = node} = loaded) do
+  def apply(state, %__MODULE__{} = loaded) do
+    apply_loaded(state, loaded)
+  end
+
+  defp apply_loaded(state, %__MODULE__{node_id: node_id, node: %Node{} = node} = loaded) do
     state =
       if loaded.surface != node.surface do
         Topology.reconcile_source(node_id, state.idx, node.surface, loaded.surface)

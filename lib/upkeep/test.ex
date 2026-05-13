@@ -47,11 +47,9 @@ defmodule Upkeep.Test do
   immediately asserts on watched LiveView assigns or graph-pushed values.
   """
   def sync(fun) when is_function(fun, 0) do
-    try do
-      fun.()
-    after
-      await_idle()
-    end
+    fun.()
+  after
+    await_idle()
   end
 
   @doc """

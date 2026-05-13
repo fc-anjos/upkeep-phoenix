@@ -91,40 +91,41 @@ defmodule Upkeep.Source.Spec do
   defp validate_query_source!(_context), do: :ok
 
   defp quote_source_definition(context) do
-    partition_fields = partition_fields(context.invalidators)
-    invalidator_checks = invalidator_checks(context.invalidators)
-    reactor_checks = reactor_checks(context.reactors)
-    explicit_keys = explicit_keys(context.invalidators, context.reactors)
-    explicit_checks = invalidator_checks ++ reactor_checks
+    definition = source_definition(context)
 
     quote do
       unquote(load_definition(context))
-      unquote(sharing_partition_definition(context.defines_sharing_partition?, partition_fields))
+      unquote(sharing_definition(context, definition))
       unquote(verify_definition(context.query_adapter))
+      unquote(source_fact_definitions(context, definition))
+      unquote(surface_definitions(context, definition))
+    end
+  end
 
+  defp source_fact_definitions(context, definition) do
+    quote do
       def __upkeep_repo__, do: unquote(context.repo)
       def __upkeep_repo_explicit__?, do: unquote(not is_nil(context.repo))
-
-      def __upkeep_query_source__?,
-        do: unquote(context.defines_query_1? or context.defines_query_2?)
-
-      def __upkeep_identity_aware__?,
-        do: unquote(context.defines_load_2? or context.defines_query_2?)
-
+      def __upkeep_query_source__?, do: unquote(definition.query_source?)
+      def __upkeep_identity_aware__?, do: unquote(definition.identity_aware?)
       def __upkeep_retry__, do: unquote(Macro.escape(context.retry))
+    end
+  end
 
+  defp surface_definitions(context, definition) do
+    quote do
       def reacts_to?(event, params),
         do:
           unquote(
             reacts_to_body(
-              explicit_checks,
-              context.defines_query_1? or context.defines_query_2?,
+              definition.explicit_checks,
+              definition.query_source?,
               context.query_adapter
             )
           )
 
       def __upkeep_explicit_surface_matches__?(params, event),
-        do: unquote(explicit_match_body(explicit_checks))
+        do: unquote(explicit_match_body(definition.explicit_checks))
 
       def __upkeep_surface__(params) do
         __upkeep_surface__(params, nil)
@@ -135,7 +136,7 @@ defmodule Upkeep.Source.Spec do
           __upkeep_explicit_surface__(params),
           unquote(
             query_surface(
-              context.defines_query_1? or context.defines_query_2?,
+              definition.query_source?,
               context.query_adapter
             )
           )
@@ -143,9 +144,37 @@ defmodule Upkeep.Source.Spec do
       end
 
       def __upkeep_explicit_surface__(params) do
-        unquote(explicit_surface(explicit_keys))
+        unquote(explicit_surface(definition.explicit_keys))
       end
     end
+  end
+
+  defp sharing_definition(context, definition) do
+    sharing_partition_definition(
+      context.defines_sharing_partition?,
+      definition.partition_fields
+    )
+  end
+
+  defp source_definition(context) do
+    invalidator_checks = invalidator_checks(context.invalidators)
+    reactor_checks = reactor_checks(context.reactors)
+
+    %{
+      partition_fields: partition_fields(context.invalidators),
+      explicit_checks: invalidator_checks ++ reactor_checks,
+      explicit_keys: explicit_keys(context.invalidators, context.reactors),
+      query_source?: query_source?(context),
+      identity_aware?: identity_aware?(context)
+    }
+  end
+
+  defp query_source?(%{defines_query_1?: query_1?, defines_query_2?: query_2?}) do
+    query_1? or query_2?
+  end
+
+  defp identity_aware?(%{defines_load_2?: load_2?, defines_query_2?: query_2?}) do
+    load_2? or query_2?
   end
 
   defp partition_fields(invalidators) do
