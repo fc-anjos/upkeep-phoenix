@@ -2,13 +2,11 @@ defmodule Upkeep.Ecto.Repo do
   @moduledoc """
   Ecto Repo wrapper that captures row changes for Upkeep.
 
-  Phoenix applications can use this in their Repo instead of `Ecto.Repo`:
+  Phoenix applications can use this in their Repo instead of `Ecto.Repo`.
+  Replace `use Ecto.Repo` with `use Upkeep.Ecto.Repo` and keep the repo's
+  existing options, including its adapter:
 
-      defmodule MyApp.Repo do
-        use Upkeep.Ecto.Repo,
-          otp_app: :my_app,
-          adapter: Ecto.Adapters.Postgres
-      end
+      use Upkeep.Ecto.Repo, ...
 
   The generated Repo keeps the normal Ecto API while emitting `Upkeep.Change`
   notifications for successful `insert`, `update`, `insert_or_update`, and

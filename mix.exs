@@ -119,13 +119,7 @@ defmodule Upkeep.MixProject do
     [
       main: "readme",
       extras: [
-        "README.md",
-        "docs/guides/getting-started.md",
-        "docs/architecture/identity-and-sharing.md"
-      ],
-      groups_for_extras: [
-        Guides: ~r/docs\/guides\//,
-        Architecture: ~r/docs\/architecture\//
+        "README.md"
       ]
     ]
   end

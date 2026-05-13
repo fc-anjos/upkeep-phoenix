@@ -1,22 +1,15 @@
 defmodule Upkeep.TestSupport.DataCase do
   @moduledoc """
-  This module defines the setup for tests requiring
-  access to the application's data layer.
+  Shared SQL sandbox setup for Upkeep tests.
 
-  You may define functions here to be used as helpers in
-  your tests.
-
-  Finally, if the test case interacts with the database,
-  we enable the SQL sandbox, so changes done to the database
-  are reverted at the end of every test. If you are using
-  PostgreSQL, you can even run database tests asynchronously
-  by setting `use Upkeep.TestSupport.DataCase, async: true`, although
-  this option is not recommended for other databases.
+  Each test starts with a reset Upkeep graph, allows coordinator processes to
+  use the checked-out repo connection, and drains/resets runtime state on exit.
   """
 
   use ExUnit.CaseTemplate
 
   alias Ecto.Adapters.SQL.Sandbox
+  alias Upkeep.Test, as: UpkeepTest
   alias Upkeep.TestSupport.DataCase
   alias Upkeep.TestSupport.Repo
 
@@ -40,17 +33,17 @@ defmodule Upkeep.TestSupport.DataCase do
   Sets up the sandbox based on the test tags.
   """
   def setup_sandbox(tags) do
-    Upkeep.Test.reset_graph()
+    UpkeepTest.reset_graph()
 
     pid = Sandbox.start_owner!(Repo, shared: not tags[:async])
 
-    Upkeep.Test.allow_sandbox()
+    UpkeepTest.allow_sandbox()
 
     on_exit(fn ->
       try do
-        Upkeep.Test.await_idle()
+        UpkeepTest.await_idle()
       after
-        Upkeep.Test.reset_graph()
+        UpkeepTest.reset_graph()
         Sandbox.stop_owner(pid)
       end
     end)

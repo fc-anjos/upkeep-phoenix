@@ -506,7 +506,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       assert Enum.map(failures, & &1.retry_attempt) == [1, 2, 3, 4]
       assert Enum.map(failures, & &1.retry?) == [true, true, true, false]
       assert Enum.all?(failures, &(&1.retry_max_attempts == 3))
-      assert %{retry_delay_ms: nil} = List.last(failures)
+      assert [_, _, _, %{retry_delay_ms: nil}] = failures
       assert :counters.get(loads, 1) == 5
 
       DagMessages.refute_value(node_id, 0)
@@ -596,7 +596,7 @@ defmodule Upkeep.Coordinator.GraphTest do
       assert Enum.map(failures, & &1.retry?) == [true, false]
       assert Enum.all?(failures, &(&1.retry_policy == :source))
       assert Enum.all?(failures, &(&1.retry_max_attempts == 1))
-      assert %{retry_delay_ms: nil} = List.last(failures)
+      assert [_, %{retry_delay_ms: nil}] = failures
       assert :ets.lookup(table, {:loads, event.id}) == [{{:loads, event.id}, 3}]
 
       Graph.unregister(node_id)

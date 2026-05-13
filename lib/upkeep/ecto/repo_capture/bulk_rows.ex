@@ -57,16 +57,7 @@ defmodule Upkeep.Ecto.RepoCapture.BulkRows do
   end
 
   defp primary_key_query(schema, primary_keys, records) do
-    predicate =
-      Enum.reduce(records, dynamic(false), fn record, predicate ->
-        record_predicate =
-          Enum.reduce(primary_keys, dynamic(true), fn primary_key, record_predicate ->
-            value = Map.fetch!(record, primary_key)
-            dynamic([candidate], ^record_predicate and field(candidate, ^primary_key) == ^value)
-          end)
-
-        dynamic([candidate], ^predicate or ^record_predicate)
-      end)
+    predicate = primary_key_predicate(records, primary_keys)
 
     from record in schema,
       where: ^predicate
@@ -81,20 +72,23 @@ defmodule Upkeep.Ecto.RepoCapture.BulkRows do
   end
 
   defp primary_key_query(source, primary_keys, records, fields) when is_binary(source) do
-    predicate =
-      Enum.reduce(records, dynamic(false), fn record, predicate ->
-        record_predicate =
-          Enum.reduce(primary_keys, dynamic(true), fn primary_key, record_predicate ->
-            value = Map.fetch!(record, primary_key)
-            dynamic([candidate], ^record_predicate and field(candidate, ^primary_key) == ^value)
-          end)
-
-        dynamic([candidate], ^predicate or ^record_predicate)
-      end)
+    predicate = primary_key_predicate(records, primary_keys)
 
     from record in source,
       where: ^predicate,
       select: map(record, ^fields)
+  end
+
+  defp primary_key_predicate(records, primary_keys) do
+    Enum.reduce(records, dynamic(false), fn record, predicate ->
+      record_predicate =
+        Enum.reduce(primary_keys, dynamic(true), fn primary_key, record_predicate ->
+          value = Map.fetch!(record, primary_key)
+          dynamic([candidate], ^record_predicate and field(candidate, ^primary_key) == ^value)
+        end)
+
+      dynamic([candidate], ^predicate or ^record_predicate)
+    end)
   end
 
   defp primary_key_values(record, primary_keys) do

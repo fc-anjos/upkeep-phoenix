@@ -79,23 +79,29 @@ defmodule Upkeep.Ecto.RepoCapture.InsertAllRecords do
     ArgumentError -> {:deopt, :unmaterializable_entries}
   end
 
-  defp merge_returning_records(schema, records, entries)
-       when length(records) == length(entries) do
-    records
-    |> Enum.zip(entries)
-    |> Enum.reduce_while({:ok, []}, fn {record, entry}, {:ok, merged_records} ->
-      case merge_returning_record(schema, record, entry) do
-        {:ok, record} -> {:cont, {:ok, [record | merged_records]}}
-        {:deopt, reason} -> {:halt, {:deopt, reason}}
-      end
-    end)
-    |> case do
-      {:ok, merged_records} -> {:ok, Enum.reverse(merged_records)}
+  defp merge_returning_records(schema, records, entries) do
+    case merge_returning_records(records, entries, schema, []) do
+      {:ok, merged_records} -> {:ok, merged_records}
       {:deopt, reason} -> {:deopt, reason}
+      :length_mismatch -> records(records, schema)
     end
   end
 
-  defp merge_returning_records(schema, records, _entries), do: records(records, schema)
+  defp merge_returning_records([], [], _schema, merged_records),
+    do: {:ok, Enum.reverse(merged_records)}
+
+  defp merge_returning_records([record | records], [entry | entries], schema, merged_records) do
+    case merge_returning_record(schema, record, entry) do
+      {:ok, record} ->
+        merge_returning_records(records, entries, schema, [record | merged_records])
+
+      {:deopt, reason} ->
+        {:deopt, reason}
+    end
+  end
+
+  defp merge_returning_records(_records, _entries, _schema, _merged_records),
+    do: :length_mismatch
 
   defp merge_returning_record(schema, record, entry) do
     with {:ok, record_map} <- entry_map(record),

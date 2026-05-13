@@ -9,21 +9,18 @@ defmodule Upkeep do
       config :upkeep, repo: MyApp.Repo
 
   The repo should use `Upkeep.Ecto.Repo` so committed writes can refresh
-  watched sources:
+  watched sources. Replace `use Ecto.Repo` with `use Upkeep.Ecto.Repo`
+  and keep the repo's existing options, including its adapter:
 
-      defmodule MyApp.Repo do
-        use Upkeep.Ecto.Repo,
-          otp_app: :my_app,
-          adapter: Ecto.Adapters.Postgres
-      end
+      use Upkeep.Ecto.Repo, ...
 
   Upkeep starts through its own OTP application when included as a normal
   runtime dependency. Do not add `{Upkeep, []}` to your Phoenix application's
   supervision tree unless you have intentionally disabled dependency
   application startup and are managing Upkeep manually.
 
-  See the README for complete setup, source authoring, LiveView usage, tests,
-  and inspector installation.
+  See the README for complete setup, source authoring, LiveView usage, and
+  tests.
 
   Library users that prefer explicit args can still call
   `Upkeep.mutate(MyApp.Repo, fn -> ... end)` and
@@ -43,8 +40,6 @@ defmodule Upkeep do
   knowledge. `updated(record)` without either refreshes matching `:updated`
   sources broadly for correctness and emits a diagnostic.
 
-  Optional: add `:upkeep_inspector` to your deps for an in-app dashboard
-  that renders the runtime DAG, sources, and telemetry trail.
   """
 
   use Boundary,

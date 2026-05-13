@@ -136,13 +136,10 @@ defmodule Upkeep.Test do
     """
     expected #{inspect(repo)} to be capture-enabled for Upkeep
 
-    Configure the repo with `use Upkeep.Ecto.Repo` instead of `use Ecto.Repo`:
+    Configure the repo with `use Upkeep.Ecto.Repo` instead of `use Ecto.Repo`.
+    Keep the repo's existing options, including its adapter:
 
-        defmodule MyApp.Repo do
-          use Upkeep.Ecto.Repo,
-            otp_app: :my_app,
-            adapter: Ecto.Adapters.Postgres
-        end
+        use Upkeep.Ecto.Repo, ...
     """
   end
 

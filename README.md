@@ -50,8 +50,8 @@ derived values recompute, and unrelated watches are left alone.
 
 ## Status
 
-Upkeep is early alpha. Application code should start from the documented entry
-points:
+Upkeep is early alpha. Application code should start from the documented public
+entry points:
 
 - `Upkeep`
 - `Upkeep.Ecto.Repo`
@@ -60,21 +60,40 @@ points:
 - `Upkeep.Live`
 - `Upkeep.Test`
 
-Modules hidden with `@moduledoc false`, repo-capture implementation modules,
-runtime modules, generated-source helpers, query inference modules, coordinator
-modules, and test-support modules are internal even though Elixir can import
-them. Telemetry is diagnostic during alpha; event names and metadata should be
-treated defensively.
+Telemetry, internal modules, and undocumented runtime details may change during
+alpha.
 
-## Start Here
+## Concepts At A Glance
 
-The first-use path is in [Getting Started](docs/guides/getting-started.md). It
-covers repo setup, source authoring, LiveView usage, mutation refreshes,
-identity-aware sources, and test setup.
+| Concept | What it means |
+| --- | --- |
+| Repo capture | Your repo uses `Upkeep.Ecto.Repo`, so Upkeep can see committed Ecto writes. |
+| Source | A module that knows how to load one value, usually from an Ecto query. |
+| Source params | The stable inputs for a source, such as `%{project_id: project_id}`. They are part of the source identity. |
+| Watch | A LiveView calls `watch(:assign_name, SourceModule, params)` to load a source into an assign and keep it fresh. |
+| Derive | A LiveView calls `derive(:assign_name, deps, fun)` to compute one assign from watched or derived assigns. |
+| Mutation | A write that changes domain data. Ecto writes are captured automatically; non-Ecto writes emit explicit facts with `Upkeep.changed(name, metadata)`. |
+| Invalidation | The match between a committed write or domain fact and the sources that should reload. |
+| Current scope | Phoenix's `:current_scope` assign, treated as viewer identity when a source or derive depends on it. |
 
-## Installation
+The usual flow is: configure repo capture, define a source, watch that source
+from a LiveView, and let mutations refresh the watched assign.
 
-Dogfood Phoenix applications in this workspace depend on Upkeep by path:
+## Quick Start
+
+### 1. Add Upkeep
+
+Add Upkeep to your Phoenix app:
+
+```elixir
+def deps do
+  [
+    {:upkeep, "~> 0.1.0"}
+  ]
+end
+```
+
+For local development from this repository, use a path dependency instead:
 
 ```elixir
 def deps do
@@ -84,14 +103,16 @@ def deps do
 end
 ```
 
-Use `Upkeep.Ecto.Repo` for each repo whose writes should refresh sources:
+### 2. Enable Repo Capture
 
-```elixir
-defmodule MyApp.Repo do
-  use Upkeep.Ecto.Repo,
-    otp_app: :my_app,
-    adapter: Ecto.Adapters.Postgres
-end
+Use `Upkeep.Ecto.Repo` for every repo whose committed writes should refresh
+watched sources. Replace `use Ecto.Repo` with `use Upkeep.Ecto.Repo` and keep
+the repo's existing options, including whichever Ecto adapter your app already
+uses:
+
+```diff
+- use Ecto.Repo, ...
++ use Upkeep.Ecto.Repo, ...
 ```
 
 Configure the default repo:
@@ -105,44 +126,33 @@ Upkeep starts through its own OTP application when it is included as a normal
 runtime dependency, so Phoenix applications should not add `{Upkeep, []}` to
 their own supervision tree.
 
-`Upkeep.Ecto.Repo` wraps `Ecto.Repo` and captures committed inserts, updates,
-deletes, bulk writes, direct transactions, and `Ecto.Multi` operations. Sources
-can still opt out of individual writes with `upkeep: false`.
+`Upkeep.Ecto.Repo` keeps the normal Ecto API and captures committed inserts,
+updates, deletes, bulk writes, direct transactions, and `Ecto.Multi` operations.
+A specific write can opt out with `upkeep: false`.
 
-If a source expects automatic Ecto reactivity but uses a repo that does not use
-`Upkeep.Ecto.Repo`, Upkeep checks the repo at watch/read boundaries. The default
-policy raises in dev/test and warns in prod:
+Ecto-backed sources need two pieces to refresh automatically:
+
+- The source must expose what it reads, either by defining `query(params)` or by
+  calling `Upkeep.read(query)` inside `load(params)`.
+- The repo must use `Upkeep.Ecto.Repo`, so Upkeep can hear about committed
+  writes.
+
+If an Ecto-backed source uses a plain `Ecto.Repo`, Upkeep catches that at
+watch/read time. The default policy raises in dev/test and warns in prod:
 
 ```elixir
 config :upkeep, repo_capture_misconfiguration: :raise
 # or :warn / :ignore
 ```
 
-### SQLite
+### 3. Define A Source
 
-`ecto_sqlite3` apps must set `default_transaction_mode: :immediate` in
-every environment (`dev`, `test`, `runtime`). Without it, pool
-connections under WAL can hold stale read snapshots that miss commits
-made through sibling connections — producing intermittent source
-staleness under write bursts even with Upkeep's caches race-free:
+Use `Upkeep.Ecto.Source` when a source value comes from an Ecto query. The
+preferred shape is a `query(params)` callback; Upkeep reads the query, derives
+invalidation keys, and reloads the source when matching writes commit.
 
 ```elixir
-config :my_app, MyApp.Repo,
-  database: "...",
-  pool_size: 5,
-  journal_mode: :wal,
-  busy_timeout: 30_000,
-  default_transaction_mode: :immediate
-```
-
-## A Source
-
-Query-backed sources are the preferred Ecto path. Upkeep can inspect the query,
-derive invalidation keys, and execute the read through its shared source
-cache.
-
-```elixir
-defmodule MyApp.Catalog.ProjectItems do
+defmodule MyApp.Catalog.Sources.ProjectItems do
   use Upkeep.Ecto.Source, repo: MyApp.Repo
 
   import Ecto.Query
@@ -155,17 +165,75 @@ defmodule MyApp.Catalog.ProjectItems do
 end
 ```
 
+### 4. Watch The Source
+
+Use `Upkeep.Live` in the LiveView and call `watch(:assign_name, SourceModule,
+params)` with an assign name, source module, and params. Pass source params as a
+map. Keyword lists are also accepted and normalized to maps, but maps make the
+source identity shape explicit.
+
+```elixir
+defmodule MyAppWeb.ProjectLive do
+  use MyAppWeb, :live_view
+  use Upkeep.Live
+
+  alias MyApp.Catalog.Sources.ProjectItems
+
+  def mount(%{"id" => id}, _session, socket) do
+    project_id = String.to_integer(id)
+
+    socket =
+      socket
+      |> watch(:items, ProjectItems, %{project_id: project_id})
+      |> derive(:item_count, [:items], fn %{items: items} -> length(items) end)
+
+    {:ok, socket}
+  end
+end
+```
+
+`watch(:items, ProjectItems, params)` assigns the loaded value to
+`socket.assigns.items`. `derive(:item_count, [:items], fun)` computes another
+assign from watched values or earlier derived values. `use Upkeep.Live` also
+installs the runtime message callbacks needed for graph-pushed values.
+
+### 5. Mutate Normally
+
+Writes through a repo that uses `Upkeep.Ecto.Repo` notify Upkeep after the
+transaction commits. Mutation handlers do the domain action and leave watched
+assign refreshes to Upkeep:
+
+```elixir
+def handle_event("rename_item", %{"item" => %{"id" => id, "name" => name}}, socket) do
+  {:ok, _item} = MyApp.Catalog.rename_item(String.to_integer(id), name)
+  {:noreply, socket}
+end
+```
+
+At this point, committed writes that match `ProjectItems` reload the source,
+recompute `:item_count`, and push the new assigns to the LiveView.
+
+## Source Shapes
+
+Use the narrowest shape that makes every input to the source value visible:
+
+| Need | Shape |
+| --- | --- |
+| Ecto query, same value for every subscriber with the same params | `use Upkeep.Ecto.Source` and define `query(params)` |
+| Ecto query whose result depends on Phoenix `:current_scope` | `use Upkeep.Ecto.Source` and define `query(params, upkeep)` |
+| Custom Ecto reads, same value for every subscriber with the same params | `use Upkeep.Ecto.Source`, define `load(params)`, and call `Upkeep.read(query)` |
+| Custom Ecto reads that depend on Phoenix `:current_scope` | `use Upkeep.Ecto.Source`, define `load(params, upkeep)`, call `Upkeep.current_scope!(upkeep)`, and call `Upkeep.read(query)` |
+| Non-Ecto reads, cache reads, external APIs, ETS, files, or process state | `use Upkeep.Source`, define `load(params)` or `load(params, upkeep)`, and add explicit invalidators |
+| Shared source value with viewer-specific presentation | shared `watch(:assign_name, SourceModule, params)`, then local `derive(:assign_name, deps, fun)` from `%{current_scope: scope}` |
+
 Upkeep derives invalidation keys from supported Ecto equality and membership
 filters. Unsupported but visible query shapes fall back to broad schema/table
 invalidation for correctness.
 
-Custom `load/1` and `load/2` sources are supported when they either track
-Ecto reads from inside the source callback or declare explicit invalidators.
-Inside an Ecto source callback, call `Upkeep.read/1` instead of `Repo.all/1`
-so Upkeep can capture the read's invalidation surface:
+Custom Ecto reads can use `load(params)` and `Upkeep.read(query)`:
 
 ```elixir
-defmodule MyApp.Catalog.ProjectSummary do
+defmodule MyApp.Catalog.Sources.ProjectSummary do
   use Upkeep.Ecto.Source, repo: MyApp.Repo
 
   import Ecto.Query
@@ -182,40 +250,14 @@ defmodule MyApp.Catalog.ProjectSummary do
 end
 ```
 
-`Upkeep.read/1` is not a top-level ad-hoc query API. Outside a source's
-`load/1`, `load/2`, `query/1`, or `query/2` callback, call your repo directly.
-
-Sources whose value depends on Phoenix's `:current_scope` use `load/2` or
-`query/2`. The second argument is an Upkeep source context; reading
-`current_scope` through that context makes the source identity include an
-opaque scope envelope before source loads are coalesced or shared:
-
-```elixir
-defmodule MyApp.Catalog.VisibleProjectItems do
-  use Upkeep.Ecto.Source, repo: MyApp.Repo
-
-  import Ecto.Query
-
-  def query(%{project_id: project_id}, upkeep) do
-    scope = Upkeep.current_scope!(upkeep)
-
-    from item in MyApp.Catalog.Item,
-      where:
-        item.project_id == ^project_id and
-          item.account_id == ^scope.account_id and
-          item.value <= ^scope.max_item_value,
-      order_by: [asc: item.position]
-  end
-end
-```
+`Upkeep.read(query)` is only for Ecto reads inside source callbacks. For ad-hoc
+queries outside a source, call your repo directly.
 
 Non-Ecto reads, spawned task reads, ETS, files, caches, external APIs, and
-process state need explicit invalidators. Hidden process or session state must
-not carry viewer identity for a shared source; use `load/2` or `query/2` and
-`Upkeep.current_scope!/1` when the source value is identity-sensitive:
+process state need explicit invalidators:
 
 ```elixir
-defmodule MyApp.Search.Results do
+defmodule MyApp.Search.Sources.Results do
   use Upkeep.Source
 
   invalidated_by(:search_index_rebuilt, on: :project_id)
@@ -226,54 +268,14 @@ defmodule MyApp.Search.Results do
 end
 ```
 
-Use `reacts_to/2` or `reacts_to/3` when field matching needs custom logic.
-
-## A LiveView
-
-Use `Upkeep.Live` and call `watch/4` from `mount/3` or another LiveView
-callback. `use Upkeep.Live` imports `watch/4`, `derive/4`, and `component/4`,
-and installs the runtime `handle_info/2` needed for graph-pushed values.
-
-```elixir
-defmodule MyAppWeb.ProjectLive do
-  use MyAppWeb, :live_view
-  use Upkeep.Live
-
-  def mount(%{"id" => id}, _session, socket) do
-    project_id = String.to_integer(id)
-
-    socket =
-      socket
-      |> watch(:items, MyApp.Catalog.ProjectItems, project_id: project_id)
-      |> derive(:item_count, [:items], fn %{items: items} -> length(items) end)
-
-    {:ok, socket}
-  end
-end
-```
-
-Source params are the default source identity. Keep params explicit and stable.
-If user identity, tenant identity, or permissions affect the source value, use
-an identity-aware `load/2` or `query/2` source. If the shared source value is
-safe for every subscriber and only the presentation is viewer-specific, derive a
-local value from `current_scope`.
-
-```elixir
-socket
-|> watch(:items, MyApp.Catalog.ProjectItems, project_id: project_id)
-|> derive(:visible_items, [:items], fn %{items: items, current_scope: scope} ->
-  MyApp.Policy.visible_items(items, scope)
-end)
-```
-
-Upkeep treats Phoenix's `:current_scope` assign as an opaque dependency. It does
-not inspect your app-specific scope struct to decide what fields mean account,
-project, user, or session.
+Use `reacts_to(name, fun)` or `reacts_to(name, opts, fun)` when field matching
+needs custom logic.
 
 ## Mutations
 
-Writes made through a repo using `Upkeep.Ecto.Repo` are captured automatically.
-For domain events outside Ecto, notify Upkeep explicitly:
+Ecto writes are captured automatically when they go through a repo using
+`Upkeep.Ecto.Repo`. For work outside Ecto, wrap the mutation and emit a domain
+fact:
 
 ```elixir
 Upkeep.mutate(fn ->
@@ -293,83 +295,120 @@ Upkeep.updated(new_item, from: old_item)
 
 When `from:` is omitted, Upkeep cannot prove which field-indexed sources the
 record may have moved out of. It refreshes all matching `:updated` sources
-broadly for correctness and emits `[:upkeep, :change, :broad_update]`. Configure
-the diagnostic policy with:
+broadly for correctness and emits `[:upkeep, :change, :broad_update]`.
+
+## Identity And Authorization
+
+Sources whose value depends on Phoenix's `:current_scope` use `load(params,
+upkeep)` or `query(params, upkeep)`. The second argument is an Upkeep source
+context; reading `current_scope` through that context makes the source identity
+include an opaque scope envelope before source loads are coalesced or shared:
 
 ```elixir
-config :upkeep, update_without_old_state: :warn
-# or :ignore
+defmodule MyApp.Catalog.Sources.VisibleProjectItems do
+  use Upkeep.Ecto.Source, repo: MyApp.Repo
+
+  import Ecto.Query
+
+  def query(%{project_id: project_id}, upkeep) do
+    scope = Upkeep.current_scope!(upkeep)
+
+    from item in MyApp.Catalog.Item,
+      where:
+        item.project_id == ^project_id and
+          item.account_id == ^scope.account_id and
+          item.value <= ^scope.max_item_value,
+      order_by: [asc: item.position]
+  end
+end
 ```
 
-## Test Setup
+If the shared source value is safe for every subscriber and only the presentation
+is viewer-specific, derive a local value from `current_scope`:
 
-Use setup assertions to catch plain `Ecto.Repo` setup and invisible source
-reads:
+```elixir
+socket
+|> watch(:items, MyApp.Catalog.Sources.ProjectItems, %{project_id: project_id})
+|> derive(:visible_items, [:items], fn %{items: items, current_scope: scope} ->
+  MyApp.Policy.visible_items(items, scope)
+end)
+```
+
+Do not hide viewer identity in process state, session state, closures, or socket
+captures inside shared source callbacks. Put stable identity in source params,
+or read `current_scope` through `Upkeep.current_scope!(upkeep)`.
+
+Upkeep treats Phoenix's `:current_scope` assign as an opaque dependency. It does
+not inspect your app-specific scope struct to decide what fields mean account,
+project, user, or session.
+
+When authorization changes what rows a source may load:
+
+- If the policy can be expressed with stable ids known at the watch site, put
+  those ids in source params.
+- If the policy reads Phoenix `:current_scope`, use `query(params, upkeep)` or
+  `load(params, upkeep)` and call `Upkeep.current_scope!(upkeep)`.
+- If the source value is shared and authorization only affects display, derive
+  a local value from `%{current_scope: scope}`.
+- If authorization data changes independently from the source tables, emit a
+  domain change and add an invalidator for that change.
+
+## Testing
+
+Assert that the repo is capture-enabled:
 
 ```elixir
 test "repo is capture-enabled" do
   assert :ok = Upkeep.Test.assert_repo_capture_enabled!(MyApp.Repo)
 end
+```
 
-test "source is reactive" do
+Assert that a source has a known invalidation surface:
+
+```elixir
+test "project items source is reactive" do
   Upkeep.Test.assert_source_reactive!(
-    MyApp.Catalog.ProjectItems,
+    MyApp.Catalog.Sources.ProjectItems,
     %{project_id: 1}
   )
 end
 ```
 
-If your tests use `Ecto.Adapters.SQL.Sandbox`, allow the coordinator processes
-to share the test connection after checking out or starting the sandbox owner:
+If a test uses `Ecto.Adapters.SQL.Sandbox`, allow Upkeep coordinator processes
+to use the checked-out connection:
 
 ```elixir
-Upkeep.Test.allow_sandbox(MyApp.Repo)
+setup do
+  :ok = Ecto.Adapters.SQL.Sandbox.checkout(MyApp.Repo)
+  Upkeep.Test.allow_sandbox(MyApp.Repo)
+  :ok
+end
 ```
 
 When a synchronous test performs a mutation and immediately asserts on
-graph-pushed values, wrap the mutation with `Upkeep.Test.sync/1`.
-
-## Inspector
-
-The optional inspector package renders a symbolic DAG, source coverage,
-invalidation keys, sharing decisions, runtime signals, and recent telemetry.
+graph-pushed values, wrap the mutation with `Upkeep.Test.sync(fn -> ... end)`:
 
 ```elixir
-def deps do
-  [
-    {:upkeep_inspector, "~> 0.1.0", only: [:dev, :test]}
-  ]
-end
+Upkeep.Test.sync(fn ->
+  Upkeep.changed(:search_index_rebuilt, %{project_id: project.id})
+end)
 ```
 
-```elixir
-defmodule MyAppWeb.ProjectLive do
-  use MyAppWeb, :live_view
-  use Upkeep.Live
-  use Upkeep.Inspector
-end
-```
+## Adapter Notes
 
-Visit a watched LiveView with `?_upkeep=dag` or `?_upkeep=inspect`.
+### SQLite
 
-Source-location capture is enabled by default in dev/test. In prod it is off
-unless explicitly enabled:
+`ecto_sqlite3` apps must set `default_transaction_mode: :immediate` in every
+environment. Without it, WAL pool connections can hold stale read snapshots and
+miss commits made through sibling connections:
 
 ```elixir
-config :upkeep, capture_source_locations: true
-```
-
-The inspector shows symbolic assign shapes, source watches, invalidation keys,
-coverage diagnostics, sharing decisions, runtime signals, and recent telemetry.
-It does not expose full assign values.
-
-## Examples
-
-Example applications live in the `upkeep-phoenix-examples` repository. In a
-local workspace they can depend on this package with a path dependency:
-
-```elixir
-{:upkeep, path: "../../upkeep"}
+config :my_app, MyApp.Repo,
+  database: "...",
+  pool_size: 5,
+  journal_mode: :wal,
+  busy_timeout: 30_000,
+  default_transaction_mode: :immediate
 ```
 
 ## License
