@@ -2,8 +2,9 @@
 
 Upkeep is a Phoenix LiveView runtime for domain-reactive server UI.
 
-LiveViews watch named sources, writes emit domain facts, and Upkeep refreshes
-only the watched assigns whose source invalidation surface matches those facts.
+LiveViews watch named **sources**. Each source has an invalidation **surface**:
+the set of facts that would make its value stale. Writes emit those facts, and
+Upkeep refreshes only the watched assigns whose surface matches.
 
 ## Why Upkeep
 
@@ -31,9 +32,9 @@ def handle_event("rename_item", %{"item" => params}, socket) do
 end
 ```
 
-That works, but the mutation handler is coupled to every UI surface that depends
-on the changed data. Adding another dependent view means revisiting old write
-paths or broadcasts.
+That works, but the mutation handler is coupled to every part of the UI that
+depends on the changed data. Adding another dependent view means revisiting old
+write paths or broadcasts.
 
 With Upkeep, the LiveView declares the data graph once. The write path performs
 the domain action and stops:
@@ -65,13 +66,50 @@ alpha.
 
 ## Core Concepts
 
-| Concept | What it means |
+### Source
+
+A **source** is a named, parameterized read. A module that loads one value,
+usually from an Ecto query, given a stable set of params such as
+`%{project_id: project_id}`. The pair `{SourceModule, params}` is the source's
+identity: two LiveViews watching the same module with the same params share
+one loaded value.
+
+A source describes *what* to read.
+
+### Surface
+
+A source's **surface** is the set of facts about future writes that would make
+its value stale.
+
+For Ecto sources Upkeep derives the surface from the query: the table read,
+the columns filtered, and the values they are filtered to. `where:
+item.project_id == ^42 and item.archived == false` produces a surface that
+matches writes on the `items` table where `project_id` is `42` and the row is
+not archived.
+
+For non-Ecto sources (ETS, files, caches, external APIs) declare the surface
+explicitly with `invalidated_by/2` or `reacts_to/2`.
+
+On commit, Upkeep matches the write against every active surface and refreshes
+only the sources it touches.
+
+A surface describes *when* to reread.
+
+### Derive
+
+A **derive** is a pure function of other watched values, local to one
+LiveView. `derive(:item_count, [:items], fn %{items: items} -> length(items)
+end)` recomputes whenever its inputs change. Derives are not shared and do not
+hit the database; they shape source values into the form this view needs.
+
+A derive describes *how this viewer wants to see it*.
+
+### Supporting vocabulary
+
+| Term | What it means |
 | --- | --- |
 | Repo capture | Your repo uses `Upkeep.Ecto.Repo`, so Upkeep can see committed Ecto writes. |
-| Source | A module that knows how to load one value, usually from an Ecto query. |
-| Source params | The stable inputs for a source, such as `%{project_id: project_id}`. They are part of the source identity. |
-| Watch | A LiveView calls `watch(:assign_name, SourceModule, params)` to load a source into an assign and keep it fresh. |
-| Derive | A LiveView calls `derive(:assign_name, deps, fun)` to compute one assign from watched or derived assigns. |
+| Watch | `watch(:assign_name, SourceModule, params)` loads a source into an assign and keeps it fresh. |
 | Mutation | A write that changes domain data. Ecto writes are captured automatically; non-Ecto writes emit explicit facts with `Upkeep.changed(name, metadata)`. |
 
 ## Quick Start
@@ -200,9 +238,10 @@ config :upkeep, repo_capture_misconfiguration: :raise
 The Quick Start source covers the standard Ecto path: every LiveView watching
 the same source module and params can share the same loaded value.
 
-Upkeep derives invalidation keys from supported Ecto equality and membership
+Upkeep narrows a source's surface from supported Ecto equality and membership
 filters. Query filters it cannot narrow still refresh correctly, but at a
-broader schema or table level.
+broader schema or table surface. The refresh is still correct, just less
+selective.
 
 Custom Ecto reads can use `load(params)` and `Upkeep.read(query)`:
 
@@ -228,7 +267,7 @@ end
 outside a source, call your repo directly.
 
 Non-Ecto reads, spawned task reads, ETS, files, caches, external APIs, and
-process state need explicit invalidators:
+process state need an explicit surface. Declare it with `invalidated_by/2`:
 
 ```elixir
 defmodule MyApp.Search.Sources.Results do
