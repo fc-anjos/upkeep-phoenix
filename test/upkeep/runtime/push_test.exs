@@ -36,15 +36,18 @@ defmodule Upkeep.Runtime.PushTest do
         ignored_count: 3,
         ignored_reason_counts: %{
           unwatched_source: 1,
-          unknown_shared_derived: 1,
-          stale_push: 1
+          stale_push: 2
         }
       }
     )
 
     assert_ignored(:unwatched_source, source_id)
-    assert_ignored(:unknown_shared_derived, shared_id)
-    assert_ignored(:stale_push, stale_id)
+
+    TelemetryMessages.assert_counted(
+      [:upkeep, :live, :dag_values, :ignored],
+      %{reason: :stale_push, node_id: nil, node_ids: [shared_id, stale_id]},
+      measurements: %{count: 2}
+    )
   end
 
   test "single unknown pushed value emits ignored telemetry" do

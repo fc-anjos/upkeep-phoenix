@@ -18,7 +18,6 @@ defmodule Upkeep.Runtime.Push do
     emit_apply_dag_values(
       pairs,
       Patch.changed_nodes(patch),
-      Patch.shared_nodes(patch),
       Patch.effects(patch),
       Patch.recompute_effects(patch),
       Patch.ignored(patch),
@@ -48,17 +47,7 @@ defmodule Upkeep.Runtime.Push do
         Patch.put_watch_value(patch, watch, value)
 
       :error ->
-        put_pushed_shared_value(patch, source_id, value)
-    end
-  end
-
-  defp put_pushed_shared_value(%Patch{} = patch, graph_node_id, value) do
-    case State.local_shared_derived_node(Patch.socket(patch), graph_node_id) do
-      nil ->
-        Patch.ignore(patch, ignored_reason(graph_node_id), graph_node_id)
-
-      local_node_id ->
-        Patch.put_shared_derived_value(patch, local_node_id, value)
+        Patch.ignore(patch, ignored_reason(source_id), source_id)
     end
   end
 
@@ -67,15 +56,11 @@ defmodule Upkeep.Runtime.Push do
   defp ignored_reason({:scoped, _component, {_source, params}}) when is_map(params),
     do: :unwatched_source
 
-  defp ignored_reason({:derived, _view, _assign_name, _deps, _compute_fn}),
-    do: :unknown_shared_derived
-
   defp ignored_reason(_node_id), do: :stale_push
 
   defp emit_apply_dag_values(
          pairs,
          changed_nodes,
-         shared_nodes,
          effects,
          recompute_effects,
          ignored,
@@ -87,7 +72,6 @@ defmodule Upkeep.Runtime.Push do
       %{
         pair_count: length(pairs),
         changed_node_count: length(changed_nodes),
-        shared_node_count: length(shared_nodes),
         effect_count: length(effects),
         assign_effect_count: Enum.count(effects, &match?({:assign, _name, _value}, &1)),
         recompute_effect_count: length(recompute_effects),

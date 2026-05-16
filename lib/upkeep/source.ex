@@ -22,6 +22,7 @@ defmodule Upkeep.Source do
   @type params :: map()
   @type source_module :: module()
   @type retry_config :: :default | false | keyword()
+  @type idle_ttl_config :: nil | :infinity | non_neg_integer()
   @type source_context :: term()
 
   @callback load(params()) :: term()
@@ -34,6 +35,7 @@ defmodule Upkeep.Source do
   @callback __upkeep_query_source__?() :: boolean()
   @callback __upkeep_identity_aware__?() :: boolean()
   @callback __upkeep_retry__() :: retry_config()
+  @callback __upkeep_idle_ttl_ms__() :: idle_ttl_config()
   @callback __upkeep_sharing_partition__(params()) :: term()
   @callback __upkeep_verify__!(params(), keyword()) :: :ok
   @callback __upkeep_surface__(params()) :: Upkeep.InvalidationSurface.t()
@@ -51,6 +53,7 @@ defmodule Upkeep.Source do
                       __upkeep_query_source__?: 0,
                       __upkeep_identity_aware__?: 0,
                       __upkeep_retry__: 0,
+                      __upkeep_idle_ttl_ms__: 0,
                       __upkeep_sharing_partition__: 1,
                       __upkeep_verify__!: 2,
                       __upkeep_surface__: 1,

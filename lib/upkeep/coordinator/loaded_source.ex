@@ -1,8 +1,7 @@
 defmodule Upkeep.Coordinator.LoadedSource do
   @moduledoc false
 
-  alias Upkeep.Coordinator.Graph.Shard.Loaders
-  alias Upkeep.Coordinator.{Node, Subscriptions, Topology}
+  alias Upkeep.Coordinator.{Node, SourceLoader, Subscriptions, Topology}
   alias Upkeep.DAG.Store
   alias Upkeep.Source.LoadResult
 
@@ -60,7 +59,7 @@ defmodule Upkeep.Coordinator.LoadedSource do
   defp apply_loaded(state, %__MODULE__{node_id: node_id, node: %Node{} = node} = loaded) do
     state =
       if loaded.surface != node.surface do
-        Topology.reconcile_source(node_id, state.idx, node.surface, loaded.surface)
+        Topology.reconcile_source(node_id, loaded.surface)
         state
       else
         state
@@ -90,8 +89,8 @@ defmodule Upkeep.Coordinator.LoadedSource do
 
   def load_metadata(state, node_id, %Node{} = node, load_reason) do
     node.loader
-    |> Loaders.metadata()
-    |> Map.put(:shard, state.idx)
+    |> SourceLoader.metadata()
+    |> Map.put(:partition, Map.get(state, :partition))
     |> Map.put(:node_id, node_id)
     |> Map.put(:load_reason, load_reason)
     |> Map.put(:subscriber_count, subscriber_count(node))

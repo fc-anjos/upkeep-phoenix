@@ -1,4 +1,4 @@
-defmodule Upkeep.Coordinator.Graph.Shard.Loaders do
+defmodule Upkeep.Coordinator.SourceLoader do
   @moduledoc false
 
   alias Upkeep.Coordinator.{LoadedSource, Node}

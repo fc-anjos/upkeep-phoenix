@@ -10,7 +10,6 @@ defmodule Upkeep.Runtime.Result do
           {:assign, atom(), term()}
           | {:telemetry, [atom()], map(), map()}
           | {:register_source, term(), Upkeep.InvalidationSurface.t(), Upkeep.Source.Instance.t()}
-          | {:register_derived, term(), [term()], (map() -> term())}
           | {:unregister, term()}
   @type result(socket) :: {:ok, socket, [effect()]}
 
@@ -36,11 +35,6 @@ defmodule Upkeep.Runtime.Result do
     socket
   end
 
-  defp apply_one({:register_derived, node_id, dep_node_ids, compute_fn}, socket) do
-    :ok = Subscriptions.register_derived(node_id, dep_node_ids, compute_fn)
-    socket
-  end
-
   defp apply_one({:unregister, source_id}, socket) do
     Subscriptions.unregister(source_id)
     socket
@@ -57,7 +51,6 @@ defmodule Upkeep.Runtime.Result do
         assign_count: Map.get(effect_counts, :assign, 0),
         telemetry_count: Map.get(effect_counts, :telemetry, 0),
         register_source_count: Map.get(effect_counts, :register_source, 0),
-        register_derived_count: Map.get(effect_counts, :register_derived, 0),
         unregister_count: Map.get(effect_counts, :unregister, 0)
       }
     )
@@ -69,9 +62,6 @@ defmodule Upkeep.Runtime.Result do
 
   defp effect_kind({:register_source, _source_id, _surface, _instance}),
     do: :register_source
-
-  defp effect_kind({:register_derived, _node_id, _dep_node_ids, _compute_fn}),
-    do: :register_derived
 
   defp effect_kind(_effect), do: :unknown
 end

@@ -8,9 +8,15 @@ defmodule Upkeep.Source.Spec do
       |> Macro.expand(__CALLER__)
 
     retry = Keyword.get(opts, :retry, :default)
+    idle_ttl_ms = Keyword.get(opts, :idle_ttl_ms)
     query_adapter = Keyword.get(opts, :query_adapter)
 
-    quote bind_quoted: [repo: repo, retry: retry, query_adapter: query_adapter] do
+    quote bind_quoted: [
+            repo: repo,
+            retry: retry,
+            idle_ttl_ms: idle_ttl_ms,
+            query_adapter: query_adapter
+          ] do
       @behaviour Upkeep.Source
 
       import Upkeep.Source,
@@ -18,6 +24,7 @@ defmodule Upkeep.Source.Spec do
 
       @upkeep_repo repo
       @upkeep_retry retry
+      @upkeep_idle_ttl_ms idle_ttl_ms
       @upkeep_query_adapter query_adapter
       Module.register_attribute(__MODULE__, :upkeep_invalidators, accumulate: true)
       Module.register_attribute(__MODULE__, :upkeep_reactors, accumulate: true)
@@ -67,6 +74,7 @@ defmodule Upkeep.Source.Spec do
       reactors: reactors,
       repo: Module.get_attribute(env.module, :upkeep_repo),
       retry: Module.get_attribute(env.module, :upkeep_retry),
+      idle_ttl_ms: Module.get_attribute(env.module, :upkeep_idle_ttl_ms),
       query_adapter: Module.get_attribute(env.module, :upkeep_query_adapter),
       defines_load_1?: Module.defines?(env.module, {:load, 1}),
       defines_load_2?: Module.defines?(env.module, {:load, 2}),
@@ -109,6 +117,7 @@ defmodule Upkeep.Source.Spec do
       def __upkeep_query_source__?, do: unquote(definition.query_source?)
       def __upkeep_identity_aware__?, do: unquote(definition.identity_aware?)
       def __upkeep_retry__, do: unquote(Macro.escape(context.retry))
+      def __upkeep_idle_ttl_ms__, do: unquote(Macro.escape(context.idle_ttl_ms))
     end
   end
 

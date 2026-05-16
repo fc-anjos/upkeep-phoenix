@@ -24,6 +24,7 @@ defmodule Upkeep.Source.Instance do
     :repo_explicit?,
     :query_source?,
     :retry,
+    :idle_ttl_ms,
     :sharing_partition,
     :surface,
     :explicit_surface
@@ -37,6 +38,7 @@ defmodule Upkeep.Source.Instance do
             repo_explicit?: false,
             query_source?: false,
             retry: :default,
+            idle_ttl_ms: nil,
             sharing_partition: nil,
             surface: Upkeep.InvalidationSurface.empty(),
             explicit_surface: Upkeep.InvalidationSurface.empty()
@@ -51,6 +53,7 @@ defmodule Upkeep.Source.Instance do
           repo_explicit?: boolean(),
           query_source?: boolean(),
           retry: Upkeep.Source.Identity.retry_config(),
+          idle_ttl_ms: Upkeep.Source.Identity.idle_ttl_config(),
           sharing_partition: term(),
           surface: Upkeep.InvalidationSurface.t(),
           explicit_surface: Upkeep.InvalidationSurface.t()
@@ -74,6 +77,7 @@ defmodule Upkeep.Source.Instance do
       repo_explicit?: repo_explicit?(source),
       query_source?: query_source?(source),
       retry: Identity.retry_config(source),
+      idle_ttl_ms: Identity.idle_ttl_config(source),
       sharing_partition: Identity.sharing_partition(source, params),
       surface: surface(source, params, context),
       explicit_surface: explicit_surface(source, params)

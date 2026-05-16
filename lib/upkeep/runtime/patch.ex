@@ -6,7 +6,6 @@ defmodule Upkeep.Runtime.Patch do
 
   defstruct socket: nil,
             changed_nodes: [],
-            shared_nodes: [],
             removed_nodes: [],
             ignored: [],
             effects: [],
@@ -16,7 +15,6 @@ defmodule Upkeep.Runtime.Patch do
 
   def socket(%__MODULE__{socket: socket}), do: socket
   def changed_nodes(%__MODULE__{changed_nodes: changed_nodes}), do: changed_nodes
-  def shared_nodes(%__MODULE__{shared_nodes: shared_nodes}), do: shared_nodes
   def ignored(%__MODULE__{ignored: ignored}), do: ignored
   def effects(%__MODULE__{effects: effects}), do: effects
   def recompute_effects(%__MODULE__{recompute_effects: recompute_effects}), do: recompute_effects
@@ -35,12 +33,6 @@ defmodule Upkeep.Runtime.Patch do
 
   def put_derive_sharing(%__MODULE__{} = patch, node_id, metadata) when is_map(metadata) do
     replace_socket(patch, State.put_derive_sharing(patch.socket, node_id, metadata))
-  end
-
-  def put_shared_derived_node(%__MODULE__{} = patch, _node_id, nil), do: patch
-
-  def put_shared_derived_node(%__MODULE__{} = patch, node_id, graph_node_id) do
-    replace_socket(patch, State.put_shared_derived_node(patch.socket, node_id, graph_node_id))
   end
 
   def mark_changed(%__MODULE__{} = patch, node_ids) when is_list(node_ids) do
@@ -107,28 +99,6 @@ defmodule Upkeep.Runtime.Patch do
     replace_socket(patch, State.put_store(patch.socket, store))
   end
 
-  def put_shared_derived_value(%__MODULE__{} = patch, local_node_id, value) do
-    {store, changed?} =
-      patch.socket
-      |> State.store()
-      |> Store.seed(local_node_id, value)
-
-    socket = State.put_store(patch.socket, store)
-
-    patch =
-      patch
-      |> replace_socket(socket)
-      |> append_effects(Effects.assign_shared_derived(socket, local_node_id, value))
-
-    patch = %{patch | shared_nodes: patch.shared_nodes ++ [local_node_id]}
-
-    if changed? do
-      %{patch | changed_nodes: patch.changed_nodes ++ [local_node_id]}
-    else
-      patch
-    end
-  end
-
   def ignore(%__MODULE__{} = patch, reason, node_id) do
     %{patch | ignored: patch.ignored ++ [%{reason: reason, node_id: node_id}]}
   end
@@ -139,7 +109,7 @@ defmodule Upkeep.Runtime.Patch do
 
   def recompute(%__MODULE__{} = patch, remove_watch, opts)
       when is_function(remove_watch, 2) do
-    skip_node_ids = Keyword.get(opts, :skip, patch.shared_nodes)
+    skip_node_ids = Keyword.get(opts, :skip, [])
 
     {store, diff} =
       Telemetry.span([:dag, :recompute], %{changed_source_nodes: patch.changed_nodes}, fn ->

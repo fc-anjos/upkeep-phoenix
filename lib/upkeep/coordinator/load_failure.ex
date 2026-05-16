@@ -1,8 +1,7 @@
 defmodule Upkeep.Coordinator.LoadFailure do
   @moduledoc false
 
-  alias Upkeep.Coordinator.Graph.Shard.Loaders
-  alias Upkeep.Coordinator.{LoadedSource, Node}
+  alias Upkeep.Coordinator.{LoadedSource, Node, SourceLoader}
 
   defstruct [
     :node_id,
@@ -32,7 +31,7 @@ defmodule Upkeep.Coordinator.LoadFailure do
 
   def telemetry_metadata(state, %__MODULE__{} = failure) do
     failure.node.loader
-    |> Loaders.exception_metadata(failure.reason)
+    |> SourceLoader.exception_metadata(failure.reason)
     |> Map.merge(
       LoadedSource.load_metadata(
         state,

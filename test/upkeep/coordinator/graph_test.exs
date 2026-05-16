@@ -48,7 +48,7 @@ defmodule Upkeep.Coordinator.GraphTest do
   end
 
   setup tags do
-    _ = Map.get(tags, :shards, 4)
+    _ = tags
     Upkeep.Test.reset_graph()
     :ok
   end
@@ -74,7 +74,6 @@ defmodule Upkeep.Coordinator.GraphTest do
       event = %Ev{id: 200, tenant_id: 1}
 
       assert Group.member_count(Bus.group(), Bus.key()) >= 2
-      assert Group.member_count(Graph.group(), "graph/shard/") >= Graph.shard_count()
 
       :ok = Group.join(Bus.group(), Bus.key(), %{role: :test_subscriber})
 
@@ -128,18 +127,19 @@ defmodule Upkeep.Coordinator.GraphTest do
           message_count: 12,
           event_count: 1,
           source_node_count: 1,
-          shard_count: 1
+          source_process_count: 1
         )
 
       assert is_integer(flush_duration)
 
       assert DagMessages.receive_value(node_id) == :loaded_value
 
-      {%{system_time: system_time}, %{shard: shard, pair_count: pair_count}} =
+      {%{system_time: system_time},
+       %{backend: :source_process, partition: partition, pair_count: pair_count}} =
         TelemetryMessages.assert_event([:upkeep, :graph, :dispatch, :start])
 
       assert is_integer(system_time)
-      assert is_integer(shard)
+      assert partition != nil
       assert pair_count >= 1
 
       {%{duration: duration}, %{pid_count: pid_count}} =
@@ -179,7 +179,7 @@ defmodule Upkeep.Coordinator.GraphTest do
         message_count: 2,
         event_count: 2,
         source_node_count: 1,
-        shard_count: 1
+        source_process_count: 1
       )
 
       assert DagMessages.receive_value(node_id) == :loaded
@@ -230,7 +230,7 @@ defmodule Upkeep.Coordinator.GraphTest do
         message_count: 1,
         event_count: 1,
         source_node_count: 1,
-        shard_count: 1
+        source_process_count: 1
       )
 
       assert DagMessages.receive_value(node_id) == :loaded
@@ -389,12 +389,10 @@ defmodule Upkeep.Coordinator.GraphTest do
       attach_telemetry([[:upkeep, :graph, :source_load, :exception]])
 
       loads = :counters.new(1, [:atomics])
-      derived_computes = :counters.new(1, [:atomics])
 
       event = %Ev{id: 11, tenant_id: 1}
       surface = event_surface(event)
       node_id = {:failing_refresh_source, System.unique_integer()}
-      derived_id = {:failing_refresh_derived, System.unique_integer()}
 
       load_fn = fn ->
         :counters.add(loads, 1, 1)
@@ -406,22 +404,13 @@ defmodule Upkeep.Coordinator.GraphTest do
         end
       end
 
-      compute_fn = fn deps ->
-        :counters.add(derived_computes, 1, 1)
-        {:derived, Map.fetch!(deps, node_id)}
-      end
-
       :ok = Graph.register_loader(node_id, surface, load_fn)
-      :ok = Graph.register_derived(derived_id, [node_id], compute_fn)
 
       notify(event)
       :ok = Graph.drain()
 
-      batch = DagMessages.receive_batch()
-      assert {node_id, :stable_value} in batch
-      assert {derived_id, {:derived, :stable_value}} in batch
+      assert DagMessages.receive_value(node_id) == :stable_value
       assert :counters.get(loads, 1) == 1
-      assert :counters.get(derived_computes, 1) == 1
 
       log =
         capture_log(fn ->
@@ -450,13 +439,9 @@ defmodule Upkeep.Coordinator.GraphTest do
       assert is_integer(retry_delay_ms)
       assert retry_delay_ms >= 0
 
-      batch = DagMessages.receive_batch()
-      assert {node_id, :recovered_value} in batch
-      assert {derived_id, {:derived, :recovered_value}} in batch
+      assert DagMessages.receive_value(node_id) == :recovered_value
       assert :counters.get(loads, 1) == 3
-      assert :counters.get(derived_computes, 1) == 2
 
-      Graph.unregister(derived_id)
       Graph.unregister(node_id)
     end
 
@@ -605,201 +590,6 @@ defmodule Upkeep.Coordinator.GraphTest do
     end
   end
 
-  describe "derived nodes" do
-    test "source loads and derived recomputes are shared across many subscribers" do
-      source_loads = :counters.new(1, [:atomics])
-      derived_computes = :counters.new(1, [:atomics])
-
-      source_id = {:shared_source, System.unique_integer()}
-      derived_id = {:shared_derived, System.unique_integer()}
-      surface = event_surface(%Ev{id: 20, tenant_id: 1})
-
-      load_fn = fn ->
-        :counters.add(source_loads, 1, 1)
-        {[:a, :b], surface}
-      end
-
-      compute_fn = fn deps ->
-        :counters.add(derived_computes, 1, 1)
-        deps |> Map.fetch!(source_id) |> length()
-      end
-
-      :ok = Graph.register_loader(source_id, surface, load_fn)
-      :ok = Graph.register_derived(derived_id, [source_id], compute_fn)
-
-      subscribers =
-        start_subscribers(12, fn ->
-          :ok = Graph.register_loader(source_id, surface, load_fn)
-          :ok = Graph.register_derived(derived_id, [source_id], compute_fn)
-        end)
-
-      notify(%Ev{id: 20, tenant_id: 1})
-      :ok = Graph.drain()
-
-      batch = DagMessages.receive_batch()
-      assert {source_id, [:a, :b]} in batch
-      assert {derived_id, 2} in batch
-
-      assert :counters.get(source_loads, 1) <= 5
-      assert :counters.get(derived_computes, 1) <= 5
-      assert :counters.get(derived_computes, 1) == :counters.get(source_loads, 1)
-
-      Graph.unregister(derived_id)
-      Graph.unregister(source_id)
-      stop_subscribers(subscribers)
-    end
-
-    test "duplicate events coalesce before source load and derived recompute" do
-      source_loads = :counters.new(1, [:atomics])
-      derived_computes = :counters.new(1, [:atomics])
-
-      source_id = {:coalesced_source, System.unique_integer()}
-      derived_id = {:coalesced_derived, System.unique_integer()}
-      event = %Ev{id: 21, tenant_id: 1}
-      surface = event_surface(event)
-
-      load_fn = fn ->
-        :counters.add(source_loads, 1, 1)
-        {:value, surface}
-      end
-
-      compute_fn = fn deps ->
-        :counters.add(derived_computes, 1, 1)
-        Map.fetch!(deps, source_id)
-      end
-
-      :ok = Graph.register_loader(source_id, surface, load_fn)
-      :ok = Graph.register_derived(derived_id, [source_id], compute_fn)
-
-      Enum.each(1..12, fn _ -> notify(event) end)
-      :ok = Graph.drain()
-
-      batch = DagMessages.receive_batch()
-      assert {source_id, :value} in batch
-      assert {derived_id, :value} in batch
-
-      assert :counters.get(source_loads, 1) <= 5
-      assert :counters.get(derived_computes, 1) <= 5
-      assert :counters.get(derived_computes, 1) == :counters.get(source_loads, 1)
-
-      Graph.unregister(derived_id)
-      Graph.unregister(source_id)
-    end
-
-    test "recompute once when source changes; multi-shard, derived auto-colocates with source" do
-      source_loads = :counters.new(1, [:atomics])
-      derived_computes = :counters.new(1, [:atomics])
-
-      source_id = {:src, System.unique_integer()}
-      # Deliberately picked so phash2(derived_id) != phash2(source_id) —
-      # tests that register_derived/3 routes to the source's shard, not
-      # the derived's hash.
-      derived_id = {:der, System.unique_integer()}
-      surface = event_surface(%Ev{id: 7, tenant_id: 1})
-
-      load_fn = fn ->
-        :counters.add(source_loads, 1, 1)
-        {42, surface}
-      end
-
-      compute_fn = fn deps ->
-        :counters.add(derived_computes, 1, 1)
-        Map.fetch!(deps, source_id) * 2
-      end
-
-      :ok = Graph.register_loader(source_id, surface, load_fn)
-      :ok = Graph.register_derived(derived_id, [source_id], compute_fn)
-
-      Enum.each(1..12, fn _ -> notify(%Ev{id: 7, tenant_id: 1}) end)
-      :ok = Graph.drain()
-
-      batch = DagMessages.receive_batch()
-      assert {source_id, 42} in batch
-      assert {derived_id, 84} in batch
-
-      assert :counters.get(source_loads, 1) <= 5
-      assert :counters.get(derived_computes, 1) <= 5
-
-      Graph.unregister(derived_id)
-      Graph.unregister(source_id)
-    end
-
-    test "raises with a dependency plan when deps span multiple shards" do
-      shards = Graph.shard_count()
-
-      [src_a, src_b, src_c] = pick_colocated_split_triple(shards)
-
-      surface_a = event_surface(%Ev{id: 1, tenant_id: 1})
-      surface_b = event_surface(%Ev{id: 2, tenant_id: 1})
-      surface_c = event_surface(%Ev{id: 3, tenant_id: 1})
-
-      :ok = Graph.register_loader(src_a, surface_a, fn -> {nil, surface_a} end)
-      :ok = Graph.register_loader(src_b, surface_b, fn -> {nil, surface_b} end)
-      :ok = Graph.register_loader(src_c, surface_c, fn -> {nil, surface_c} end)
-
-      error =
-        assert_raise ArgumentError, fn ->
-          Graph.register_derived(
-            {:der_split, System.unique_integer()},
-            [src_a, src_b, src_c],
-            fn _ -> :unreachable end
-          )
-        end
-
-      message = Exception.message(error)
-
-      assert message =~ "deps split across shards"
-      assert message =~ "largest colocated dependency group"
-      assert message =~ inspect(src_a)
-      assert message =~ inspect(src_c)
-      assert message =~ "cross-shard recompute is not implemented"
-
-      Graph.unregister(src_a)
-      Graph.unregister(src_b)
-      Graph.unregister(src_c)
-    end
-  end
-
-  defp pick_colocated_split_triple(shards) when shards >= 2 do
-    candidates = Stream.map(1..10_000, &{:src, &1, System.unique_integer()})
-
-    groups =
-      candidates
-      |> Enum.take(10_000)
-      |> Enum.group_by(&generic_node_shard(&1, shards))
-
-    {same_shard, [a, c | _]} = Enum.find(groups, fn {_shard, ids} -> length(ids) >= 2 end)
-
-    {_other_shard, [b | _]} =
-      Enum.find(groups, fn {shard, ids} -> shard != same_shard and ids != [] end)
-
-    [a, b, c]
-  end
-
-  defp generic_node_shard(node_id, shards) do
-    :erlang.phash2({:node, node_id}, shards)
-  end
-
-  defp start_subscribers(count, register_fn) do
-    parent = self()
-
-    pids =
-      for _ <- 1..count do
-        spawn_link(fn ->
-          register_fn.()
-          send(parent, :ready)
-          subscriber_loop()
-        end)
-      end
-
-    for _ <- 1..count, do: receive(do: (:ready -> :ok))
-    pids
-  end
-
-  defp stop_subscribers(pids) do
-    Enum.each(pids, &send(&1, :stop))
-  end
-
   defp with_suspended_notifier(fun) do
     notifier = Process.whereis(Notifier)
     :ok = :sys.suspend(notifier)
@@ -808,15 +598,6 @@ defmodule Upkeep.Coordinator.GraphTest do
       fun.()
     after
       :ok = :sys.resume(notifier)
-    end
-  end
-
-  defp subscriber_loop do
-    receive do
-      :stop -> :ok
-      {:dag_values, _pairs} -> subscriber_loop()
-    after
-      5_000 -> :ok
     end
   end
 

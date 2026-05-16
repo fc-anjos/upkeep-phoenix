@@ -2,7 +2,6 @@ defmodule Upkeep.Runtime.Effects do
   @moduledoc false
 
   alias Upkeep.Runtime.Ids
-  alias Upkeep.Runtime.State
 
   def maybe_register_source(true, source_id, surface, producer) do
     instance = producer.instance
@@ -49,32 +48,9 @@ defmodule Upkeep.Runtime.Effects do
 
   def component_assigns(_value), do: []
 
-  def register_shared_derived(nil, _sharing_metadata), do: []
-
-  def register_shared_derived(graph_node_id, sharing_metadata) do
-    case Map.fetch(sharing_metadata, :compute_fn) do
-      {:ok, compute_fn} ->
-        [
-          {:register_derived, graph_node_id, Map.fetch!(sharing_metadata, :graph_dep_node_ids),
-           compute_fn}
-        ]
-
-      :error ->
-        []
-    end
-  end
-
   def assign_watch(watch, value) do
     Enum.flat_map(watch.assign_names, fn assign_name ->
       assign_source(assign_name, value, watch.source_id)
-    end)
-  end
-
-  def assign_shared_derived(socket, local_node_id, value) do
-    socket
-    |> State.assign_names_for_node(local_node_id)
-    |> Enum.flat_map(fn assign_name ->
-      assign_derived(assign_name, value, local_node_id)
     end)
   end
 end

@@ -36,6 +36,7 @@ defmodule Upkeep.Source.Identity do
   end
 
   @type retry_config :: :default | false | keyword()
+  @type idle_ttl_config :: nil | :infinity | non_neg_integer()
 
   @spec retry_config(module()) :: retry_config()
   def retry_config(source) when is_atom(source) do
@@ -43,6 +44,15 @@ defmodule Upkeep.Source.Identity do
       source.__upkeep_retry__()
     else
       :default
+    end
+  end
+
+  @spec idle_ttl_config(module()) :: idle_ttl_config()
+  def idle_ttl_config(source) when is_atom(source) do
+    if function_exported?(source, :__upkeep_idle_ttl_ms__, 0) do
+      source.__upkeep_idle_ttl_ms__()
+    else
+      nil
     end
   end
 end

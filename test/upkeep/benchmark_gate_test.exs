@@ -5,7 +5,7 @@ defmodule Upkeep.BenchmarkGateTest do
   @moduletag :benchmark
   @bench_watches 100
 
-  test "sharing benchmarks fire and pass their gates" do
+  test "source runtime benchmarks fire and pass their gates" do
     benchmark_specs()
     |> Task.async_stream(
       fn {path, assertions} -> {path, assertions, run_benchmark!(path)} end,
@@ -39,7 +39,8 @@ defmodule Upkeep.BenchmarkGateTest do
         env: [
           {"MIX_ENV", "test"},
           {"PORT", Integer.to_string(port)},
-          {"BENCH_WATCHES", Integer.to_string(@bench_watches)}
+          {"BENCH_WATCHES", Integer.to_string(@bench_watches)},
+          {"BENCH_SUBSCRIBERS", Integer.to_string(@bench_watches)}
         ],
         stderr_to_stdout: true
       )
@@ -57,25 +58,10 @@ defmodule Upkeep.BenchmarkGateTest do
          ~r/distinct\s+#{@bench_watches}\s+\d+\.\d+/,
          "\nOK\n"
        ]},
-      {"bench/initial_derived_sharing.exs",
+      {"bench/source_runtime_live_mixed.exs",
        [
-         "connected_derives=#{@bench_watches}",
-         ~r/same\s+1\s+1\s+\d+\.\d+/,
-         ~r/distinct\s+#{@bench_watches}\s+#{@bench_watches}\s+\d+\.\d+/,
-         "\nOK\n"
-       ]},
-      {"bench/initial_multi_source_derived_sharing.exs",
-       [
-         "connected_multi_source_derives=#{@bench_watches}",
-         ~r/same\s+1\s+\d+\.\d+/,
-         ~r/distinct\s+#{@bench_watches}\s+\d+\.\d+/,
-         ~r/cross\s+#{@bench_watches}\s+\d+\.\d+/,
-         "\nOK\n"
-       ]},
-      {"bench/steady_state_derived_sharing.exs",
-       [
-         "steady_state_subscribers=#{@bench_watches}",
-         ~r/update\s+1\s+1\s+#{@bench_watches}\s+\d+\.\d+/,
+         "source_runtime_live_mixed subscribers=#{@bench_watches}",
+         ~r/source_process\s+\d+\s+\d+\s+0\s+\d+\s+\d+\s+\d+/,
          "\nOK\n"
        ]}
     ]

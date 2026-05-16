@@ -15,7 +15,7 @@ defmodule Upkeep.LiveRefreshTest do
       socket: 0
     ]
 
-  alias Upkeep.TestSupport.{Config, DagMessages, TelemetryMessages}
+  alias Upkeep.TestSupport.{DagMessages, TelemetryMessages}
   alias Upkeep.TestSupport.LiveRefreshFixture, as: Fixture
 
   defmodule Issue do
@@ -375,78 +375,7 @@ defmodule Upkeep.LiveRefreshTest do
     )
   end
 
-  test "concurrent connected derives share the in-flight initial compute for the same source identity" do
-    attach_telemetry([
-      [:upkeep, :graph, :derived_initial, :miss],
-      [:upkeep, :graph, :derived_initial, :hit]
-    ])
-
-    test_pid = self()
-    user_id = System.unique_integer([:positive])
-
-    Fixture.seed_scoped_issues(user_id, [{user_id, :user_issue}])
-    Fixture.seed_load_counter(:shared_issue_count, user_id)
-    Fixture.block_derives_for(user_id, test_pid)
-
-    source_id = {ScopedIssues, %{user_id: user_id}}
-
-    graph_node_id =
-      {:derived, UpkeepWeb.KanbanLive, :issue_count, [source_id],
-       {__MODULE__, :shared_issue_count, 1}}
-
-    task_a =
-      Task.async(fn ->
-        connected_socket()
-        |> Live.watch(:issues, ScopedIssues, user_id: user_id)
-        |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
-      end)
-
-    assert_receive {:derived_compute_started, loader_pid, ^user_id}
-
-    task_b =
-      Task.async(fn ->
-        connected_socket()
-        |> Live.watch(:issues, ScopedIssues, user_id: user_id)
-        |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
-      end)
-
-    TelemetryMessages.assert_counted(
-      [:upkeep, :graph, :derived_initial, :hit],
-      %{
-        assign_name: :issue_count,
-        node_id: graph_node_id,
-        view: UpkeepWeb.KanbanLive,
-        dep_node_ids: [source_id],
-        sharing_partition: %{user_id: user_id},
-        dep_partitions: [{source_id, %{user_id: user_id}}],
-        fun: {__MODULE__, :shared_issue_count, 1}
-      }
-    )
-
-    send(loader_pid, :continue)
-
-    socket_a = Task.await(task_a)
-    socket_b = Task.await(task_b)
-
-    assert socket_a.assigns.issue_count == 1
-    assert socket_b.assigns.issue_count == 1
-    assert Fixture.load_count(:shared_issue_count, user_id) == 1
-
-    TelemetryMessages.assert_counted(
-      [:upkeep, :graph, :derived_initial, :miss],
-      %{
-        assign_name: :issue_count,
-        node_id: graph_node_id,
-        view: UpkeepWeb.KanbanLive,
-        dep_node_ids: [source_id],
-        sharing_partition: %{user_id: user_id},
-        dep_partitions: [{source_id, %{user_id: user_id}}],
-        fun: {__MODULE__, :shared_issue_count, 1}
-      }
-    )
-  end
-
-  test "connected derived sharing does not leak values across source params" do
+  test "connected derives do not leak values across source params" do
     user_a = System.unique_integer([:positive])
     user_b = System.unique_integer([:positive])
     Fixture.seed_scoped_issues(user_a, [{user_a, :user_a_issue}])
@@ -470,18 +399,14 @@ defmodule Upkeep.LiveRefreshTest do
     assert Fixture.load_count(:shared_issue_names, user_b) == 1
   end
 
-  test "derive sharing emits diagnostics for shared and local decisions" do
+  test "derive sharing diagnostics reflect source-process local derives" do
     attach_telemetry([[:upkeep, :derive, :sharing]])
 
     user_id = System.unique_integer([:positive])
     Fixture.seed_scoped_issues(user_id, [{user_id, :user_issue}])
     Fixture.seed_load_counter(:shared_issue_count, user_id)
 
-    shared_source_id = {ScopedIssues, %{user_id: user_id}}
-
-    shared_graph_id =
-      {:derived, UpkeepWeb.KanbanLive, :issue_count, [shared_source_id],
-       {__MODULE__, :shared_issue_count, 1}}
+    source_id = {ScopedIssues, %{user_id: user_id}}
 
     connected_socket()
     |> Live.watch(:issues, ScopedIssues, user_id: user_id)
@@ -491,14 +416,9 @@ defmodule Upkeep.LiveRefreshTest do
       [:upkeep, :derive, :sharing],
       %{
         assign_name: :issue_count,
-        result: :shared,
-        reason: :shareable,
-        graph_node_id: shared_graph_id,
-        dep_node_ids: [{:source, shared_source_id}],
-        graph_dep_node_ids: [shared_source_id],
-        sharing_partition: %{user_id: user_id},
-        dep_partitions: [{shared_source_id, %{user_id: user_id}}],
-        fun: {__MODULE__, :shared_issue_count, 1}
+        result: :local,
+        reason: :source_process_runtime,
+        dep_node_ids: [{:source, source_id}]
       }
     )
 
@@ -509,51 +429,7 @@ defmodule Upkeep.LiveRefreshTest do
     TelemetryMessages.assert_counted([:upkeep, :derive, :sharing], %{
       assign_name: :issue_count,
       result: :local,
-      reason: :disconnected_socket
-    })
-
-    issue_count_fn = fn %{issues: issues} -> length(issues) + user_id end
-
-    connected_socket()
-    |> Live.watch(:issues, ScopedIssues, user_id: user_id)
-    |> Live.derive(:issue_count, [:issues], issue_count_fn)
-
-    TelemetryMessages.assert_counted([:upkeep, :derive, :sharing], %{
-      assign_name: :issue_count,
-      result: :local,
-      reason: :captured_fun
-    })
-
-    connected_socket()
-    |> Live.component(:issue_detail, [], fn %{} -> %{issue_id: user_id} end)
-    |> Live.watch(:issues, ScopedIssues, [user_id: user_id], under: :issue_detail)
-    |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
-
-    TelemetryMessages.assert_counted([:upkeep, :derive, :sharing], %{
-      assign_name: :issue_count,
-      result: :local,
-      reason: :component_scoped_dep
-    })
-
-    local_marker = :local
-
-    connected_socket()
-    |> Live.watch(:issues, ScopedIssues, user_id: user_id)
-    |> Live.derive(:local_issues, [:issues], fn %{issues: issues} ->
-      {local_marker, issues} |> elem(1)
-    end)
-    |> Live.derive(:issue_count, [:local_issues], &__MODULE__.shared_local_issue_count/1)
-
-    TelemetryMessages.assert_counted([:upkeep, :derive, :sharing], %{
-      assign_name: :local_issues,
-      result: :local,
-      reason: :local_fun
-    })
-
-    TelemetryMessages.assert_counted([:upkeep, :derive, :sharing], %{
-      assign_name: :issue_count,
-      result: :local,
-      reason: :local_only_dep
+      reason: :source_process_runtime
     })
   end
 
@@ -582,82 +458,6 @@ defmodule Upkeep.LiveRefreshTest do
     assert socket.assigns.viewer_issue_count == {user_b, 1}
   end
 
-  test "capturing socket scope raises under strict policy before sharing data" do
-    Config.with_upkeep(:captured_scope_policy, :raise, fn ->
-      user_id = System.unique_integer([:positive])
-      Fixture.seed_source(:issues, user_id, [:user_issue])
-      Fixture.seed_load_counter(:captured_scope_label, user_id)
-
-      socket =
-        scoped_connected_socket(%{user_id: user_id})
-        |> Live.watch(:issues, ProjectIssues, project_id: user_id)
-
-      assert_raise Upkeep.Runtime.ImplicitScopeError, ~r/captures :socket/, fn ->
-        Live.derive(socket, :captured_scope_label, [:issues], fn %{issues: issues} ->
-          Fixture.bump_load({:loads, :captured_scope_label, user_id})
-          {socket.assigns.current_scope.user_id, issues}
-        end)
-      end
-
-      assert Fixture.load_count(:captured_scope_label, user_id) == 0
-    end)
-  end
-
-  test "capturing socket scope stays local with error telemetry in production policy" do
-    Config.with_upkeep(:captured_scope_policy, :telemetry, fn ->
-      attach_telemetry([[:upkeep, :derive, :sharing]])
-
-      user_a = System.unique_integer([:positive])
-      user_b = System.unique_integer([:positive])
-      Fixture.seed_source(:issues, user_a, [:shared_project_issue])
-      Fixture.seed_load_counter(:captured_scope_label, user_a)
-      Fixture.seed_load_counter(:captured_scope_label, user_b)
-
-      base_a =
-        scoped_connected_socket(%{user_id: user_a})
-        |> Live.watch(:issues, ProjectIssues, project_id: user_a)
-
-      base_b =
-        scoped_connected_socket(%{user_id: user_b})
-        |> Live.watch(:issues, ProjectIssues, project_id: user_a)
-
-      socket_a =
-        Live.derive(base_a, :captured_scope_label, [:issues], fn %{issues: issues} ->
-          current_user_id = base_a.assigns.current_scope.user_id
-          Fixture.bump_load({:loads, :captured_scope_label, current_user_id})
-          {current_user_id, issues}
-        end)
-
-      socket_b =
-        Live.derive(base_b, :captured_scope_label, [:issues], fn %{issues: issues} ->
-          current_user_id = base_b.assigns.current_scope.user_id
-          Fixture.bump_load({:loads, :captured_scope_label, current_user_id})
-          {current_user_id, issues}
-        end)
-
-      assert socket_a.assigns.captured_scope_label == {user_a, [:shared_project_issue]}
-      assert socket_b.assigns.captured_scope_label == {user_b, [:shared_project_issue]}
-      assert Fixture.load_count(:captured_scope_label, user_a) == 1
-      assert Fixture.load_count(:captured_scope_label, user_b) == 1
-
-      TelemetryMessages.assert_counted([:upkeep, :derive, :sharing], %{
-        assign_name: :captured_scope_label,
-        result: :local,
-        reason: :captured_scope,
-        severity: :error,
-        scope_capture: :socket
-      })
-
-      TelemetryMessages.assert_counted([:upkeep, :derive, :sharing], %{
-        assign_name: :captured_scope_label,
-        result: :local,
-        reason: :captured_scope,
-        severity: :error,
-        scope_capture: :socket
-      })
-    end)
-  end
-
   test "graph snapshot exposes derive sharing diagnostics" do
     user_id = System.unique_integer([:positive])
     Fixture.seed_scoped_issues(user_id, [{user_id, :user_issue}])
@@ -665,14 +465,10 @@ defmodule Upkeep.LiveRefreshTest do
 
     source_id = {ScopedIssues, %{user_id: user_id}}
 
-    shared_graph_id =
-      {:derived, UpkeepWeb.KanbanLive, :issue_count, [source_id],
-       {__MODULE__, :shared_issue_count, 1}}
-
     visible_extra = user_id
 
     socket =
-      connected_socket()
+      socket()
       |> Live.watch(:issues, ScopedIssues, user_id: user_id)
       |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
       |> Live.derive(:visible_count, [:issue_count], fn %{issue_count: count} ->
@@ -685,13 +481,9 @@ defmodule Upkeep.LiveRefreshTest do
              assign: :issue_count,
              node_id: {:derived, :issue_count},
              sharing: %{
-               result: :shared,
-               reason: :shareable,
-               graph_node_id: ^shared_graph_id,
-               graph_dep_node_ids: [^source_id],
-               sharing_partition: %{user_id: ^user_id},
-               dep_partitions: [{^source_id, %{user_id: ^user_id}}],
-               fun: {__MODULE__, :shared_issue_count, 1}
+               result: :local,
+               reason: :source_process_runtime,
+               dep_node_ids: [{:source, ^source_id}]
              }
            } = Enum.find(snapshot.assigns, &(&1.assign == :issue_count))
 
@@ -700,66 +492,13 @@ defmodule Upkeep.LiveRefreshTest do
              node_id: {:derived, :visible_count},
              sharing: %{
                result: :local,
-               reason: :captured_fun,
+               reason: :source_process_runtime,
                dep_node_ids: [{:derived, :issue_count}]
              }
            } = Enum.find(snapshot.assigns, &(&1.assign == :visible_count))
   end
 
-  test "concurrent connected derives share a chain of initial computes" do
-    attach_telemetry([[:upkeep, :graph, :derived_initial, :hit]])
-
-    test_pid = self()
-    user_id = System.unique_integer([:positive])
-
-    Fixture.seed_scoped_issues(user_id, [{user_id, :user_issue}])
-    Fixture.seed_load_counters([:shared_issue_stats, :shared_issue_label], user_id)
-    Fixture.block_derives_for(user_id, test_pid)
-
-    task_a =
-      Task.async(fn ->
-        connected_socket()
-        |> Live.watch(:issues, ScopedIssues, user_id: user_id)
-        |> Live.derive(:issue_stats, [:issues], &__MODULE__.shared_issue_stats/1)
-        |> Live.derive(:issue_label, [:issue_stats], &__MODULE__.shared_issue_label/1)
-      end)
-
-    assert_receive {:derived_compute_started, count_pid, ^user_id}
-
-    task_b =
-      Task.async(fn ->
-        connected_socket()
-        |> Live.watch(:issues, ScopedIssues, user_id: user_id)
-        |> Live.derive(:issue_stats, [:issues], &__MODULE__.shared_issue_stats/1)
-        |> Live.derive(:issue_label, [:issue_stats], &__MODULE__.shared_issue_label/1)
-      end)
-
-    TelemetryMessages.assert_counted([:upkeep, :graph, :derived_initial, :hit], %{
-      assign_name: :issue_stats
-    })
-
-    send(count_pid, :continue)
-
-    assert_receive {:derived_label_started, label_pid, ^user_id}
-
-    TelemetryMessages.assert_counted([:upkeep, :graph, :derived_initial, :hit], %{
-      assign_name: :issue_label
-    })
-
-    send(label_pid, :continue)
-
-    socket_a = Task.await(task_a)
-    socket_b = Task.await(task_b)
-
-    assert socket_a.assigns.issue_stats == %{user_id: user_id, count: 1}
-    assert socket_a.assigns.issue_label == "1 issue"
-    assert socket_b.assigns.issue_stats == %{user_id: user_id, count: 1}
-    assert socket_b.assigns.issue_label == "1 issue"
-    assert Fixture.load_count(:shared_issue_stats, user_id) == 1
-    assert Fixture.load_count(:shared_issue_label, user_id) == 1
-  end
-
-  test "connected chained derived sharing does not leak values across source params" do
+  test "connected chained derives do not leak values across source params" do
     user_a = System.unique_integer([:positive])
     user_b = System.unique_integer([:positive])
 
@@ -788,63 +527,7 @@ defmodule Upkeep.LiveRefreshTest do
     assert Fixture.load_count(:shared_user_label, user_b) == 1
   end
 
-  test "concurrent connected derives share a multi-source initial compute" do
-    attach_telemetry([[:upkeep, :graph, :derived_initial, :hit]])
-
-    test_pid = self()
-    user_id = System.unique_integer([:positive])
-
-    Fixture.seed_scoped_issues(user_id, [{user_id, :user_issue}])
-    Fixture.seed_scoped_activity(user_id, [{user_id, :user_activity}])
-    Fixture.seed_load_counter(:shared_dashboard_model, user_id)
-    Fixture.block_derives_for(user_id, test_pid)
-
-    task_a =
-      Task.async(fn ->
-        connected_socket()
-        |> Live.watch(:issues, ScopedIssues, user_id: user_id)
-        |> Live.watch(:activity, ScopedActivity, user_id: user_id)
-        |> Live.derive(
-          :dashboard_model,
-          [:issues, :activity],
-          &__MODULE__.shared_dashboard_model/1
-        )
-      end)
-
-    assert_receive {:dashboard_model_started, loader_pid, ^user_id}
-
-    task_b =
-      Task.async(fn ->
-        connected_socket()
-        |> Live.watch(:issues, ScopedIssues, user_id: user_id)
-        |> Live.watch(:activity, ScopedActivity, user_id: user_id)
-        |> Live.derive(
-          :dashboard_model,
-          [:issues, :activity],
-          &__MODULE__.shared_dashboard_model/1
-        )
-      end)
-
-    TelemetryMessages.assert_counted([:upkeep, :graph, :derived_initial, :hit], %{
-      assign_name: :dashboard_model
-    })
-
-    send(loader_pid, :continue)
-
-    socket_a = Task.await(task_a)
-    socket_b = Task.await(task_b)
-
-    assert socket_a.assigns.dashboard_model == %{
-             user_id: user_id,
-             issues: [:user_issue],
-             activity: [:user_activity]
-           }
-
-    assert socket_b.assigns.dashboard_model == socket_a.assigns.dashboard_model
-    assert Fixture.load_count(:shared_dashboard_model, user_id) == 1
-  end
-
-  test "same-param source modules are colocated for shared multi-source derives" do
+  test "multi-source derives emit source-process local diagnostics" do
     attach_telemetry([[:upkeep, :derive, :sharing]])
 
     project_id = System.unique_integer([:positive])
@@ -852,15 +535,6 @@ defmodule Upkeep.LiveRefreshTest do
     Fixture.seed_source(:issues, project_id, [:project_issue])
     Fixture.seed_source(:activity, project_id, [:project_activity])
     Fixture.seed_load_counter(:shared_project_dashboard_model, project_id)
-
-    source_ids = [
-      {ProjectIssues, %{project_id: project_id}},
-      {ProjectActivity, %{project_id: project_id}}
-    ]
-
-    graph_node_id =
-      {:derived, UpkeepWeb.KanbanLive, :project_dashboard_model, source_ids,
-       {__MODULE__, :shared_project_dashboard_model, 1}}
 
     socket =
       connected_socket()
@@ -884,20 +558,17 @@ defmodule Upkeep.LiveRefreshTest do
       [:upkeep, :derive, :sharing],
       %{
         assign_name: :project_dashboard_model,
-        result: :shared,
-        reason: :shareable,
-        graph_node_id: graph_node_id,
-        graph_dep_node_ids: source_ids,
-        sharing_partition: %{project_id: project_id},
-        dep_partitions: [
-          {{ProjectIssues, %{project_id: project_id}}, %{project_id: project_id}},
-          {{ProjectActivity, %{project_id: project_id}}, %{project_id: project_id}}
+        result: :local,
+        reason: :source_process_runtime,
+        dep_node_ids: [
+          {:source, {ProjectIssues, %{project_id: project_id}}},
+          {:source, {ProjectActivity, %{project_id: project_id}}}
         ]
       }
     )
   end
 
-  test "cross-partition multi-source derives fall back locally without leaking values" do
+  test "cross-partition multi-source derives do not leak values" do
     attach_telemetry([[:upkeep, :derive, :sharing]])
 
     project_id = System.unique_integer([:positive])
@@ -951,11 +622,7 @@ defmodule Upkeep.LiveRefreshTest do
       %{
         assign_name: :dashboard_model,
         result: :local,
-        reason: :cross_partition_dep,
-        dep_partitions: [
-          {{ScopedIssues, %{user_id: user_a}}, %{user_id: user_a}},
-          {{ProjectActivity, %{project_id: project_id}}, %{project_id: project_id}}
-        ]
+        reason: :source_process_runtime
       }
     )
 
@@ -964,16 +631,12 @@ defmodule Upkeep.LiveRefreshTest do
       %{
         assign_name: :dashboard_model,
         result: :local,
-        reason: :cross_partition_dep,
-        dep_partitions: [
-          {{ScopedIssues, %{user_id: user_b}}, %{user_id: user_b}},
-          {{ProjectActivity, %{project_id: project_id}}, %{project_id: project_id}}
-        ]
+        reason: :source_process_runtime
       }
     )
   end
 
-  test "connected multi-source derived sharing does not leak values across source params" do
+  test "connected multi-source derives do not leak values across source params" do
     user_a = System.unique_integer([:positive])
     user_b = System.unique_integer([:positive])
 
@@ -1012,7 +675,7 @@ defmodule Upkeep.LiveRefreshTest do
     assert Fixture.load_count(:shared_dashboard_model, user_b) == 1
   end
 
-  test "graph-pushed source updates reuse shared derived graph values" do
+  test "graph-pushed source updates recompute local derives" do
     attach_telemetry([
       [:upkeep, :graph, :dispatch, :stop],
       [:upkeep, :live, :dag_values, :apply],
@@ -1024,7 +687,7 @@ defmodule Upkeep.LiveRefreshTest do
     Fixture.seed_load_counter(:shared_issue_count, user_id)
 
     socket =
-      connected_socket()
+      socket()
       |> Live.watch(:issues, ScopedIssues, user_id: user_id)
       |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
 
@@ -1033,14 +696,14 @@ defmodule Upkeep.LiveRefreshTest do
 
     Fixture.set_source_value(:scoped_issues, user_id, [{user_id, :before}, {user_id, :after}])
 
-    socket = assert_shared_issue_graph_push_reused(socket, user_id)
+    socket = assert_source_push_recomputed_local_derive(socket, user_id)
 
     assert socket.assigns.issues == [{user_id, :before}, {user_id, :after}]
     assert socket.assigns.issue_count == 2
     assert Fixture.load_count(:shared_issue_count, user_id) == 2
   end
 
-  test "local derives recompute after graph-pushed shared derived values" do
+  test "local derives recompute after graph-pushed source values" do
     user_id = System.unique_integer([:positive])
     Fixture.seed_scoped_issues(user_id, [{user_id, :before}])
     Fixture.seed_load_counter(:shared_issue_count, user_id)
@@ -1048,7 +711,7 @@ defmodule Upkeep.LiveRefreshTest do
     extra = user_id
 
     socket =
-      connected_socket()
+      socket()
       |> Live.watch(:issues, ScopedIssues, user_id: user_id)
       |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
       |> Live.derive(:visible_count, [:issue_count], fn %{issue_count: count} -> count + extra end)
@@ -1057,7 +720,7 @@ defmodule Upkeep.LiveRefreshTest do
 
     Fixture.set_source_value(:scoped_issues, user_id, [{user_id, :before}, {user_id, :after}])
 
-    socket = assert_shared_issue_push_recomputed_local_derive(socket, user_id)
+    socket = assert_source_push_recomputed_derive_chain(socket, user_id)
 
     assert socket.assigns.issue_count == 2
     assert socket.assigns.visible_count == user_id + 2
@@ -1674,10 +1337,9 @@ defmodule Upkeep.LiveRefreshTest do
     }
   end
 
-  defp assert_shared_issue_graph_push_reused(socket, user_id) do
+  defp assert_source_push_recomputed_local_derive(socket, user_id) do
     issues = [{user_id, :before}, {user_id, :after}]
     source_id = {ScopedIssues, %{user_id: user_id}}
-    graph_node_id = shared_issue_count_node_id(source_id)
 
     Upkeep.Test.sync(fn ->
       assert :ok =
@@ -1688,26 +1350,23 @@ defmodule Upkeep.LiveRefreshTest do
 
     pairs = DagMessages.receive_batch()
     assert {source_id, issues} in pairs
-    assert {graph_node_id, 2} in pairs
 
     TelemetryMessages.assert_event([:upkeep, :graph, :dispatch, :stop],
       metadata: %{
         node_partitions: [
-          {source_id, %{user_id: user_id}},
-          {graph_node_id, %{user_id: user_id}}
+          {source_id, %{user_id: user_id}}
         ]
       }
     )
 
     flush_telemetry_messages()
     socket = Live.apply_dag_values(socket, pairs)
-    assert_shared_issue_push_apply_telemetry()
+    assert_source_push_apply_telemetry()
     socket
   end
 
-  defp assert_shared_issue_push_recomputed_local_derive(socket, user_id) do
+  defp assert_source_push_recomputed_derive_chain(socket, user_id) do
     source_id = {ScopedIssues, %{user_id: user_id}}
-    graph_node_id = shared_issue_count_node_id(source_id)
 
     assert :ok =
              %Issue{issue_id: user_id}
@@ -1715,7 +1374,7 @@ defmodule Upkeep.LiveRefreshTest do
              |> Upkeep.notify()
 
     pairs = DagMessages.receive_batch()
-    assert {graph_node_id, 2} in pairs
+    assert {source_id, [{user_id, :before}, {user_id, :after}]} in pairs
     Live.apply_dag_values(socket, pairs)
   end
 
@@ -1729,20 +1388,18 @@ defmodule Upkeep.LiveRefreshTest do
     DagMessages.refute_any()
   end
 
-  defp assert_shared_issue_push_apply_telemetry do
+  defp assert_source_push_apply_telemetry do
     {%{duration: apply_duration},
      %{
        changed_node_count: changed_node_count,
-       shared_node_count: shared_node_count,
        effect_count: effect_count,
        assign_effect_count: assign_effect_count,
        recompute_effect_count: recompute_effect_count
      }} =
-      TelemetryMessages.assert_counted([:upkeep, :live, :dag_values, :apply], pair_count: 2)
+      TelemetryMessages.assert_counted([:upkeep, :live, :dag_values, :apply], pair_count: 1)
 
     assert is_integer(apply_duration)
     assert changed_node_count >= 1
-    assert shared_node_count >= 1
     assert effect_count >= 2
     assert assign_effect_count >= 2
     assert recompute_effect_count >= 0
@@ -1759,11 +1416,6 @@ defmodule Upkeep.LiveRefreshTest do
     assert materialized_effect_count >= 2
     assert materialized_assign_count >= 2
     assert materialized_telemetry_count >= 2
-  end
-
-  defp shared_issue_count_node_id(source_id) do
-    {:derived, UpkeepWeb.KanbanLive, :issue_count, [source_id],
-     {__MODULE__, :shared_issue_count, 1}}
   end
 
   defp block_derive_if_configured(user_id, event, message) do

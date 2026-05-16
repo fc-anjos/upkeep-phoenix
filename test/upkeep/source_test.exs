@@ -85,6 +85,12 @@ defmodule Upkeep.SourceTest do
     def load(_params), do: []
   end
 
+  defmodule CustomIdleTTLLoad do
+    use Upkeep.Source, idle_ttl_ms: 123
+
+    def load(_params), do: []
+  end
+
   setup do
     Upkeep.Test.reset_graph()
 
@@ -127,6 +133,7 @@ defmodule Upkeep.SourceTest do
     assert instance.id == {BoardColumns, %{project_id: 123}}
     assert instance.repo == Application.get_env(:upkeep, :repo)
     assert instance.retry == :default
+    assert instance.idle_ttl_ms == nil
     assert instance.sharing_partition == %{project_id: 123}
 
     assert InvalidationSurface.keys(instance.surface) == [
@@ -134,6 +141,10 @@ defmodule Upkeep.SourceTest do
              {:upkeep_change, :inserted, Issue, [project_id: 123]},
              {:upkeep_change, :updated, Issue, [project_id: 123]}
            ]
+  end
+
+  test "source instance captures per-source idle TTL" do
+    assert Instance.build(CustomIdleTTLLoad, %{}).idle_ttl_ms == 123
   end
 
   test "source load result captures value, observed deps, surface, and coverage" do

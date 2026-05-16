@@ -110,7 +110,7 @@ defmodule Upkeep.Runtime.Mount do
     %Materializer.Assign{assign_name: assign_name} = single_materializer(spec)
     compute = compute_fun(producer)
 
-    {initial_value, graph_node_id, sharing_metadata} =
+    {initial_value, sharing_metadata} =
       Shared.initial_value(
         socket,
         assign_name,
@@ -131,7 +131,6 @@ defmodule Upkeep.Runtime.Mount do
       |> Patch.register_derived(spec.id, spec.deps, compute, initial_value, spec.metadata)
       |> Patch.put_assign_node(assign_name, spec.id)
       |> Patch.put_derive_sharing(spec.id, public_sharing_metadata)
-      |> Patch.put_shared_derived_node(spec.id, graph_node_id)
 
     value = Store.fetch!(State.store(Patch.socket(patch)), spec.id)
 
@@ -140,10 +139,9 @@ defmodule Upkeep.Runtime.Mount do
       effects =
         [
           {:telemetry, [:derive, :sharing], %{count: 1}, public_sharing_metadata},
-          {:telemetry, [:derive, :sharing_plan], %{count: 1}, sharing_plan}
-        ] ++
-          Effects.register_shared_derived(graph_node_id, sharing_metadata) ++
-          [{:assign, assign_name, value}]
+          {:telemetry, [:derive, :sharing_plan], %{count: 1}, sharing_plan},
+          {:assign, assign_name, value}
+        ]
 
       {:ok, socket, effects}
     end)

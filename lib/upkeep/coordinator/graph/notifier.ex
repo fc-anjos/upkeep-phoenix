@@ -3,7 +3,7 @@ defmodule Upkeep.Coordinator.Graph.Notifier do
 
   use GenServer
 
-  alias Upkeep.Coordinator.Shards
+  alias Upkeep.Coordinator.SourceProcesses
   alias Upkeep.Coordinator.Topology
 
   @max_batch_messages 1_000
@@ -86,24 +86,21 @@ defmodule Upkeep.Coordinator.Graph.Notifier do
   defp flush(%{events: events, message_count: message_count}) do
     started_at = System.monotonic_time()
 
-    routes =
+    source_node_ids =
       events
       |> Enum.flat_map(&Topology.affected_source_node_ids/1)
       |> Enum.uniq()
-      |> Enum.group_by(&Topology.shard_of_node/1)
 
-    Enum.each(routes, fn {shard, node_ids} ->
-      Shards.notify_source_nodes(shard, node_ids)
-    end)
+    Enum.each(source_node_ids, &SourceProcesses.invalidate/1)
 
     duration = System.monotonic_time() - started_at
 
-    emit_flush(events, message_count, routes, duration)
+    emit_flush(events, message_count, source_node_ids, duration)
 
     new_state()
   end
 
-  defp emit_flush(events, message_count, routes, duration) do
+  defp emit_flush(events, message_count, source_node_ids, duration) do
     event_count = MapSet.size(events)
 
     if event_count > 0 do
@@ -113,11 +110,8 @@ defmodule Upkeep.Coordinator.Graph.Notifier do
         %{
           message_count: message_count,
           event_count: event_count,
-          source_node_count:
-            routes
-            |> Map.values()
-            |> Enum.reduce(0, &(length(&1) + &2)),
-          shard_count: map_size(routes)
+          source_node_count: length(source_node_ids),
+          source_process_count: length(source_node_ids)
         }
       )
     end

@@ -145,9 +145,6 @@ defmodule Upkeep.Test do
   end
 
   defp allowable_pids do
-    shard_pids =
-      for idx <- 0..(Graph.shard_count() - 1), do: Process.whereis(Graph.shard_name(idx))
-
-    [Process.whereis(Graph.task_sup()) | shard_pids] |> Enum.reject(&is_nil/1)
+    [Process.whereis(Graph.task_sup())] |> Enum.reject(&is_nil/1)
   end
 end

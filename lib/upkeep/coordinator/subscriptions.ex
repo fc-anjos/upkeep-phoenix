@@ -36,15 +36,6 @@ defmodule Upkeep.Coordinator.Subscriptions do
     Group.monitor(@group, @source_prefix)
   end
 
-  def join_shard(idx, generation) do
-    Group.join(@group, shard_key(idx), %{
-      kind: :graph_shard,
-      shard: idx,
-      pid: self(),
-      generation: generation
-    })
-  end
-
   def members(encoded_key) do
     Group.members(@group, encoded_key)
   end
@@ -63,6 +54,4 @@ defmodule Upkeep.Coordinator.Subscriptions do
     |> Base.url_decode64!(padding: false)
     |> :erlang.binary_to_term()
   end
-
-  def shard_key(idx), do: "graph/shard/#{idx}"
 end

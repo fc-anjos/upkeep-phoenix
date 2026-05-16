@@ -117,7 +117,7 @@ defmodule Upkeep.ObservabilityTest do
              event.event == [:upkeep, :graph, :source_load, :stop] and
                event.metadata.source == ProjectIssues and
                event.metadata.load_reason == :refresh and
-               is_integer(event.metadata.shard) and
+               event.metadata.partition == %{project_id: project_id} and
                is_integer(event.metadata.subscriber_count) and
                is_integer(event.measurements.duration)
            end)
@@ -139,8 +139,6 @@ defmodule Upkeep.ObservabilityTest do
     project_id = System.unique_integer([:positive])
     :ets.insert(table, {{:issues, project_id}, [:before]})
 
-    source_node_id = {:source, {ProjectIssues, %{project_id: project_id}}}
-
     LiveSocket.connected_socket()
     |> Live.watch(:issues, ProjectIssues, project_id: project_id)
     |> Live.derive(:issue_count, [:issues], &__MODULE__.issue_count/1)
@@ -151,26 +149,23 @@ defmodule Upkeep.ObservabilityTest do
     assert Enum.any?(events, fn event ->
              event.event == [:upkeep, :derive, :sharing] and
                event.metadata.assign_name == :issue_count and
-               event.metadata.result == :shared and
-               event.metadata.reason == :shareable and
-               event.metadata.fun == {__MODULE__, :issue_count, 1}
+               event.metadata.result == :local and
+               event.metadata.reason == :source_process_runtime
            end)
 
     assert Enum.any?(events, fn event ->
              event.event == [:upkeep, :derive, :sharing] and
                event.metadata.assign_name == :local_count and
                event.metadata.result == :local and
-               event.metadata.reason == :local_fun
+               event.metadata.reason == :source_process_runtime
            end)
 
     assert Enum.any?(events, fn event ->
              event.event == [:upkeep, :derive, :sharing_plan] and
                event.metadata.final_result == :local and
-               event.metadata.final_reason == :local_fun and
-               event.metadata.roots == [{:derived, :issue_count}] and
-               event.metadata.largest_shareable_subgraphs == [
-                 [source_node_id, {:derived, :issue_count}]
-               ]
+               event.metadata.final_reason == :source_process_runtime and
+               event.metadata.roots == [] and
+               event.metadata.largest_shareable_subgraphs == []
            end)
   end
 
