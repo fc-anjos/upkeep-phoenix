@@ -14,6 +14,7 @@ defmodule Upkeep.MixProject do
       docs: docs(),
       boundary: boundary(),
       dialyzer: dialyzer(),
+      test_coverage: [tool: ExCoveralls],
       aliases: aliases(),
       deps: deps()
     ]
@@ -31,7 +32,14 @@ defmodule Upkeep.MixProject do
 
   def cli do
     [
-      preferred_envs: [precommit: :test]
+      preferred_envs: [
+        precommit: :test,
+        coveralls: :test,
+        "coveralls.detail": :test,
+        "coveralls.post": :test,
+        "coveralls.html": :test,
+        "coveralls.json": :test
+      ]
     ]
   end
 
@@ -63,7 +71,9 @@ defmodule Upkeep.MixProject do
         :missing_return,
         :overlapping_contract
       ],
-      plt_add_apps: [:ex_unit]
+      plt_add_apps: [:ex_unit],
+      plt_core_path: "priv/plts",
+      plt_local_path: "priv/plts"
     ]
   end
 
@@ -85,7 +95,8 @@ defmodule Upkeep.MixProject do
       {:ex_doc, "~> 0.38", only: :dev, runtime: false},
       {:benchee, "~> 1.3", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:excoveralls, "~> 0.18", only: :test}
     ]
   end
 

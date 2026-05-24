@@ -5,6 +5,9 @@
 # If you run "mix test --cover", coverage assets end up here.
 /cover/
 
+# Dialyzer PLT files.
+/priv/plts/
+
 # The directory Mix downloads your dependencies sources to.
 /deps/
 **/deps/
