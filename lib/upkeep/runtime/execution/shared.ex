@@ -243,6 +243,7 @@ defmodule Upkeep.Runtime.Execution.Shared do
     |> compute.()
   end
 
+  @spec raise_compute_error(term()) :: no_return()
   defp raise_compute_error({%module{} = exception, stack}) when is_list(stack) do
     if function_exported?(module, :exception, 1) do
       reraise exception, stack

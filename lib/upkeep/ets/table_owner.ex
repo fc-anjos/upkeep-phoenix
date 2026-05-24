@@ -75,12 +75,12 @@ defmodule Upkeep.ETS.TableOwner do
   # the owner has been restarted (so the owner re-owns and re-arms heirship).
   def handle_info({:"ETS-TRANSFER", table, _from, owner_name}, %{role: :keeper} = state)
       when is_atom(owner_name) do
-    give_back_when_available(table, owner_name)
+    _ = give_back_when_available(table, owner_name)
     {:noreply, state}
   end
 
   def handle_info({:give_back, table, owner_name}, %{role: :keeper} = state) do
-    give_back_when_available(table, owner_name)
+    _ = give_back_when_available(table, owner_name)
     {:noreply, state}
   end
 

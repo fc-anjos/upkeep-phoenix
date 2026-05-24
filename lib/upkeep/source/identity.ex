@@ -13,7 +13,7 @@ defmodule Upkeep.Source.Identity do
 
   @type source_id :: {module(), map()} | {:identity, {module(), map()}, term()}
 
-  @spec source_id(module(), map()) :: source_id()
+  @spec source_id(module(), map()) :: {module(), map()}
   def source_id(source, params) when is_atom(source) and is_map(params), do: {source, params}
 
   @spec source_id(module(), map(), Context.t() | nil) :: source_id()

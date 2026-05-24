@@ -158,7 +158,7 @@ defmodule Upkeep.Invalidation.ReadCache do
   # row at 0 via `read_gen`. Deleting the @generations row keeps that table
   # from growing monotonically as nodes are evicted over time.
   defp evict(node_id) do
-    :ets.update_counter(@generations, node_id, {2, 1}, {node_id, 0})
+    _ = :ets.update_counter(@generations, node_id, {2, 1}, {node_id, 0})
     :ets.delete(@values, node_id)
     SurfaceIndex.delete(@index, node_id)
     :ets.match_delete(@refs, {:_, node_id})

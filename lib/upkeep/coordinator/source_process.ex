@@ -437,7 +437,7 @@ defmodule Upkeep.Coordinator.SourceProcess do
   defp cancel_idle_timer(%{idle_timer_ref: nil} = state), do: state
 
   defp cancel_idle_timer(%{idle_timer_ref: {_timer_ref, process_ref}} = state) do
-    Process.cancel_timer(process_ref)
+    _ = Process.cancel_timer(process_ref)
     %{state | idle_timer_ref: nil}
   end
 
