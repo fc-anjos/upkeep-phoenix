@@ -9,6 +9,7 @@ defmodule Upkeep.Runtime.State do
             watch_index: SurfaceIndex.new(),
             store: nil,
             assign_nodes: %{},
+            shared_derived_nodes: %{},
             derive_sharing: %{},
             pending_refreshes: nil
 
@@ -119,6 +120,40 @@ defmodule Upkeep.Runtime.State do
     |> assign_nodes()
     |> Enum.filter(fn {_assign_name, assigned_node_id} -> assigned_node_id == node_id end)
     |> Enum.map(fn {assign_name, _node_id} -> assign_name end)
+  end
+
+  def put_shared_derived_node(socket, local_node_id, graph_node_id) do
+    runtime = fetch(socket)
+    shared_derived_nodes = Map.put(runtime.shared_derived_nodes, local_node_id, graph_node_id)
+
+    put(socket, %{runtime | shared_derived_nodes: shared_derived_nodes})
+  end
+
+  def delete_shared_derived_node(socket, local_node_id) do
+    runtime = fetch(socket)
+    shared_derived_nodes = Map.delete(runtime.shared_derived_nodes, local_node_id)
+
+    put(socket, %{runtime | shared_derived_nodes: shared_derived_nodes})
+  end
+
+  def shared_derived_nodes(socket) do
+    fetch(socket).shared_derived_nodes
+  end
+
+  def shared_derived_graph_node(socket, local_node_id) do
+    case Map.fetch(shared_derived_nodes(socket), local_node_id) do
+      {:ok, graph_node_id} -> {:ok, graph_node_id}
+      :error -> :error
+    end
+  end
+
+  def local_shared_derived_node(socket, graph_node_id) do
+    socket
+    |> shared_derived_nodes()
+    |> Enum.find_value(:error, fn
+      {local_node_id, ^graph_node_id} -> {:ok, local_node_id}
+      {_local_node_id, _graph_node_id} -> false
+    end)
   end
 
   def put_derive_sharing(socket, node_id, metadata) when is_map(metadata) do

@@ -69,6 +69,54 @@ defmodule Upkeep.Coordinator.GraphTest do
 
   defp notify(event), do: Upkeep.Invalidation.dispatch(event)
 
+  describe "derived nodes" do
+    test "derived processes share compute and dispatch dependency updates" do
+      source_id = {:derived_process_source, System.unique_integer([:positive])}
+      derived_id = {:derived_process_node, System.unique_integer([:positive])}
+      surface = event_surface(%Ev{id: 301, tenant_id: 1})
+      compute_count = :counters.new(1, [:atomics])
+
+      :ok =
+        Graph.register_loader(source_id, surface, fn ->
+          {2, surface}
+        end)
+
+      compute = fn values ->
+        :counters.add(compute_count, 1, 1)
+        Map.fetch!(values, source_id) * 2
+      end
+
+      assert {:ok, 2} =
+               Graph.register_derived_and_compute(
+                 derived_id,
+                 [source_id],
+                 %{source_id => 1},
+                 compute,
+                 %{}
+               )
+
+      assert {:ok, 2} =
+               Graph.register_derived_and_compute(
+                 derived_id,
+                 [source_id],
+                 %{source_id => 1},
+                 compute,
+                 %{}
+               )
+
+      assert :counters.get(compute_count, 1) == 1
+
+      notify(%Ev{id: 301, tenant_id: 1})
+      :ok = Graph.drain()
+
+      assert DagMessages.receive_value(derived_id) == 4
+      assert :counters.get(compute_count, 1) == 2
+
+      Graph.unregister(derived_id)
+      Graph.unregister(source_id)
+    end
+  end
+
   describe "source nodes" do
     test "invalidation dispatch reaches the invalidation bus" do
       event = %Ev{id: 200, tenant_id: 1}

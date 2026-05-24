@@ -35,6 +35,13 @@ defmodule Upkeep.Runtime.Patch do
     replace_socket(patch, State.put_derive_sharing(patch.socket, node_id, metadata))
   end
 
+  def put_shared_derived_node(%__MODULE__{} = patch, local_node_id, graph_node_id) do
+    replace_socket(
+      patch,
+      State.put_shared_derived_node(patch.socket, local_node_id, graph_node_id)
+    )
+  end
+
   def mark_changed(%__MODULE__{} = patch, node_ids) when is_list(node_ids) do
     %{patch | changed_nodes: patch.changed_nodes ++ node_ids}
   end
@@ -64,6 +71,31 @@ defmodule Upkeep.Runtime.Patch do
     patch
     |> put_source(watch.source_id, value, Ids.source_deps(watch.component), track_change?: true)
     |> append_effects(Effects.assign_watch(watch, value))
+  end
+
+  def put_shared_derived_value(%__MODULE__{} = patch, graph_node_id, value) do
+    case State.local_shared_derived_node(patch.socket, graph_node_id) do
+      {:ok, local_node_id} ->
+        {store, changed?} =
+          patch.socket
+          |> State.store()
+          |> Store.seed(local_node_id, value)
+
+        patch = replace_socket(patch, State.put_store(patch.socket, store))
+
+        if changed? do
+          patch
+          |> mark_changed([local_node_id])
+          |> append_effects(
+            assign_shared_derived_node_effects(patch.socket, local_node_id, value)
+          )
+        else
+          patch
+        end
+
+      :error ->
+        ignore(patch, :unknown_shared_derived, graph_node_id)
+    end
   end
 
   def put_component(%__MODULE__{} = patch, node_id, deps, compute, metadata, component_id)
@@ -109,7 +141,11 @@ defmodule Upkeep.Runtime.Patch do
 
   def recompute(%__MODULE__{} = patch, remove_watch, opts)
       when is_function(remove_watch, 2) do
-    skip_node_ids = Keyword.get(opts, :skip, [])
+    skip_node_ids =
+      opts
+      |> Keyword.get(:skip, [])
+      |> Enum.concat(shared_skip_node_ids(patch.socket))
+      |> Enum.uniq()
 
     {store, diff} =
       Telemetry.span([:dag, :recompute], %{changed_source_nodes: patch.changed_nodes}, fn ->
@@ -164,12 +200,20 @@ defmodule Upkeep.Runtime.Patch do
     assign_names =
       Enum.flat_map(removed_node_ids, &State.assign_names_for_node(patch.socket, &1))
 
+    {socket, removed_shared_graph_node_ids} =
+      remove_shared_derived_nodes(patch.socket, removed_node_ids)
+
     socket =
-      Enum.reduce(assign_names, State.put_store(patch.socket, store), fn assign_name, socket ->
+      Enum.reduce(assign_names, State.put_store(socket, store), fn assign_name, socket ->
         State.delete_assign_node(socket, assign_name)
       end)
 
-    %{patch | socket: socket, removed_nodes: patch.removed_nodes ++ removed_node_ids}
+    patch = %{patch | socket: socket, removed_nodes: patch.removed_nodes ++ removed_node_ids}
+
+    append_effects(
+      patch,
+      Enum.map(removed_shared_graph_node_ids, &{:unregister, &1})
+    )
   end
 
   def put_runtime_metadata(store, _node_id, nil), do: store
@@ -218,6 +262,16 @@ defmodule Upkeep.Runtime.Patch do
     end)
   end
 
+  defp assign_shared_derived_node_effects(socket, node_id, value) do
+    {:ok, graph_node_id} = State.shared_derived_graph_node(socket, node_id)
+
+    socket
+    |> State.assign_names_for_node(node_id)
+    |> Enum.flat_map(fn assign_name ->
+      Effects.assign_shared_derived(assign_name, value, node_id, graph_node_id)
+    end)
+  end
+
   defp put_recompute_effects(%__MODULE__{} = patch, effects) do
     %{patch | recompute_effects: patch.recompute_effects ++ effects}
   end
@@ -241,5 +295,23 @@ defmodule Upkeep.Runtime.Patch do
   defp seed_value(store, id, value) do
     {store, _changed?} = Store.seed(store, id, value)
     store
+  end
+
+  defp shared_skip_node_ids(socket) do
+    socket
+    |> State.shared_derived_nodes()
+    |> Map.keys()
+  end
+
+  defp remove_shared_derived_nodes(socket, removed_node_ids) do
+    Enum.reduce(removed_node_ids, {socket, []}, fn node_id, {socket, graph_node_ids} ->
+      case State.shared_derived_graph_node(socket, node_id) do
+        {:ok, graph_node_id} ->
+          {State.delete_shared_derived_node(socket, node_id), [graph_node_id | graph_node_ids]}
+
+        :error ->
+          {socket, graph_node_ids}
+      end
+    end)
   end
 end

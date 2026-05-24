@@ -150,22 +150,23 @@ defmodule Upkeep.ObservabilityTest do
              event.event == [:upkeep, :derive, :sharing] and
                event.metadata.assign_name == :issue_count and
                event.metadata.result == :local and
-               event.metadata.reason == :source_process_runtime
+               event.metadata.reason == :single_subscriber_dependency
            end)
 
     assert Enum.any?(events, fn event ->
              event.event == [:upkeep, :derive, :sharing] and
                event.metadata.assign_name == :local_count and
                event.metadata.result == :local and
-               event.metadata.reason == :source_process_runtime
+               event.metadata.reason == :captured_function
            end)
 
     assert Enum.any?(events, fn event ->
              event.event == [:upkeep, :derive, :sharing_plan] and
                event.metadata.final_result == :local and
-               event.metadata.final_reason == :source_process_runtime and
-               event.metadata.roots == [] and
-               event.metadata.largest_shareable_subgraphs == []
+               event.metadata.final_reason == :single_subscriber_dependency and
+               event.metadata.roots == [
+                 {:source, {ProjectIssues, %{project_id: project_id}}}
+               ]
            end)
   end
 

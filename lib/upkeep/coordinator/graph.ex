@@ -2,6 +2,7 @@ defmodule Upkeep.Coordinator.Graph do
   @moduledoc false
 
   alias Upkeep.Coordinator.Graph.Notifier
+  alias Upkeep.Coordinator.DerivedProcesses
   alias Upkeep.Coordinator.SourceProcesses
   alias Upkeep.Coordinator.Subscriptions
   alias Upkeep.Coordinator.Topology
@@ -36,6 +37,26 @@ defmodule Upkeep.Coordinator.Graph do
     {:ok, result}
   end
 
+  def register_derived_and_compute(node_id, dep_node_ids, dep_values, compute, metadata)
+      when is_list(dep_node_ids) and is_map(dep_values) and is_function(compute, 1) do
+    :ok = Subscriptions.subscribe(node_id)
+
+    case DerivedProcesses.register_and_compute(
+           node_id,
+           dep_node_ids,
+           dep_values,
+           compute,
+           metadata
+         ) do
+      {:ok, value} ->
+        {:ok, value}
+
+      {:error, reason} ->
+        :ok = Subscriptions.unsubscribe(node_id)
+        {:error, reason}
+    end
+  end
+
   def register_loader(node_id, %InvalidationSurface{} = surface, load_fn)
       when is_function(load_fn, 0) do
     :ok = SourceProcesses.register_loader(node_id, surface, load_fn)
@@ -46,7 +67,8 @@ defmodule Upkeep.Coordinator.Graph do
     :ok = Subscriptions.unsubscribe(node_id)
 
     if Subscriptions.member_count(Subscriptions.source_key(node_id)) == 0 do
-      SourceProcesses.release(node_id)
+      :ok = SourceProcesses.release(node_id)
+      DerivedProcesses.release(node_id)
     else
       :ok
     end
@@ -60,9 +82,11 @@ defmodule Upkeep.Coordinator.Graph do
   def drain do
     Notifier.drain()
     SourceProcesses.drain_all()
+    DerivedProcesses.drain_all()
   end
 
   def reset do
+    DerivedProcesses.reset_all()
     SourceProcesses.reset_all()
     Topology.reset()
 

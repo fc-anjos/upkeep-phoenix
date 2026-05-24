@@ -3,6 +3,7 @@ defmodule Upkeep.Coordinator.Supervisor do
 
   use Supervisor
 
+  alias Upkeep.Coordinator.DerivedProcesses
   alias Upkeep.Coordinator.SourceProcesses
   alias Upkeep.Coordinator.Topology
 
@@ -17,6 +18,7 @@ defmodule Upkeep.Coordinator.Supervisor do
 
     children =
       SourceProcesses.child_specs() ++
+        DerivedProcesses.child_specs() ++
         [
           Upkeep.Coordinator.Graph.Notifier
         ]

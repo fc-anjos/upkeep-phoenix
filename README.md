@@ -1,10 +1,9 @@
 # Upkeep
 
-Upkeep is a Phoenix LiveView runtime for domain-reactive server UI.
+Upkeep refreshes Phoenix LiveView assigns when the data they depend on changes.
 
-LiveViews watch named **sources**. Each source has an invalidation **surface**:
-the set of facts that would make its value stale. Writes emit those facts, and
-Upkeep refreshes only the watched assigns whose surface matches.
+LiveViews watch named sources. Writes through your repo or explicit domain facts
+mark those sources stale, and Upkeep refreshes the matching assigns.
 
 ## Why Upkeep
 
@@ -18,7 +17,7 @@ def handle_event("rename_item", %{"item" => params}, socket) do
   items = Catalog.list_items(socket.assigns.project_id)
   activity = Catalog.recent_activity(socket.assigns.project_id)
   visible_items =
-    Catalog.visible_items(socket.assigns.project_id, socket.assigns.current_user.id)
+    Catalog.visible_items(socket.assigns.project_id, socket.assigns.current_scope)
 
   socket =
     socket
@@ -54,12 +53,12 @@ derived values recompute, and unrelated watches are left alone.
 Upkeep is early alpha. Application code should start from the documented public
 entry points:
 
-- `Upkeep`
-- `Upkeep.Ecto.Repo`
-- `Upkeep.Ecto.Source`
-- `Upkeep.Source`
-- `Upkeep.Live`
-- `Upkeep.Test`
+- `Upkeep` - mutation and read helpers.
+- `Upkeep.Ecto.Repo` - repo capture for committed Ecto writes.
+- `Upkeep.Ecto.Source` - Ecto-backed sources.
+- `Upkeep.Source` - non-Ecto sources.
+- `Upkeep.Live` - LiveView integration.
+- `Upkeep.Test` - test helpers.
 
 Telemetry, internal modules, and undocumented runtime details may change during
 alpha.
@@ -88,7 +87,7 @@ matches writes on the `items` table where `project_id` is `42` and the row is
 not archived.
 
 For non-Ecto sources (ETS, files, caches, external APIs) declare the surface
-explicitly with `invalidated_by/2` or `reacts_to/2`.
+explicitly with `invalidated_by(...)`.
 
 On commit, Upkeep matches the write against every active surface and refreshes
 only the sources it touches.
@@ -144,9 +143,9 @@ Configure the default repo:
 config :upkeep, repo: MyApp.Repo
 ```
 
-`Upkeep.Ecto.Repo` provides the same public Ecto Repo API while capturing
-committed inserts, updates, deletes, bulk writes, direct transactions, and
-`Ecto.Multi` operations.
+`Upkeep.Ecto.Repo` uses `Ecto.Repo` under the hood and adds capture around
+write functions. It keeps the public Repo API while capturing committed inserts,
+updates, deletes, bulk writes, direct transactions, and `Ecto.Multi` operations.
 
 ### 3. Define A Source
 
@@ -211,14 +210,17 @@ def handle_event("rename_item", %{"item" => %{"id" => id, "name" => name}}, sock
 end
 ```
 
-After the commit, Upkeep reloads `ProjectItems`, recomputes `:item_count`, and
-pushes the new assigns to the LiveView.
+After the commit, Upkeep dispatches an invalidation, reloads `ProjectItems`,
+recomputes `:item_count`, and sends updated assigns to the LiveView.
 
 ## Repo Capture Details
 
 Ecto-backed sources refresh automatically when the source exposes what it reads
 and the repo emits committed writes. A specific write can opt out with
 `upkeep: false`.
+
+Inside transactions, Upkeep journals captured changes and dispatches them only
+when the outer transaction commits.
 
 Upkeep starts through its own OTP application when it is included as a normal
 runtime dependency, so Phoenix applications should not add `{Upkeep, []}` to
@@ -267,7 +269,7 @@ end
 outside a source, call your repo directly.
 
 Non-Ecto reads, spawned task reads, ETS, files, caches, external APIs, and
-process state need an explicit surface. Declare it with `invalidated_by/2`:
+process state need an explicit surface. Declare it with `invalidated_by(...)`:
 
 ```elixir
 defmodule MyApp.Search.Sources.Results do
@@ -280,9 +282,6 @@ defmodule MyApp.Search.Sources.Results do
   end
 end
 ```
-
-Use `reacts_to(name, fun)` or `reacts_to(name, opts, fun)` when field matching
-needs custom logic.
 
 ## Mutations
 
@@ -297,7 +296,7 @@ Upkeep.mutate(fn ->
 end)
 ```
 
-Manual record changes can use typed helpers:
+Manual record changes can use `Upkeep.updated(new_item, from: old_item)`:
 
 ```elixir
 old_item = item
@@ -396,8 +395,10 @@ setup do
 end
 ```
 
-When a synchronous test performs a mutation and immediately asserts on refreshed
-assigns, wrap the mutation with `Upkeep.Test.sync(fn -> ... end)`:
+### Synchronous Assertions
+
+When a test performs a mutation and immediately asserts on refreshed assigns,
+wrap the mutation with `Upkeep.Test.sync(fn -> ... end)`:
 
 ```elixir
 Upkeep.Test.sync(fn ->
@@ -405,9 +406,7 @@ Upkeep.Test.sync(fn ->
 end)
 ```
 
-## Adapter Notes
-
-### SQLite
+## SQLite Notes
 
 `ecto_sqlite3` apps must set `default_transaction_mode: :immediate` in every
 environment. Without it, WAL pool connections can hold stale read snapshots and

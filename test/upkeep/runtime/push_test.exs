@@ -36,7 +36,8 @@ defmodule Upkeep.Runtime.PushTest do
         ignored_count: 3,
         ignored_reason_counts: %{
           unwatched_source: 1,
-          stale_push: 2
+          unknown_shared_derived: 1,
+          stale_push: 1
         }
       }
     )
@@ -45,8 +46,14 @@ defmodule Upkeep.Runtime.PushTest do
 
     TelemetryMessages.assert_counted(
       [:upkeep, :live, :dag_values, :ignored],
-      %{reason: :stale_push, node_id: nil, node_ids: [shared_id, stale_id]},
-      measurements: %{count: 2}
+      %{reason: :unknown_shared_derived, node_id: shared_id, node_ids: [shared_id]},
+      measurements: %{count: 1}
+    )
+
+    TelemetryMessages.assert_counted(
+      [:upkeep, :live, :dag_values, :ignored],
+      %{reason: :stale_push, node_id: stale_id, node_ids: [stale_id]},
+      measurements: %{count: 1}
     )
   end
 

@@ -35,6 +35,19 @@ defmodule Upkeep.Runtime.Effects do
     ]
   end
 
+  def assign_shared_derived(assign_name, value, node_id, graph_node_id) do
+    [
+      {:telemetry, [:live, :assign], %{count: 1},
+       %{
+         assign: assign_name,
+         node_id: node_id,
+         graph_node_id: graph_node_id,
+         kind: :derived
+       }},
+      {:assign, assign_name, value}
+    ]
+  end
+
   def component_assigns(value) when is_map(value) do
     value
     |> Enum.flat_map(fn

@@ -47,7 +47,17 @@ defmodule Upkeep.Runtime.Push do
         Patch.put_watch_value(patch, watch, value)
 
       :error ->
-        Patch.ignore(patch, ignored_reason(source_id), source_id)
+        put_pushed_shared_value(patch, source_id, value)
+    end
+  end
+
+  defp put_pushed_shared_value(%Patch{} = patch, graph_node_id, value) do
+    case State.local_shared_derived_node(Patch.socket(patch), graph_node_id) do
+      {:ok, _local_node_id} ->
+        Patch.put_shared_derived_value(patch, graph_node_id, value)
+
+      :error ->
+        Patch.ignore(patch, ignored_reason(graph_node_id), graph_node_id)
     end
   end
 
@@ -55,6 +65,9 @@ defmodule Upkeep.Runtime.Push do
 
   defp ignored_reason({:scoped, _component, {_source, params}}) when is_map(params),
     do: :unwatched_source
+
+  defp ignored_reason({:derived, _view, _assign_name, _dep_graph_node_ids, _fun_identity}),
+    do: :unknown_shared_derived
 
   defp ignored_reason(_node_id), do: :stale_push
 

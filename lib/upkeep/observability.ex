@@ -48,6 +48,9 @@ defmodule Upkeep.Observability do
     [:upkeep, :graph, :source_load, :start],
     [:upkeep, :graph, :source_load, :stop],
     [:upkeep, :graph, :source_load, :exception],
+    [:upkeep, :graph, :derived_compute, :start],
+    [:upkeep, :graph, :derived_compute, :stop],
+    [:upkeep, :graph, :derived_compute, :exception],
     [:upkeep, :coordinator, :dispatch, :start],
     [:upkeep, :coordinator, :dispatch, :stop],
     [:upkeep, :coordinator, :dispatch, :exception]

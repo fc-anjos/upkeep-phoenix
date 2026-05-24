@@ -13,6 +13,10 @@ defmodule Upkeep.Runtime.Subscriptions do
     Graph.register_source_and_load(source_id, surface, instance)
   end
 
+  def register_derived_and_compute(graph_node_id, dep_node_ids, dep_values, compute, metadata) do
+    Graph.register_derived_and_compute(graph_node_id, dep_node_ids, dep_values, compute, metadata)
+  end
+
   def unregister(source_id) do
     Graph.unregister(source_id)
   end
@@ -30,6 +34,12 @@ defmodule Upkeep.Runtime.Subscriptions do
 
   def source_member_count(source_id) do
     source_id
+    |> Graph.source_key()
+    |> Graph.member_count()
+  end
+
+  def node_member_count(node_id) do
+    node_id
     |> Graph.source_key()
     |> Graph.member_count()
   end

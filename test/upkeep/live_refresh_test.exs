@@ -399,7 +399,7 @@ defmodule Upkeep.LiveRefreshTest do
     assert Fixture.load_count(:shared_issue_names, user_b) == 1
   end
 
-  test "derive sharing diagnostics reflect source-process local derives" do
+  test "derive sharing diagnostics reflect shared and local derives" do
     attach_telemetry([[:upkeep, :derive, :sharing]])
 
     user_id = System.unique_integer([:positive])
@@ -407,6 +407,11 @@ defmodule Upkeep.LiveRefreshTest do
     Fixture.seed_load_counter(:shared_issue_count, user_id)
 
     source_id = {ScopedIssues, %{user_id: user_id}}
+    hold_graph_subscription(source_id)
+
+    graph_node_id =
+      {:derived, UpkeepWeb.KanbanLive, :issue_count, [source_id],
+       {__MODULE__, :shared_issue_count, 1}}
 
     connected_socket()
     |> Live.watch(:issues, ScopedIssues, user_id: user_id)
@@ -416,8 +421,10 @@ defmodule Upkeep.LiveRefreshTest do
       [:upkeep, :derive, :sharing],
       %{
         assign_name: :issue_count,
-        result: :local,
-        reason: :source_process_runtime,
+        result: :shared,
+        reason: :external_fun,
+        graph_node_id: graph_node_id,
+        dep_graph_node_ids: [source_id],
         dep_node_ids: [{:source, source_id}]
       }
     )
@@ -429,7 +436,7 @@ defmodule Upkeep.LiveRefreshTest do
     TelemetryMessages.assert_counted([:upkeep, :derive, :sharing], %{
       assign_name: :issue_count,
       result: :local,
-      reason: :source_process_runtime
+      reason: :not_connected
     })
   end
 
@@ -468,8 +475,12 @@ defmodule Upkeep.LiveRefreshTest do
     visible_extra = user_id
 
     socket =
-      socket()
+      connected_socket()
       |> Live.watch(:issues, ScopedIssues, user_id: user_id)
+      |> then(fn socket ->
+        hold_graph_subscription(source_id)
+        socket
+      end)
       |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
       |> Live.derive(:visible_count, [:issue_count], fn %{issue_count: count} ->
         count + visible_extra
@@ -481,9 +492,10 @@ defmodule Upkeep.LiveRefreshTest do
              assign: :issue_count,
              node_id: {:derived, :issue_count},
              sharing: %{
-               result: :local,
-               reason: :source_process_runtime,
-               dep_node_ids: [{:source, ^source_id}]
+               result: :shared,
+               reason: :external_fun,
+               dep_node_ids: [{:source, ^source_id}],
+               dep_graph_node_ids: [^source_id]
              }
            } = Enum.find(snapshot.assigns, &(&1.assign == :issue_count))
 
@@ -492,7 +504,7 @@ defmodule Upkeep.LiveRefreshTest do
              node_id: {:derived, :visible_count},
              sharing: %{
                result: :local,
-               reason: :source_process_runtime,
+               reason: :captured_function,
                dep_node_ids: [{:derived, :issue_count}]
              }
            } = Enum.find(snapshot.assigns, &(&1.assign == :visible_count))
@@ -527,7 +539,7 @@ defmodule Upkeep.LiveRefreshTest do
     assert Fixture.load_count(:shared_user_label, user_b) == 1
   end
 
-  test "multi-source derives emit source-process local diagnostics" do
+  test "multi-source derives emit shared diagnostics" do
     attach_telemetry([[:upkeep, :derive, :sharing]])
 
     project_id = System.unique_integer([:positive])
@@ -540,6 +552,11 @@ defmodule Upkeep.LiveRefreshTest do
       connected_socket()
       |> Live.watch(:issues, ProjectIssues, project_id: project_id)
       |> Live.watch(:activity, ProjectActivity, project_id: project_id)
+      |> then(fn socket ->
+        hold_graph_subscription({ProjectIssues, %{project_id: project_id}})
+        hold_graph_subscription({ProjectActivity, %{project_id: project_id}})
+        socket
+      end)
       |> Live.derive(
         :project_dashboard_model,
         [:issues, :activity],
@@ -558,8 +575,12 @@ defmodule Upkeep.LiveRefreshTest do
       [:upkeep, :derive, :sharing],
       %{
         assign_name: :project_dashboard_model,
-        result: :local,
-        reason: :source_process_runtime,
+        result: :shared,
+        reason: :external_fun,
+        dep_graph_node_ids: [
+          {ProjectIssues, %{project_id: project_id}},
+          {ProjectActivity, %{project_id: project_id}}
+        ],
         dep_node_ids: [
           {:source, {ProjectIssues, %{project_id: project_id}}},
           {:source, {ProjectActivity, %{project_id: project_id}}}
@@ -586,6 +607,11 @@ defmodule Upkeep.LiveRefreshTest do
       connected_socket()
       |> Live.watch(:issues, ScopedIssues, user_id: user_a)
       |> Live.watch(:activity, ProjectActivity, project_id: project_id)
+      |> then(fn socket ->
+        hold_graph_subscription({ScopedIssues, %{user_id: user_a}})
+        hold_graph_subscription({ProjectActivity, %{project_id: project_id}})
+        socket
+      end)
       |> Live.derive(
         :dashboard_model,
         [:issues, :activity],
@@ -596,6 +622,11 @@ defmodule Upkeep.LiveRefreshTest do
       connected_socket()
       |> Live.watch(:issues, ScopedIssues, user_id: user_b)
       |> Live.watch(:activity, ProjectActivity, project_id: project_id)
+      |> then(fn socket ->
+        hold_graph_subscription({ScopedIssues, %{user_id: user_b}})
+        hold_graph_subscription({ProjectActivity, %{project_id: project_id}})
+        socket
+      end)
       |> Live.derive(
         :dashboard_model,
         [:issues, :activity],
@@ -621,8 +652,12 @@ defmodule Upkeep.LiveRefreshTest do
       [:upkeep, :derive, :sharing],
       %{
         assign_name: :dashboard_model,
-        result: :local,
-        reason: :source_process_runtime
+        result: :shared,
+        reason: :external_fun,
+        dep_graph_node_ids: [
+          {ScopedIssues, %{user_id: user_a}},
+          {ProjectActivity, %{project_id: project_id}}
+        ]
       }
     )
 
@@ -630,10 +665,93 @@ defmodule Upkeep.LiveRefreshTest do
       [:upkeep, :derive, :sharing],
       %{
         assign_name: :dashboard_model,
-        result: :local,
-        reason: :source_process_runtime
+        result: :shared,
+        reason: :external_fun,
+        dep_graph_node_ids: [
+          {ScopedIssues, %{user_id: user_b}},
+          {ProjectActivity, %{project_id: project_id}}
+        ]
       }
     )
+  end
+
+  test "connected derives share compute for the same dependency identity" do
+    user_id = System.unique_integer([:positive])
+    Fixture.seed_scoped_issues(user_id, [{user_id, :user_issue}])
+    Fixture.seed_load_counter(:shared_issue_count, user_id)
+
+    socket_a =
+      connected_socket()
+      |> Live.watch(:issues, ScopedIssues, user_id: user_id)
+      |> then(fn socket ->
+        hold_graph_subscription({ScopedIssues, %{user_id: user_id}})
+        socket
+      end)
+      |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
+
+    socket_b =
+      connected_socket()
+      |> Live.watch(:issues, ScopedIssues, user_id: user_id)
+      |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
+
+    assert socket_a.assigns.issue_count == 1
+    assert socket_b.assigns.issue_count == 1
+    assert Fixture.load_count(:shared_issue_count, user_id) == 1
+  end
+
+  test "source pushes wait for shared derived process instead of recomputing locally" do
+    user_id = System.unique_integer([:positive])
+    source_id = {ScopedIssues, %{user_id: user_id}}
+
+    Fixture.seed_scoped_issues(user_id, [{user_id, :before}])
+    Fixture.seed_load_counter(:shared_issue_count, user_id)
+
+    socket =
+      connected_socket()
+      |> Live.watch(:issues, ScopedIssues, user_id: user_id)
+      |> then(fn socket ->
+        hold_graph_subscription(source_id)
+        socket
+      end)
+      |> Live.derive(:issue_count, [:issues], &__MODULE__.shared_issue_count/1)
+
+    assert socket.assigns.issue_count == 1
+    assert Fixture.load_count(:shared_issue_count, user_id) == 1
+
+    Fixture.block_derives_for(user_id, self())
+    Fixture.set_source_value(:scoped_issues, user_id, [{user_id, :before}, {user_id, :after}])
+
+    assert :ok =
+             %Issue{issue_id: user_id}
+             |> Upkeep.Change.updated()
+             |> Upkeep.notify()
+
+    source_pairs = DagMessages.receive_batch()
+    assert {source_id, [{user_id, :before}, {user_id, :after}]} in source_pairs
+
+    socket = Live.apply_dag_values(socket, source_pairs)
+
+    assert socket.assigns.issues == [{user_id, :before}, {user_id, :after}]
+    assert socket.assigns.issue_count == 1
+
+    assert_receive {:derived_compute_started, derive_pid, ^user_id}
+    send(derive_pid, :continue)
+
+    assert DagMessages.receive_value(
+             {:derived, UpkeepWeb.KanbanLive, :issue_count, [source_id],
+              {__MODULE__, :shared_issue_count, 1}}
+           ) == 2
+
+    socket =
+      Live.apply_dag_value(
+        socket,
+        {:derived, UpkeepWeb.KanbanLive, :issue_count, [source_id],
+         {__MODULE__, :shared_issue_count, 1}},
+        2
+      )
+
+    assert socket.assigns.issue_count == 2
+    assert Fixture.load_count(:shared_issue_count, user_id) == 2
   end
 
   test "connected multi-source derives do not leak values across source params" do
@@ -1416,6 +1534,39 @@ defmodule Upkeep.LiveRefreshTest do
     assert materialized_effect_count >= 2
     assert materialized_assign_count >= 2
     assert materialized_telemetry_count >= 2
+  end
+
+  defp hold_graph_subscription(node_id) do
+    parent = self()
+
+    pid =
+      spawn_link(fn ->
+        :ok =
+          Group.join(
+            Upkeep.Coordinator.Graph.group(),
+            Upkeep.Coordinator.Graph.source_key(node_id),
+            %{
+              kind: :test_holder
+            }
+          )
+
+        send(parent, {:graph_subscription_held, self(), node_id})
+
+        receive do
+          :stop -> :ok
+        after
+          30_000 -> :ok
+        end
+
+        Group.leave(
+          Upkeep.Coordinator.Graph.group(),
+          Upkeep.Coordinator.Graph.source_key(node_id)
+        )
+      end)
+
+    assert_receive {:graph_subscription_held, ^pid, ^node_id}
+    on_exit(fn -> send(pid, :stop) end)
+    pid
   end
 
   defp block_derive_if_configured(user_id, event, message) do
