@@ -9,7 +9,13 @@ defmodule Upkeep.ETS.TableOwnerTest do
   defp start_owner_tree(table) do
     name = unique_name(:owner)
     specs = TableOwner.child_specs(name: name, tables: [{table, [:set, :public, :named_table]}])
-    sup = start_supervised!(%{id: name, start: {Supervisor, :start_link, [specs, [strategy: :one_for_one]]}})
+
+    sup =
+      start_supervised!(%{
+        id: name,
+        start: {Supervisor, :start_link, [specs, [strategy: :one_for_one]]}
+      })
+
     {name, sup}
   end
 

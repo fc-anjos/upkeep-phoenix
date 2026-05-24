@@ -187,12 +187,14 @@ defmodule Upkeep.SourceEctoPropertyTest do
   # --- Properties ----------------------------------------------------------
 
   property "equality match soundness: a row matching the filter always reacts" do
-    check all action <- member_of(@actions),
-              filter_value <- small_int(),
-              record_value <- small_int(),
-              filter_repr <- int_repr(filter_value),
-              record_repr <- int_repr(record_value),
-              max_runs: 300 do
+    check all(
+            action <- member_of(@actions),
+            filter_value <- small_int(),
+            record_value <- small_int(),
+            filter_repr <- int_repr(filter_value),
+            record_repr <- int_repr(record_value),
+            max_runs: 300
+          ) do
       params = %{project_id: filter_repr}
 
       change =
@@ -214,13 +216,15 @@ defmodule Upkeep.SourceEctoPropertyTest do
   end
 
   property "multi-field AND soundness: a row reacts iff it satisfies every filter" do
-    check all action <- member_of(@actions),
-              filter_project <- small_int(),
-              filter_status <- status_value(),
-              record_project <- small_int(),
-              record_status <- status_value(),
-              project_repr <- int_repr(record_project),
-              max_runs: 300 do
+    check all(
+            action <- member_of(@actions),
+            filter_project <- small_int(),
+            filter_status <- status_value(),
+            record_project <- small_int(),
+            record_status <- status_value(),
+            project_repr <- int_repr(record_project),
+            max_runs: 300
+          ) do
       params = %{project_id: filter_project, status: filter_status}
 
       change =
@@ -246,12 +250,14 @@ defmodule Upkeep.SourceEctoPropertyTest do
   end
 
   property "membership (in) soundness: a row whose value is in the list always reacts" do
-    check all action <- member_of(@actions),
-              filter_project <- small_int(),
-              statuses <- uniq_list_of(status_value(), min_length: 1, max_length: 3),
-              record_project <- small_int(),
-              record_status <- status_value(),
-              max_runs: 300 do
+    check all(
+            action <- member_of(@actions),
+            filter_project <- small_int(),
+            statuses <- uniq_list_of(status_value(), min_length: 1, max_length: 3),
+            record_project <- small_int(),
+            record_status <- status_value(),
+            max_runs: 300
+          ) do
       params = %{project_id: filter_project, statuses: statuses}
 
       change =
@@ -277,12 +283,14 @@ defmodule Upkeep.SourceEctoPropertyTest do
   end
 
   property "OR soundness: a row satisfying either disjunct always reacts" do
-    check all action <- member_of(@actions),
-              filter_project <- small_int(),
-              filter_assignee <- small_int(),
-              record_project <- small_int(),
-              record_assignee <- small_int(),
-              max_runs: 300 do
+    check all(
+            action <- member_of(@actions),
+            filter_project <- small_int(),
+            filter_assignee <- small_int(),
+            record_project <- small_int(),
+            record_assignee <- small_int(),
+            max_runs: 300
+          ) do
       params = %{project_id: filter_project, assignee_id: filter_assignee}
 
       change =
@@ -309,11 +317,13 @@ defmodule Upkeep.SourceEctoPropertyTest do
   end
 
   property "type canonicalization: int vs string representations match regardless of side" do
-    check all action <- member_of(@actions),
-              value <- small_int(),
-              filter_repr <- int_repr(value),
-              record_repr <- int_repr(value),
-              max_runs: 200 do
+    check all(
+            action <- member_of(@actions),
+            value <- small_int(),
+            filter_repr <- int_repr(value),
+            record_repr <- int_repr(value),
+            max_runs: 200
+          ) do
       # Same logical value on both sides, but possibly skewed representation.
       params = %{project_id: filter_repr}
 
@@ -327,10 +337,12 @@ defmodule Upkeep.SourceEctoPropertyTest do
   end
 
   property "type canonicalization: Ecto.Enum atom vs dumped string match" do
-    check all action <- member_of(@actions),
-              project <- small_int(),
-              record_repr <- enum_repr(:open),
-              max_runs: 150 do
+    check all(
+            action <- member_of(@actions),
+            project <- small_int(),
+            record_repr <- enum_repr(:open),
+            max_runs: 150
+          ) do
       # EnumStateIssues filters state == :open (atom literal). A change carrying
       # the loaded atom OR the dumped string for :open must react.
       params = %{project_id: project}
@@ -345,11 +357,13 @@ defmodule Upkeep.SourceEctoPropertyTest do
   end
 
   property "Ecto.Enum filter rejects non-matching states (precise must-not-react)" do
-    check all action <- member_of(@actions),
-              project <- small_int(),
-              state <- enum_state(),
-              record_repr <- enum_repr(state),
-              max_runs: 200 do
+    check all(
+            action <- member_of(@actions),
+            project <- small_int(),
+            state <- enum_state(),
+            record_repr <- enum_repr(state),
+            max_runs: 200
+          ) do
       params = %{project_id: project}
 
       change =
@@ -368,11 +382,13 @@ defmodule Upkeep.SourceEctoPropertyTest do
   end
 
   property "unanalyzable fragment shapes fall back to broad and always react" do
-    check all action <- member_of(@actions),
-              title <- string(:alphanumeric, min_length: 1, max_length: 8),
-              project <- small_int(),
-              term <- string(:alphanumeric, min_length: 0, max_length: 8),
-              max_runs: 150 do
+    check all(
+            action <- member_of(@actions),
+            title <- string(:alphanumeric, min_length: 1, max_length: 8),
+            project <- small_int(),
+            term <- string(:alphanumeric, min_length: 0, max_length: 8),
+            max_runs: 150
+          ) do
       params = %{term: term}
 
       change =

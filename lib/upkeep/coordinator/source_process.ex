@@ -37,6 +37,7 @@ defmodule Upkeep.Coordinator.SourceProcess do
     :exit, {:normal, _call} -> {:error, :noproc}
     :exit, {:noproc, _call} -> {:error, :noproc}
   end
+
   # Non-blocking invalidation delivery. The handler only marks the source dirty
   # / triggers a reload and needs no return value, so a wedged or slow source
   # cannot stall the caller (e.g. the single Notifier funnel) — see invalidate/1

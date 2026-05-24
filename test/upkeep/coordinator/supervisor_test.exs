@@ -24,7 +24,9 @@ defmodule Upkeep.Coordinator.SupervisorTest do
     # because killing the shared, application-wide owner has side effects on
     # every other test in the suite.
     owner = wait_for_owner(Upkeep.Coordinator.Topology.TableOwner)
-    keeper = wait_for_owner(Upkeep.ETS.TableOwner.heir_name(Upkeep.Coordinator.Topology.TableOwner))
+
+    keeper =
+      wait_for_owner(Upkeep.ETS.TableOwner.heir_name(Upkeep.Coordinator.Topology.TableOwner))
 
     assert is_pid(keeper)
     assert keeper != owner
