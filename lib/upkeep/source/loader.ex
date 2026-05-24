@@ -17,7 +17,16 @@ defmodule Upkeep.Source.Loader do
   alias Upkeep.Source.{Coverage, Dependency, Instance, LoadResult}
 
   @context_key {__MODULE__, :read_context}
-  @warn_dedup_key {__MODULE__, :no_invalidation_warned}
+
+  # Bounded dedup set for "no invalidation surface" warnings. Backed by a named
+  # public ETS table (created once, lazily) rather than `:persistent_term`:
+  # `:persistent_term.put/2` triggers a global GC scan of every process on each
+  # call and the stored MapSet grew unbounded with distinct {source, params}
+  # keys — a memory leak plus a recurring global-pause source. The table is
+  # capped at @warn_dedup_cap entries; once full we stop recording (the warning
+  # is best-effort, so capping cannot break correctness).
+  @warn_dedup_table :upkeep_loader_no_invalidation_warned
+  @warn_dedup_cap 4_096
 
   @type read_context :: %{
           required(:repo) => module() | nil,
@@ -27,6 +36,25 @@ defmodule Upkeep.Source.Loader do
           required(:params) => map(),
           optional(:reads) => map()
         }
+
+  @doc """
+  ETS table spec for the bounded "no invalidation surface" warning dedup set.
+
+  Returned as `{name, ets_opts}` so a long-lived owner (see
+  `Upkeep.ETS.TableOwner`) can create the table at boot, keeping the dedup state
+  alive across the short-lived load tasks that record into it. When the table is
+  absent (e.g. the loader is used outside the supervision tree) it is created
+  lazily on first use; see `record_warn_dedup/1`.
+  """
+  @type ets_opt ::
+          :set
+          | :public
+          | :named_table
+          | {:read_concurrency, true}
+          | {:write_concurrency, true}
+
+  @spec warn_dedup_table_spec() :: {unquote(@warn_dedup_table), [ets_opt(), ...]}
+  def warn_dedup_table_spec, do: {@warn_dedup_table, warn_dedup_table_opts()}
 
   @spec verify_source!(module(), map(), keyword()) :: :ok
   def verify_source!(source, params, opts \\ []) when is_atom(source) and is_map(params) do
@@ -207,11 +235,8 @@ defmodule Upkeep.Source.Loader do
   defp warn_if_no_invalidation_surface(%Coverage{} = coverage) do
     if Enum.any?(coverage.unknown, &(&1.reason == :no_invalidation_surface)) do
       shape = {coverage.source, coverage.params}
-      seen = :persistent_term.get(@warn_dedup_key, MapSet.new())
 
-      unless MapSet.member?(seen, shape) do
-        :persistent_term.put(@warn_dedup_key, MapSet.put(seen, shape))
-
+      if record_warn_dedup(shape) do
         require Logger
 
         Logger.warning(Coverage.explain(coverage))
@@ -219,6 +244,48 @@ defmodule Upkeep.Source.Loader do
     end
 
     :ok
+  end
+
+  # Records `shape` in the bounded dedup set and returns whether the warning
+  # should fire (true only the first time a shape is seen). `:ets.insert_new/2`
+  # is atomic, so concurrent loaders never double-warn for the same shape. Once
+  # the table reaches @warn_dedup_cap entries we stop recording unseen shapes to
+  # keep memory bounded; in that saturated state we suppress the warning rather
+  # than risk it firing repeatedly for high-cardinality params.
+  @spec record_warn_dedup({module(), map()}) :: boolean()
+  defp record_warn_dedup(shape) do
+    ensure_warn_dedup_table()
+
+    cond do
+      :ets.member(@warn_dedup_table, shape) ->
+        false
+
+      :ets.info(@warn_dedup_table, :size) >= @warn_dedup_cap ->
+        false
+
+      true ->
+        :ets.insert_new(@warn_dedup_table, {shape})
+    end
+  end
+
+  defp ensure_warn_dedup_table do
+    case :ets.whereis(@warn_dedup_table) do
+      :undefined ->
+        try do
+          _ = :ets.new(@warn_dedup_table, warn_dedup_table_opts())
+          :ok
+        rescue
+          # Another process created the table between whereis/1 and new/2.
+          ArgumentError -> :ok
+        end
+
+      _tid ->
+        :ok
+    end
+  end
+
+  defp warn_dedup_table_opts do
+    [:set, :public, :named_table, read_concurrency: true, write_concurrency: true]
   end
 
   defp tracked_deps do

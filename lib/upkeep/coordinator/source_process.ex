@@ -321,6 +321,29 @@ defmodule Upkeep.Coordinator.SourceProcess do
     state
   end
 
+  # Fan-out runs inline in the GenServer reduction. This is a known scalability
+  # cost: every value change re-queries Group membership (one-shard `:ets.select`)
+  # and `send`s sequentially to each subscriber, so a high-fan-out source blocks
+  # its own command queue while dispatching.
+  #
+  # We deliberately keep it inline. The hard constraint is ordering: a subscriber
+  # must never see an older value after a newer one, so all dispatches for a
+  # source must pass through a single FIFO consumer. The only ordering-safe ways
+  # to offload this have worse tradeoffs than the status quo:
+  #
+  #   * A dedicated per-source dispatcher process preserves order but doubles the
+  #     per-source process count, regressing the recent process-leak work that
+  #     consolidated lifecycle/monitoring into a single LifecycleMonitor and cut
+  #     per-subscriber footprint (see commit "Reclaim graph resources ...").
+  #   * Caching the member list to skip the `Subscriptions.members` query is
+  #     unsound here: this process gets no membership-change signal (only the
+  #     singleton LifecycleMonitor monitors Group), so a stale cache could drop a
+  #     newly-subscribed LiveView's value — a correctness regression. `member_count`
+  #     is not a usable cache key either: it scans ALL shards (more expensive than
+  #     the single-shard `members`) and equal counts don't imply equal membership.
+  #
+  # If/when membership-change notifications reach this process, revisit the cache
+  # option; until then inline dispatch is the correct, ordering-safe choice.
   defp dispatch(state, pairs) do
     metadata = %{
       backend: :source_process,

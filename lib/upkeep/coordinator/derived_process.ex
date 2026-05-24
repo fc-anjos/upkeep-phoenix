@@ -244,6 +244,13 @@ defmodule Upkeep.Coordinator.DerivedProcess do
     reply_waiters(state, {:ok, value})
   end
 
+  # Fan-out runs inline in the GenServer reduction, same as
+  # `Upkeep.Coordinator.SourceProcess.dispatch/2`. See that function's comment for
+  # the full rationale: ordering requires a single FIFO consumer per node, and the
+  # only ordering-safe ways to offload (a dedicated per-source dispatcher process,
+  # or a member-list cache) either regress the recent process-leak work or are
+  # unsound because this process receives no membership-change signal. Inline
+  # dispatch is the deliberate, ordering-safe choice.
   defp dispatch(state, pairs) do
     metadata = %{
       backend: :derived_process,

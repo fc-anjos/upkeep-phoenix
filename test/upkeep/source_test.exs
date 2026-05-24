@@ -351,6 +351,81 @@ defmodule Upkeep.SourceTest do
     assert error.message =~ "Add invalidated_by/reacts_to declarations"
   end
 
+  @warn_dedup_table :upkeep_loader_no_invalidation_warned
+
+  test "no-invalidation-surface warning fires once per distinct source/params key" do
+    reset_warn_dedup_table()
+
+    log_first =
+      ExUnit.CaptureLog.capture_log(fn ->
+        Loader.load_result(HiddenLoad, %{project_id: 1})
+      end)
+
+    assert log_first =~ "no invalidation surface"
+
+    log_repeat =
+      ExUnit.CaptureLog.capture_log(fn ->
+        Loader.load_result(HiddenLoad, %{project_id: 1})
+      end)
+
+    refute log_repeat =~ "no invalidation surface"
+
+    log_other_key =
+      ExUnit.CaptureLog.capture_log(fn ->
+        Loader.load_result(HiddenLoad, %{project_id: 2})
+      end)
+
+    assert log_other_key =~ "no invalidation surface"
+  end
+
+  test "no-invalidation-surface warning dedup store is bounded by a size cap" do
+    reset_warn_dedup_table()
+
+    # Saturate the dedup set with synthetic shapes until it refuses new entries,
+    # discovering the cap empirically.
+    cap = fill_warn_dedup_to_cap()
+
+    assert :ets.info(@warn_dedup_table, :size) == cap
+
+    # A brand-new shape must NOT grow the table past the cap, and (since it is
+    # treated as already-handled) must not warn.
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        Loader.load_result(HiddenLoad, %{project_id: -1})
+      end)
+
+    refute log =~ "no invalidation surface"
+    assert :ets.info(@warn_dedup_table, :size) == cap
+  end
+
+  defp reset_warn_dedup_table do
+    if :ets.whereis(@warn_dedup_table) != :undefined do
+      :ets.delete_all_objects(@warn_dedup_table)
+    end
+
+    :ok
+  end
+
+  # Fills the dedup table until `record_warn_dedup/1` would refuse new entries,
+  # then returns the cap (the table size at saturation). The cap is intentionally
+  # private to the loader; we discover it empirically by inserting until a
+  # never-before-seen shape is suppressed.
+  defp fill_warn_dedup_to_cap do
+    Stream.iterate(0, &(&1 + 1))
+    |> Enum.reduce_while(nil, fn n, _acc ->
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          Loader.load_result(HiddenLoad, %{__warn_dedup_probe__: n})
+        end)
+
+      if log =~ "no invalidation surface" and n < 10_000 do
+        {:cont, n}
+      else
+        {:halt, :ets.info(@warn_dedup_table, :size)}
+      end
+    end)
+  end
+
   test "coverage explanations include captured source location when available" do
     coverage = Upkeep.Source.coverage(HiddenLoad, %{})
 

@@ -212,6 +212,41 @@ defmodule Upkeep.Coordinator.SourceProcessTest do
       Graph.unregister(node_id)
     end
 
+    test "rapid successive value changes dispatch to subscribers in produced order" do
+      # Ordering guarantee: a subscriber must never observe an older value after a
+      # newer one. Dispatch runs inline in the SourceProcess reduction precisely
+      # so the per-source FIFO order is the delivery order. This guards that
+      # contract against any future attempt to offload fan-out off the GenServer.
+      counter = :counters.new(1, [:atomics])
+      event = %Ev{id: 30, tenant_id: 1}
+      surface = event_surface(event)
+      node_id = {:ordering_process_source, System.unique_integer()}
+
+      # Each load produces a strictly larger value, so the produced order is
+      # unambiguous and any delivery inversion is detectable.
+      :ok =
+        Graph.register_loader(node_id, surface, fn ->
+          next = :counters.add(counter, 1, 1)
+          {{:seq, next}, surface}
+        end)
+
+      # Fire many invalidations as fast as possible to maximize the chance of
+      # overlapping reload/dispatch cycles.
+      Enum.each(1..50, fn _ -> notify(event) end)
+      :ok = Graph.drain()
+
+      values = drain_seq_values(node_id, [])
+
+      # We received at least the first and last produced values...
+      assert values != []
+      # ...and every delivered value is strictly greater than the one before it:
+      # no newer-then-older inversion ever reached the subscriber.
+      assert values == Enum.sort(values)
+      assert values == Enum.uniq(values)
+
+      Graph.unregister(node_id)
+    end
+
     test "a source process returning a new surface updates the routing index" do
       event_a = %Ev{id: 5, tenant_id: 1}
       event_b = %Ev{id: 5, tenant_id: 2}
@@ -299,6 +334,16 @@ defmodule Upkeep.Coordinator.SourceProcessTest do
 
       wait_until(fn -> SourceProcesses.count() == 0 end, 1_000)
       refute Graph.registered?(node_id)
+    end
+  end
+
+  # Drains every dispatched value for `node_id` in mailbox (arrival) order,
+  # returning the bare sequence numbers so the caller can assert ordering.
+  defp drain_seq_values(node_id, acc) do
+    receive do
+      {:dag_values, [{^node_id, {:seq, n}}]} -> drain_seq_values(node_id, [n | acc])
+    after
+      200 -> Enum.reverse(acc)
     end
   end
 

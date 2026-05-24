@@ -4,6 +4,7 @@ defmodule Upkeep.Coordinator.Supervisor do
   use Supervisor
 
   alias Upkeep.Coordinator.Topology
+  alias Upkeep.Source.Loader
 
   def start_link(opts \\ []) do
     Supervisor.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
@@ -13,11 +14,11 @@ defmodule Upkeep.Coordinator.Supervisor do
   def init(opts) do
     _opts = opts
 
-    # Keep topology tables outside the runtime restart chain.
+    # Keep topology and loader-dedup tables outside the runtime restart chain.
     table_owner =
       Upkeep.ETS.TableOwner.child_specs(
         name: Upkeep.Coordinator.Topology.TableOwner,
-        tables: Topology.table_specs()
+        tables: [Loader.warn_dedup_table_spec() | Topology.table_specs()]
       )
 
     children =
