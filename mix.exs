@@ -76,6 +76,7 @@ defmodule Upkeep.MixProject do
       {:ecto_sql, "~> 3.13"},
       {:phoenix_live_view, "~> 1.1.0"},
       {:lazy_html, ">= 0.1.0", only: :test},
+      {:stream_data, "~> 1.3", only: [:dev, :test]},
       {:ecto_sqlite3, ">= 0.0.0", only: :test},
       {:postgrex, ">= 0.0.0", only: :test},
       {:telemetry, "~> 1.0"},
