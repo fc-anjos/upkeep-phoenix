@@ -219,6 +219,42 @@ Ecto-backed sources refresh automatically when the source exposes what it reads
 and the repo emits committed writes. A specific write can opt out with
 `upkeep: false`.
 
+### Precondition: every refreshing write must go through the wrapped repo
+
+Upkeep only sees writes that flow through a repo built with `use Upkeep.Ecto.Repo`.
+This is a hard precondition, not a best-effort convenience:
+
+> **Every write that should trigger refreshes MUST go through the wrapped repo.**
+> Out-of-band writes do not emit `Upkeep.Change` events, so watched sources keep
+> serving stale data until the next unrelated invalidation.
+
+Writes that Upkeep cannot see, and therefore will **not** invalidate:
+
+```elixir
+# 1. A plain Ecto.Repo (not built with `use Upkeep.Ecto.Repo`)
+MyApp.PlainRepo.update!(changeset)
+
+# 2. A second/unwrapped repo, even against the same database
+MyApp.ReportingRepo.insert_all(Invoice, rows)
+
+# 3. Raw SQL, including Ecto.Adapters.SQL.query/4 and migrations
+Ecto.Adapters.SQL.query!(MyApp.Repo, "UPDATE items SET archived = true", [])
+
+# 4. Bulk ops on an unwrapped repo
+MyApp.PlainRepo.delete_all(Item)
+```
+
+If you must write out-of-band, emit the change yourself so sources still
+refresh, for example `Upkeep.updated(record, from: old_record)` (or the broad
+`Upkeep.updated(record)` when you lack the old row), or declare an explicit
+`invalidated_by(...)`/`reacts_to(...)` surface and notify it.
+
+Note that even captured bulk writes can fall back to a broad, schema/table-wide
+invalidation when Upkeep cannot materialize the affected rows (no schema, an
+uninspectable table source, an adapter without `RETURNING`, a caller-supplied
+`select`, or a table-metadata failure). The refresh is still correct, just less
+selective.
+
 Inside transactions, Upkeep journals captured changes and dispatches them only
 when the outer transaction commits.
 
@@ -234,6 +270,12 @@ watch/read time. The default policy raises in dev/test and warns in prod:
 config :upkeep, repo_capture_misconfiguration: :raise
 # or :warn / :ignore
 ```
+
+Set `:raise` in prod to turn the unenforced precondition above into a hard,
+fail-fast check so a non-capturing source can never silently ship. This guard
+verifies the repo a source **reads** through; it cannot detect out-of-band
+**writes** (a second/plain repo or raw SQL), which remain the caller's
+responsibility per the precondition above.
 
 ## Source Shapes
 

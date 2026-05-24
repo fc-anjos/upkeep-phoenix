@@ -67,6 +67,26 @@ defmodule Upkeep.RepoCaptureTest do
     def load(_params), do: []
   end
 
+  @unmaterializable_table "upkeep_repo_capture_test_missing"
+
+  defmodule UnmaterializableTableSource do
+    @moduledoc """
+    Explicit-only source on a table Upkeep cannot introspect.
+
+    Stands in for a schemaless `@table`/raw-source whose metadata is unavailable,
+    so bulk writes against it terminally deopt. Because Upkeep cannot field-index
+    the table, the source declares a broad invalidator and only the table-wide
+    fallback can refresh it.
+    """
+    use Upkeep.Ecto.Source, repo: Upkeep.TestSupport.Repo
+
+    invalidated_by("upkeep_repo_capture_test_missing", :updated, on: :project_id)
+    invalidated_by("upkeep_repo_capture_test_missing", :deleted, on: :project_id)
+    invalidated_by("upkeep_repo_capture_test_missing", :inserted, on: :project_id)
+
+    def load(_params), do: [:loaded]
+  end
+
   defmodule TableProjectIssues do
     use Upkeep.Ecto.Source, repo: Upkeep.TestSupport.Repo
 
@@ -580,6 +600,57 @@ defmodule Upkeep.RepoCaptureTest do
     assert socket.assigns.issues == []
   end
 
+  test "delete_all capture broadly invalidates the table when affected rows cannot be materialized" do
+    attach_telemetry([[:upkeep, :repo, :bulk_capture, :deopt]])
+
+    Repo.insert!(issue(id: 1, assignee_id: 9, title: "Deleted"), upkeep: false)
+    socket = watch_unmaterializable(:delete)
+    assert socket.assigns.rows == [:loaded]
+
+    assert {:ok, {1, nil}} =
+             Upkeep.mutate(fn ->
+               Repo.delete_all(
+                 from(i in Issue, where: i.project_id == 1 and i.assignee_id == 9),
+                 upkeep: [schema: @unmaterializable_table]
+               )
+             end)
+
+    assert_unmaterializable_refresh(:delete)
+    refute Repo.get(Issue, 1)
+
+    TelemetryMessages.assert_counted([:upkeep, :repo, :bulk_capture, :deopt],
+      repo: Repo,
+      operation: :delete_all,
+      reason: :no_table_fields
+    )
+  end
+
+  test "update_all capture broadly invalidates the table when affected rows cannot be materialized" do
+    attach_telemetry([[:upkeep, :repo, :bulk_capture, :deopt]])
+
+    Repo.insert!(issue(id: 1, assignee_id: 10, title: "Moved"), upkeep: false)
+    socket = watch_unmaterializable(:update)
+    assert socket.assigns.rows == [:loaded]
+
+    assert {:ok, {1, nil}} =
+             Upkeep.mutate(fn ->
+               Repo.update_all(
+                 from(i in Issue, where: i.project_id == 1 and i.assignee_id == 10),
+                 [set: [assignee_id: 9]],
+                 upkeep: [schema: @unmaterializable_table]
+               )
+             end)
+
+    assert_unmaterializable_refresh(:update)
+    assert %Issue{assignee_id: 9} = Repo.get!(Issue, 1)
+
+    TelemetryMessages.assert_counted([:upkeep, :repo, :bulk_capture, :deopt],
+      repo: Repo,
+      operation: :update_all,
+      reason: :no_table_fields
+    )
+  end
+
   test "bulk capture discards notifications when the surrounding mutation rolls back" do
     Repo.insert!(issue(id: 1, assignee_id: 10), upkeep: false)
     watch_project(user_id: 9)
@@ -637,6 +708,16 @@ defmodule Upkeep.RepoCaptureTest do
 
     LiveSocket.socket()
     |> Live.watch(:issues, TableProjectIssues, project_id: 1, user_id: user_id)
+  end
+
+  defp watch_unmaterializable(tag) do
+    LiveSocket.socket()
+    |> Live.watch(:rows, UnmaterializableTableSource, project_id: 1, tag: tag)
+  end
+
+  defp assert_unmaterializable_refresh(tag) do
+    value = DagMessages.receive_value({UnmaterializableTableSource, %{project_id: 1, tag: tag}})
+    assert value == [:loaded]
   end
 
   defp assert_project_issues_refresh(user_id, titles) do

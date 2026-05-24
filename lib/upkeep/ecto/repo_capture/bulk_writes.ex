@@ -72,7 +72,9 @@ defmodule Upkeep.Ecto.RepoCapture.BulkWrites do
 
       {:deopt, reason} ->
         emit_bulk_capture_deopt(repo, schema, :update_all, reason)
-        run.()
+        result = run.()
+        Notify.notify_bulk_deopt(:updated, schema)
+        result
     end
   end
 
@@ -110,7 +112,9 @@ defmodule Upkeep.Ecto.RepoCapture.BulkWrites do
 
       {:deopt, reason} ->
         emit_bulk_capture_deopt(repo, schema, :delete_all, reason)
-        run.()
+        result = run.()
+        Notify.notify_bulk_deopt(:deleted, schema)
+        result
     end
   end
 
@@ -129,6 +133,7 @@ defmodule Upkeep.Ecto.RepoCapture.BulkWrites do
 
       {:deopt, reason} ->
         emit_bulk_capture_deopt(repo, schema, :insert_all, reason)
+        Notify.notify_bulk_deopt(:inserted, schema)
     end
   end
 end
