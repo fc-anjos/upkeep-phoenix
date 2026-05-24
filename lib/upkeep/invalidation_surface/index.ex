@@ -385,13 +385,18 @@ defmodule Upkeep.InvalidationSurface.Index do
   defp field_key(_notification, {}, _fields), do: nil
 
   defp field_key(notification, field_names, fields) do
+    schema = notification_schema(notification)
+
     values =
       field_names
       |> Tuple.to_list()
       |> Enum.reduce_while([], fn field, values ->
         case Map.fetch(fields, field) do
-          {:ok, value} -> {:cont, [{field, value} | values]}
-          :error -> {:halt, nil}
+          {:ok, value} ->
+            {:cont, [{field, InvalidationSurface.canonical_value(schema, field, value)} | values]}
+
+          :error ->
+            {:halt, nil}
         end
       end)
 
@@ -405,4 +410,7 @@ defmodule Upkeep.InvalidationSurface.Index do
       end
     end
   end
+
+  defp notification_schema({:upkeep_change, _name, schema}), do: schema
+  defp notification_schema(_notification), do: nil
 end

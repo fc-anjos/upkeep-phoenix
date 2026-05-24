@@ -8,6 +8,7 @@ defmodule Upkeep.InvalidationSurface do
       Index.ETS
     ],
     deps: [
+      Ecto.Type,
       Upkeep.Change
     ],
     type: :strict
@@ -167,6 +168,54 @@ defmodule Upkeep.InvalidationSurface do
       |> Enum.sort()
 
     notification_key(notification, values)
+  end
+
+  @doc """
+  Normalizes a value to a single canonical Elixir term using the Ecto type of
+  `field` on `schema`.
+
+  Index-key matching compares the query param value captured when a surface is
+  built against the record field value carried by a committed change. Those two
+  sides can have skewed representations: a string param against an integer
+  column (`"7"` vs `7`), or an `Ecto.Enum` queried with an atom (`:open`) against
+  a change carrying the dumped value (`"open"`, as bulk `insert_all`/`update_all`
+  paths produce). Casting both sides through the field's Ecto type collapses them
+  to the same loaded term so equality matching is correct.
+
+  Falls back to the raw value when there is no schema (schemaless `@table`/
+  `field/2` sources), the field/type is unavailable, or the cast fails. It never
+  raises.
+  """
+  @spec canonical_value(module() | binary() | nil, atom(), term()) :: term()
+  def canonical_value(schema, field, value) do
+    case field_type(schema, field) do
+      {:ok, type} -> cast_value(type, value)
+      :error -> value
+    end
+  end
+
+  defp field_type(schema, field) when is_atom(schema) and not is_nil(schema) and is_atom(field) do
+    if function_exported?(schema, :__schema__, 2) do
+      case schema.__schema__(:type, field) do
+        nil -> :error
+        type -> {:ok, type}
+      end
+    else
+      :error
+    end
+  rescue
+    _exception -> :error
+  end
+
+  defp field_type(_schema, _field), do: :error
+
+  defp cast_value(type, value) do
+    case Ecto.Type.cast(type, value) do
+      {:ok, cast} -> cast
+      _other -> value
+    end
+  rescue
+    _exception -> value
   end
 
   def notification_key(%{event: event}), do: {:upkeep_event, event}

@@ -42,6 +42,8 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
     |> collect_where_equalities(query.wheres)
     |> collect_preload_deps(query)
     |> collect_subquery_deps(query)
+    |> collect_combination_deps(query)
+    |> collect_cte_deps(query)
     |> mark_fragment_broad_reasons(query)
   end
 
@@ -306,13 +308,24 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
       {binding, field} ->
         with :ok <- known_binding(deps, binding),
              {:ok, value} <- value_fun.(value_side, params) do
-          [{binding, field, value} | filters]
+          [{binding, field, canonical_filter_value(deps, binding, field, value)} | filters]
         else
           {:unsupported, reason} -> [{:unsupported, reason, expr} | filters]
         end
 
       nil ->
         filters
+    end
+  end
+
+  defp canonical_filter_value(deps, binding, field, values) when is_list(values) do
+    Enum.map(values, &canonical_filter_value(deps, binding, field, &1))
+  end
+
+  defp canonical_filter_value(deps, binding, field, value) do
+    case Map.fetch(deps.bindings, binding) do
+      {:ok, schema} -> InvalidationSurface.canonical_value(schema, field, value)
+      :error -> value
     end
   end
 
@@ -463,6 +476,30 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
       merge_deps(deps, from_query(query))
     end)
   end
+
+  defp collect_combination_deps(deps, query) do
+    query
+    |> Map.get(:combinations, [])
+    |> List.wrap()
+    |> Enum.reduce(deps, fn {_kind, arm}, deps -> merge_arm_deps(deps, arm) end)
+  end
+
+  defp collect_cte_deps(deps, %{with_ctes: %Ecto.Query.WithExpr{queries: queries}}) do
+    Enum.reduce(queries, deps, fn entry, deps ->
+      entry
+      |> cte_query()
+      |> then(&merge_arm_deps(deps, &1))
+    end)
+  end
+
+  defp collect_cte_deps(deps, _query), do: deps
+
+  defp cte_query({_name, _opts, query}), do: query
+  defp cte_query({_name, query}), do: query
+  defp cte_query(_entry), do: nil
+
+  defp merge_arm_deps(deps, %Ecto.Query{} = arm), do: merge_deps(deps, from_query(arm))
+  defp merge_arm_deps(deps, _arm), do: deps
 
   defp collect_preload_deps(deps, query) do
     preload_deps = preload_query_deps(query.preloads)
@@ -739,7 +776,7 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
     else
       change
       |> Change.field_sets()
-      |> Enum.any?(&fields_match_filters?(&1, filters))
+      |> Enum.any?(&fields_match_filters?(change.schema, &1, filters))
     end
   end
 
@@ -749,16 +786,21 @@ defmodule Upkeep.Ecto.Source.QueryDeps do
     |> Enum.any?(&partial_fields_match_filters?(change, &1, filters))
   end
 
-  defp fields_match_filters?(fields, filters) do
-    Enum.all?(filters, fn {field, values} -> Enum.member?(values, Map.get(fields, field)) end)
+  defp fields_match_filters?(schema, fields, filters) do
+    Enum.all?(filters, fn {field, values} ->
+      Enum.member?(values, canonical_record_value(schema, field, Map.get(fields, field)))
+    end)
   end
 
   defp partial_fields_match_filters?(change, fields, filters) do
     Enum.all?(filters, fn {field, values} ->
       Change.field_change(change, field) == :changed or
-        Enum.member?(values, Map.get(fields, field))
+        Enum.member?(values, canonical_record_value(change.schema, field, Map.get(fields, field)))
     end)
   end
+
+  defp canonical_record_value(schema, field, value),
+    do: InvalidationSurface.canonical_value(schema, field, value)
 
   defp module_label(nil), do: "unknown"
 

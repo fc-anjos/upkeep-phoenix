@@ -86,6 +86,17 @@ defmodule Upkeep.SourceEctoTest do
     end
   end
 
+  defmodule EnumIssue do
+    use Ecto.Schema
+
+    @primary_key {:id, :integer, autogenerate: false}
+    schema "upkeep_source_ecto_test_enum_issues" do
+      field :project_id, :integer
+      field :state, Ecto.Enum, values: [:open, :closed, :blocked]
+      field :title, :string
+    end
+  end
+
   defmodule ProjectIssues do
     use Upkeep.Ecto.Source, repo: Upkeep.TestSupport.Repo
 
@@ -452,6 +463,91 @@ defmodule Upkeep.SourceEctoTest do
       Enum.map(columns, fn column ->
         %{column: column.name, issues: Map.get(issues, column.id, [])}
       end)
+    end
+  end
+
+  defmodule StringParamIntColumnIssues do
+    use Upkeep.Ecto.Source
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.Issue
+
+    def query(%{project_id: project_id}) do
+      from i in Issue,
+        where: i.project_id == ^project_id
+    end
+  end
+
+  defmodule EnumStateIssues do
+    use Upkeep.Ecto.Source
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.EnumIssue
+
+    def query(%{project_id: project_id}) do
+      from i in EnumIssue,
+        where: i.project_id == ^project_id and i.state == :open
+    end
+  end
+
+  defmodule UnionProjectIssues do
+    use Upkeep.Ecto.Source
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.{Column, Issue}
+
+    def query(%{project_id: project_id}) do
+      columns =
+        from c in Column,
+          where: c.project_id == ^project_id,
+          select: c.id
+
+      from i in Issue,
+        where: i.project_id == ^project_id,
+        select: i.id,
+        union: ^columns
+    end
+  end
+
+  defmodule UnionAllProjectIssues do
+    use Upkeep.Ecto.Source
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.{Column, Issue}
+
+    def query(%{project_id: project_id}) do
+      columns =
+        from c in Column,
+          where: c.project_id == ^project_id,
+          select: c.id
+
+      from i in Issue,
+        where: i.project_id == ^project_id,
+        select: i.id,
+        union_all: ^columns
+    end
+  end
+
+  defmodule CteProjectIssues do
+    use Upkeep.Ecto.Source
+
+    import Ecto.Query
+
+    alias Upkeep.SourceEctoTest.{Comment, Issue}
+
+    def query(%{project_id: project_id}) do
+      commented =
+        from c in Comment,
+          where: c.project_id == ^project_id,
+          select: %{issue_id: c.issue_id}
+
+      base = from(i in Issue, where: i.project_id == ^project_id)
+
+      with_cte(base, "commented", as: ^commented)
     end
   end
 
@@ -1068,6 +1164,135 @@ defmodule Upkeep.SourceEctoTest do
            )
 
     assert SchemalessProjectIssues.reacts_to?(change, params)
+  end
+
+  test "string params on integer columns normalize to canonical key values" do
+    params = %{project_id: "7"}
+
+    assert surface_keys(StringParamIntColumnIssues, params) |> sort_terms() ==
+             [
+               {:upkeep_change, :inserted, Issue, [project_id: 7]},
+               {:upkeep_change, :updated, Issue, [project_id: 7]},
+               {:upkeep_change, :deleted, Issue, [project_id: 7]}
+             ]
+             |> sort_terms()
+
+    assert StringParamIntColumnIssues.reacts_to?(
+             issue(project_id: 7) |> Upkeep.Change.inserted(),
+             params
+           )
+
+    refute StringParamIntColumnIssues.reacts_to?(
+             issue(project_id: 8) |> Upkeep.Change.inserted(),
+             params
+           )
+  end
+
+  test "Ecto.Enum filters match changes carrying dumped values" do
+    params = %{project_id: 1}
+
+    assert surface_keys(EnumStateIssues, params) |> sort_terms() ==
+             [
+               {:upkeep_change, :inserted, EnumIssue, [project_id: 1, state: :open]},
+               {:upkeep_change, :updated, EnumIssue, [project_id: 1, state: :open]},
+               {:upkeep_change, :deleted, EnumIssue, [project_id: 1, state: :open]}
+             ]
+             |> sort_terms()
+
+    # Loaded-value change (atom) matches.
+    assert EnumStateIssues.reacts_to?(
+             %EnumIssue{project_id: 1, state: :open} |> Upkeep.Change.inserted(),
+             params
+           )
+
+    # Dumped-value change (string, as bulk insert_all/update_all paths produce) matches.
+    dumped_change =
+      Upkeep.Change.changed(
+        :inserted,
+        %{project_id: 1, state: "open"},
+        schema: EnumIssue,
+        record: %{project_id: 1, state: "open"}
+      )
+
+    assert EnumStateIssues.reacts_to?(dumped_change, params)
+
+    refute EnumStateIssues.reacts_to?(
+             %{
+               dumped_change
+               | record: %{project_id: 1, state: "closed"}
+             },
+             params
+           )
+  end
+
+  test "union arms add precise dependencies for their inner schemas" do
+    params = %{project_id: 1}
+
+    assert surface_keys(UnionProjectIssues, params) |> sort_terms() ==
+             [
+               {:upkeep_change, :inserted, Column, [project_id: 1]},
+               {:upkeep_change, :updated, Column, [project_id: 1]},
+               {:upkeep_change, :deleted, Column, [project_id: 1]},
+               {:upkeep_change, :inserted, Issue, [project_id: 1]},
+               {:upkeep_change, :updated, Issue, [project_id: 1]},
+               {:upkeep_change, :deleted, Issue, [project_id: 1]}
+             ]
+             |> sort_terms()
+
+    assert UnionProjectIssues.reacts_to?(
+             column(project_id: 1) |> Upkeep.Change.inserted(),
+             params
+           )
+
+    refute UnionProjectIssues.reacts_to?(
+             column(project_id: 2) |> Upkeep.Change.inserted(),
+             params
+           )
+  end
+
+  test "union_all arms add precise dependencies for their inner schemas" do
+    params = %{project_id: 1}
+
+    assert surface_keys(UnionAllProjectIssues, params) |> sort_terms() ==
+             [
+               {:upkeep_change, :inserted, Column, [project_id: 1]},
+               {:upkeep_change, :updated, Column, [project_id: 1]},
+               {:upkeep_change, :deleted, Column, [project_id: 1]},
+               {:upkeep_change, :inserted, Issue, [project_id: 1]},
+               {:upkeep_change, :updated, Issue, [project_id: 1]},
+               {:upkeep_change, :deleted, Issue, [project_id: 1]}
+             ]
+             |> sort_terms()
+
+    assert UnionAllProjectIssues.reacts_to?(
+             column(project_id: 1) |> Upkeep.Change.inserted(),
+             params
+           )
+  end
+
+  test "CTE arms add precise dependencies for their inner schemas" do
+    params = %{project_id: 1}
+
+    assert surface_keys(CteProjectIssues, params) |> sort_terms() ==
+             [
+               {:upkeep_change, :inserted, Comment, [project_id: 1]},
+               {:upkeep_change, :updated, Comment, [project_id: 1]},
+               {:upkeep_change, :deleted, Comment, [project_id: 1]},
+               {:upkeep_change, :inserted, Issue, [project_id: 1]},
+               {:upkeep_change, :updated, Issue, [project_id: 1]},
+               {:upkeep_change, :deleted, Issue, [project_id: 1]}
+             ]
+             |> sort_terms()
+
+    assert CteProjectIssues.reacts_to?(
+             comment(project_id: 1) |> Upkeep.Change.inserted(),
+             params
+           )
+
+    refute CteProjectIssues.reacts_to?(
+             comment(project_id: 2) |> Upkeep.Change.inserted(),
+             params
+           )
   end
 
   defp issue(attrs) do
