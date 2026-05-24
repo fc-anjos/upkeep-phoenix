@@ -1,6 +1,7 @@
 defmodule Upkeep.LiveRefreshTest do
   use ExUnit.Case, async: false
 
+  alias Upkeep.Coordinator.Graph
   alias Upkeep.Live
   alias Upkeep.Runtime.Ids
   alias Upkeep.Source.Instance
@@ -1575,8 +1576,8 @@ defmodule Upkeep.LiveRefreshTest do
       spawn_link(fn ->
         :ok =
           Group.join(
-            Upkeep.Coordinator.Graph.group(),
-            Upkeep.Coordinator.Graph.source_key(node_id),
+            Graph.group(),
+            Graph.source_key(node_id),
             %{
               kind: :test_holder
             }
@@ -1591,8 +1592,8 @@ defmodule Upkeep.LiveRefreshTest do
         end
 
         Group.leave(
-          Upkeep.Coordinator.Graph.group(),
-          Upkeep.Coordinator.Graph.source_key(node_id)
+          Graph.group(),
+          Graph.source_key(node_id)
         )
       end)
 

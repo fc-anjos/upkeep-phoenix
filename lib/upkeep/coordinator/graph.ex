@@ -1,8 +1,8 @@
 defmodule Upkeep.Coordinator.Graph do
   @moduledoc false
 
-  alias Upkeep.Coordinator.Graph.Notifier
   alias Upkeep.Coordinator.DerivedProcesses
+  alias Upkeep.Coordinator.Graph.Notifier
   alias Upkeep.Coordinator.LifecycleMonitor
   alias Upkeep.Coordinator.RuntimeSupervisor
   alias Upkeep.Coordinator.SourceProcesses
