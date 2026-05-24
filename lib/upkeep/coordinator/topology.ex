@@ -9,33 +9,26 @@ defmodule Upkeep.Coordinator.Topology do
   @index_table :upkeep_topology_index
   @generations_table :upkeep_topology_generations
 
+  @doc """
+  Table specs (`{name, ets_opts}`) for the topology routing index.
+
+  Used by the dedicated table owner so the tables outlive supervisor restarts
+  (see `Upkeep.ETS.TableOwner`).
+  """
+  def table_specs do
+    [
+      {@nodes_table,
+       [:set, :public, :named_table, read_concurrency: true, write_concurrency: true]},
+      {@index_table,
+       [:bag, :public, :named_table, read_concurrency: true, write_concurrency: true]},
+      {@generations_table,
+       [:set, :public, :named_table, read_concurrency: true, write_concurrency: true]}
+    ]
+  end
+
   def init_tables do
-    :ok =
-      ensure_named_table!(@nodes_table, [
-        :set,
-        :public,
-        :named_table,
-        read_concurrency: true,
-        write_concurrency: true
-      ])
-
-    :ok =
-      ensure_named_table!(@index_table, [
-        :bag,
-        :public,
-        :named_table,
-        read_concurrency: true,
-        write_concurrency: true
-      ])
-
-    :ok =
-      ensure_named_table!(@generations_table, [
-        :set,
-        :public,
-        :named_table,
-        read_concurrency: true,
-        write_concurrency: true
-      ])
+    Enum.each(table_specs(), fn {name, opts} -> :ok = ensure_named_table!(name, opts) end)
+    :ok
   end
 
   def reset do

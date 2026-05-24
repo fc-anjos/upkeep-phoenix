@@ -49,13 +49,7 @@ defmodule Upkeep.Runtime.Mount do
           :ok = Subscriptions.join_local_notifications()
         end
 
-        result =
-          SourceLoads.load_coalesced(
-            instance,
-            source_id,
-            producer.component,
-            :watch
-          )
+        result = load_or_degrade(instance, source_id, producer.component)
 
         patch =
           socket
@@ -146,6 +140,17 @@ defmodule Upkeep.Runtime.Mount do
 
       {:ok, socket, effects}
     end)
+  end
+
+  # A failing initial load must not crash mount. Degrade the assign to nil while
+  # keeping the watch reactive (declared surface) so a later matching
+  # invalidation can recover it. The `[:upkeep, :source, :reload]` span already
+  # emitted an `:exception` event for observability.
+  defp load_or_degrade(instance, source_id, component) do
+    case SourceLoads.safe_load_coalesced(instance, source_id, component, :watch) do
+      {:ok, result} -> result
+      {:error, _info} -> SourceLoads.degraded_result(instance)
+    end
   end
 
   def compute_fun(%Producer.Compute{dep_pairs: dep_pairs, fun: fun}) do

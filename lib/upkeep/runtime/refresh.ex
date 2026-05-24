@@ -85,11 +85,21 @@ defmodule Upkeep.Runtime.Refresh do
   end
 
   defp maybe_refresh(%Patch{} = patch, watch) do
-    result = SourceLoads.load(watch, :refresh)
-    watch = SourceLoads.update_watch_result(watch, result)
+    case SourceLoads.safe_load(watch, :refresh) do
+      {:ok, result} ->
+        watch = SourceLoads.update_watch_result(watch, result)
 
-    patch
-    |> Patch.replace_socket(State.put_existing_watch(Patch.socket(patch), watch.source_id, watch))
-    |> Patch.put_watch_value(watch, result.value)
+        patch
+        |> Patch.replace_socket(
+          State.put_existing_watch(Patch.socket(patch), watch.source_id, watch)
+        )
+        |> Patch.put_watch_value(watch, result.value)
+
+      {:error, _info} ->
+        # A failing local refresh must not crash the LiveView. Skip the update
+        # and keep the prior assign value; the `[:upkeep, :source, :reload]`
+        # span already emitted an `:exception` event for observability.
+        patch
+    end
   end
 end

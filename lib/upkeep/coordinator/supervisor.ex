@@ -3,8 +3,6 @@ defmodule Upkeep.Coordinator.Supervisor do
 
   use Supervisor
 
-  alias Upkeep.Coordinator.DerivedProcesses
-  alias Upkeep.Coordinator.SourceProcesses
   alias Upkeep.Coordinator.Topology
 
   def start_link(opts \\ []) do
@@ -14,13 +12,18 @@ defmodule Upkeep.Coordinator.Supervisor do
   @impl true
   def init(opts) do
     _opts = opts
-    Topology.init_tables()
+
+    # Keep topology tables outside the runtime restart chain.
+    table_owner =
+      Upkeep.ETS.TableOwner.child_specs(
+        name: Upkeep.Coordinator.Topology.TableOwner,
+        tables: Topology.table_specs()
+      )
 
     children =
-      SourceProcesses.child_specs() ++
-        DerivedProcesses.child_specs() ++
+      table_owner ++
         [
-          Upkeep.Coordinator.Graph.Notifier
+          Upkeep.Coordinator.RuntimeSupervisor
         ]
 
     Supervisor.init(children, strategy: :one_for_one)

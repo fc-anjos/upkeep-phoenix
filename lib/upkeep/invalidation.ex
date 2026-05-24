@@ -8,6 +8,7 @@ defmodule Upkeep.Invalidation do
       Group,
       Logger,
       Upkeep.Change,
+      Upkeep.ETS.TableOwner,
       Upkeep.InvalidationSurface,
       Upkeep.Source,
       Upkeep.Source.Dependencies,
@@ -25,15 +26,23 @@ defmodule Upkeep.Invalidation do
 
   @impl true
   def init(_opts) do
-    Enum.each(ReadCache.table_specs(), fn {name, opts} ->
-      :ok = ensure_named_table!(name, opts)
-    end)
+    # Read-cache tables are owned by a dedicated owner/heir process pair (started
+    # FIRST) instead of by this supervisor process, so an owner crash transfers
+    # the tables to its heir and they are handed back to the restarted owner
+    # rather than wiping cached state. See `Upkeep.ETS.TableOwner`.
+    table_owner =
+      Upkeep.ETS.TableOwner.child_specs(
+        name: Upkeep.Invalidation.ReadCache.TableOwner,
+        tables: ReadCache.table_specs()
+      )
 
-    children = [
-      {Upkeep.SingleFlight.Registry,
-       name: ReadCache.coalescer_name(), telemetry_prefix: [:upkeep, :read_nodes]},
-      Upkeep.Invalidation.SourceInvalidator
-    ]
+    children =
+      table_owner ++
+        [
+          {Upkeep.SingleFlight.Registry,
+           name: ReadCache.coalescer_name(), telemetry_prefix: [:upkeep, :read_nodes]},
+          Upkeep.Invalidation.SourceInvalidator
+        ]
 
     Supervisor.init(children, strategy: :one_for_one)
   end
@@ -68,16 +77,5 @@ defmodule Upkeep.Invalidation do
     BroadUpdateDiagnostics.emit(event)
     ReadCache.invalidate(event)
     Bus.dispatch(event)
-  end
-
-  defp ensure_named_table!(name, opts) do
-    case :ets.whereis(name) do
-      :undefined ->
-        ^name = :ets.new(name, opts)
-        :ok
-
-      _ ->
-        :ok
-    end
   end
 end

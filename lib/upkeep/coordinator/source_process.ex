@@ -3,8 +3,8 @@ defmodule Upkeep.Coordinator.SourceProcess do
 
   use GenServer
 
-  alias Upkeep.Coordinator.SourceLoader
   alias Upkeep.Coordinator.{LoadedSource, LoadFailure, Node, Retry, SourceProcesses}
+  alias Upkeep.Coordinator.SourceLoader
   alias Upkeep.Coordinator.{Subscriptions, Topology}
   alias Upkeep.InvalidationSurface
 
@@ -27,8 +27,28 @@ defmodule Upkeep.Coordinator.SourceProcess do
     GenServer.call(pid, {:update, surface, loader})
   end
 
-  def load(pid), do: GenServer.call(pid, :load, 30_000)
+  def load(pid) do
+    GenServer.call(pid, :load, load_timeout())
+  catch
+    # A slow or unresponsive source must not exit the calling LiveView. Degrade
+    # a timeout/exit to an error result the caller can handle (mount/refresh
+    # turn it into an error assign instead of crashing).
+    :exit, {:timeout, _call} -> {:error, :timeout}
+    :exit, {:normal, _call} -> {:error, :noproc}
+    :exit, {:noproc, _call} -> {:error, :noproc}
+  end
+  # Non-blocking invalidation delivery. The handler only marks the source dirty
+  # / triggers a reload and needs no return value, so a wedged or slow source
+  # cannot stall the caller (e.g. the single Notifier funnel) — see invalidate/1
+  # for the blocking variant used as a drain barrier in tests.
+  def invalidate_async(pid), do: GenServer.cast(pid, :invalidate)
   def invalidate(pid), do: safe_call(pid, :invalidate, 60_000)
+
+  # A pure synchronization barrier: a no-op call whose only purpose is to confirm
+  # that any earlier `invalidate_async/1` cast from the same sender has been
+  # processed (per-pair FIFO ordering). It does NOT re-mark the source, so using
+  # it as a drain barrier never triggers an extra reload.
+  def sync(pid), do: safe_call(pid, :sync, 60_000)
   def touch_subscribers(pid), do: safe_call(pid, :touch_subscribers)
   def release(pid), do: safe_call(pid, :release, 60_000)
   def drain(pid), do: safe_call(pid, :drain, 60_000)
@@ -134,16 +154,15 @@ defmodule Upkeep.Coordinator.SourceProcess do
 
   @impl true
   def handle_call(:invalidate, _from, state) do
-    state = %{state | stale?: true, retries: Retry.clear(state.retries, state.node_id)}
+    {:reply, :ok, apply_invalidate(state)}
+  end
 
-    state =
-      if state.idle? do
-        state
-      else
-        start_or_mark_dirty(state, :refresh)
-      end
+  @impl true
+  def handle_call(:sync, _from, state), do: {:reply, :ok, state}
 
-    {:reply, :ok, state}
+  @impl true
+  def handle_cast(:invalidate, state) do
+    {:noreply, apply_invalidate(state)}
   end
 
   @impl true
@@ -201,6 +220,16 @@ defmodule Upkeep.Coordinator.SourceProcess do
   def terminate(_reason, state) do
     Topology.unregister(state.node_id)
     :ok
+  end
+
+  defp apply_invalidate(state) do
+    state = %{state | stale?: true, retries: Retry.clear(state.retries, state.node_id)}
+
+    if state.idle? do
+      state
+    else
+      start_or_mark_dirty(state, :refresh)
+    end
   end
 
   defp start_or_mark_dirty(%{loading: nil} = state, reason), do: start_load(state, reason)
@@ -362,6 +391,10 @@ defmodule Upkeep.Coordinator.SourceProcess do
 
   defp retry_opts do
     Application.get_env(:upkeep, :graph_retry, [])
+  end
+
+  defp load_timeout do
+    Application.get_env(:upkeep, :source_load_timeout_ms, 30_000)
   end
 
   defp safe_call(pid, message, timeout \\ 5_000) do

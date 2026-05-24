@@ -12,6 +12,7 @@ defmodule Upkeep.Invalidation.ReadCache do
   def values_table, do: @values
   def index_table, do: @index
   def refs_table, do: @refs
+  def generations_table, do: @generations
 
   def table_specs do
     [
@@ -114,6 +115,7 @@ defmodule Upkeep.Invalidation.ReadCache do
   defp evict_unheld(node_id) do
     :ets.delete(@values, node_id)
     SurfaceIndex.delete(@index, node_id)
+    :ets.delete(@generations, node_id)
     :ok
   end
 
@@ -150,12 +152,17 @@ defmodule Upkeep.Invalidation.ReadCache do
 
   # Bump the generation BEFORE deleting the @values row so an in-flight
   # loader's `commit_load` CAS finds either a missing row or a row with a
-  # stale gen and skips caching.
+  # stale gen and skips caching. We delete the @values row before the
+  # @generations row so the CAS guard (which keys off the @values row) still
+  # holds even if a concurrent in-flight loader re-creates the @generations
+  # row at 0 via `read_gen`. Deleting the @generations row keeps that table
+  # from growing monotonically as nodes are evicted over time.
   defp evict(node_id) do
     :ets.update_counter(@generations, node_id, {2, 1}, {node_id, 0})
     :ets.delete(@values, node_id)
     SurfaceIndex.delete(@index, node_id)
     :ets.match_delete(@refs, {:_, node_id})
+    :ets.delete(@generations, node_id)
   end
 
   defp emit_invalidation(event, candidate_keys, candidates, evicted_count) do

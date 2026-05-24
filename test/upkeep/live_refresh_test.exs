@@ -190,22 +190,54 @@ defmodule Upkeep.LiveRefreshTest do
     assert Fixture.load_count(:activity) == 2
   end
 
-  test "failed source load raises" do
+  test "a failed source refresh skips the update and keeps the prior assign value" do
+    attach_telemetry([[:upkeep, :source, :reload, :exception]])
+
     socket =
       socket()
       |> Live.watch(:issues, FailingIssues, project_id: 1)
 
     assert Fixture.load_count(:failing) == 1
+    assert socket.assigns.issues == [:stable]
 
     Fixture.set_source_value(:failing, 1, :raise)
 
-    assert_raise RuntimeError, "source failed", fn ->
+    # A raising loader must NOT crash the LiveView on a matching invalidation.
+    # The refresh is skipped and the prior value is retained.
+    socket =
       socket
       |> Live.queue_matching(updated_issue(1, 1))
       |> Live.flush_refreshes()
-    end
 
+    assert socket.assigns.issues == [:stable]
     assert Fixture.load_count(:failing) == 2
+
+    TelemetryMessages.assert_event([:upkeep, :source, :reload, :exception])
+
+    # When the source recovers, the next matching invalidation refreshes cleanly.
+    Fixture.set_source_value(:failing, 1, [:recovered])
+
+    socket =
+      socket
+      |> Live.queue_matching(updated_issue(1, 2))
+      |> Live.flush_refreshes()
+
+    assert socket.assigns.issues == [:recovered]
+  end
+
+  test "a failed source initial load degrades to nil instead of crashing mount" do
+    attach_telemetry([[:upkeep, :source, :reload, :exception]])
+
+    Fixture.set_source_value(:failing, 1, :raise)
+
+    # Mounting a watch whose initial load raises must not crash the mounting
+    # process; the assign degrades to nil.
+    socket =
+      socket()
+      |> Live.watch(:issues, FailingIssues, project_id: 1)
+
+    assert socket.assigns.issues == nil
+    TelemetryMessages.assert_event([:upkeep, :source, :reload, :exception])
   end
 
   test "queues are per socket process state" do
@@ -1565,8 +1597,26 @@ defmodule Upkeep.LiveRefreshTest do
       end)
 
     assert_receive {:graph_subscription_held, ^pid, ^node_id}
-    on_exit(fn -> send(pid, :stop) end)
+    on_exit(fn -> stop_holder(pid) end)
     pid
+  end
+
+  defp stop_holder(pid) do
+    ref = Process.monitor(pid)
+    send(pid, :stop)
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+    after
+      1_000 ->
+        Process.exit(pid, :kill)
+
+        receive do
+          {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+        after
+          1_000 -> :ok
+        end
+    end
   end
 
   defp block_derive_if_configured(user_id, event, message) do

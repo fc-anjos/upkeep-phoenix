@@ -51,6 +51,10 @@ defmodule Upkeep.SingleFlight.Registry do
 
   def pending?(name, key), do: GenServer.call(name, {:pending?, key})
 
+  @doc false
+  # Diagnostic: number of coalesced waiters currently attached to `key`.
+  def waiter_count(name, key), do: GenServer.call(name, {:waiter_count, key})
+
   @impl true
   def init(opts) do
     {:ok,
@@ -79,6 +83,16 @@ defmodule Upkeep.SingleFlight.Registry do
     {:reply, Map.has_key?(state.flight.loads, key), state}
   end
 
+  def handle_call({:waiter_count, key}, _from, state) do
+    count =
+      case Map.fetch(state.flight.loads, key) do
+        {:ok, load} -> length(load.waiters)
+        :error -> 0
+      end
+
+    {:reply, count, state}
+  end
+
   @impl true
   def handle_cast({:settle, key, outcome}, state) do
     {:noreply, settle(state, key, outcome)}
@@ -87,8 +101,15 @@ defmodule Upkeep.SingleFlight.Registry do
   @impl true
   def handle_info({:DOWN, mref, :process, _pid, reason}, state) do
     case SingleFlight.pop(state.flight, mref) do
-      {:ok, _key, load, flight} ->
-        notify_waiters(load, {:loader_down, reason})
+      {:ok, key, load, flight} ->
+        # A successfully-computed result must win the race against the leader's
+        # death: if the leader cast its `:settle` before exiting, that message is
+        # already in our mailbox even though the `{:DOWN}` was scheduled first.
+        # Drain a pending settle for this load and deliver the real outcome
+        # instead of `{:loader_down, reason}` (which would lose the value and
+        # raise `LoaderDown` in coalesced waiters).
+        outcome = pending_settle_outcome(key, {:loader_down, reason})
+        notify_waiters(load, outcome)
         {:noreply, %{state | flight: flight}}
 
       :stale ->
@@ -96,20 +117,28 @@ defmodule Upkeep.SingleFlight.Registry do
     end
   end
 
+  # Selectively drain an already-enqueued `{:settle, key, outcome}` for this
+  # load. `after 0` keeps it non-blocking: if no settle is buffered, the leader
+  # genuinely died before producing a result, so we fall back to `default`.
+  defp pending_settle_outcome(key, default) do
+    receive do
+      {:"$gen_cast", {:settle, ^key, outcome}} -> outcome
+    after
+      0 -> default
+    end
+  end
+
+  # Tolerant of a load that was already terminated (e.g. by a DOWN that won the
+  # race and already drained this settle); never crashes the registry.
   defp settle(state, key, outcome) do
-    ref =
-      state.flight.loads
-      |> Map.fetch!(key)
-      |> Map.fetch!(:ref)
-
-    case SingleFlight.pop(state.flight, ref) do
-      {:ok, ^key, load, flight} ->
-        Process.demonitor(ref, [:flush])
-        notify_waiters(load, outcome)
-        %{state | flight: flight}
-
-      _ ->
-        state
+    with {:ok, load} <- Map.fetch(state.flight.loads, key),
+         ref = Map.fetch!(load, :ref),
+         {:ok, ^key, load, flight} <- SingleFlight.pop(state.flight, ref) do
+      Process.demonitor(ref, [:flush])
+      notify_waiters(load, outcome)
+      %{state | flight: flight}
+    else
+      _ -> state
     end
   end
 

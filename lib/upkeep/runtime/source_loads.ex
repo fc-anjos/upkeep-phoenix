@@ -11,6 +11,60 @@ defmodule Upkeep.Runtime.SourceLoads do
     load(watch.instance, watch.source_id, watch.component, reason)
   end
 
+  @doc """
+  Load a source without letting a raising/exiting loader take down the caller.
+
+  Returns `{:ok, result}` on success or `{:error, info}` on failure. The
+  `[:upkeep, :source, :reload]` span still emits its `:exception` event before
+  this rescues, so observability is unchanged — only the LiveView no longer
+  crashes. Used by the mount and local-refresh paths, which run the loader
+  directly on the LiveView process.
+  """
+  def safe_load(watch, reason) do
+    {:ok, load(watch, reason)}
+  rescue
+    error -> rescue_load(error, __STACKTRACE__)
+  catch
+    kind, value -> {:error, %{kind: kind, error: value, stacktrace: __STACKTRACE__}}
+  end
+
+  def safe_load_coalesced(%Instance{} = instance, source_id, component, reason) do
+    {:ok, load_coalesced(instance, source_id, component, reason)}
+  rescue
+    error -> rescue_load(error, __STACKTRACE__)
+  catch
+    kind, value -> {:error, %{kind: kind, error: value, stacktrace: __STACKTRACE__}}
+  end
+
+  # A missing `current_scope` or other misconfiguration surfaces as an
+  # `ArgumentError`. That is a developer/setup mistake (not a transient source
+  # failure), so it must keep crashing loudly rather than degrading to a silent
+  # error state.
+  defp rescue_load(%ArgumentError{} = error, stacktrace) do
+    reraise(error, stacktrace)
+  end
+
+  defp rescue_load(error, stacktrace) do
+    {:error, %{kind: :error, error: error, stacktrace: stacktrace}}
+  end
+
+  @doc """
+  Build a degraded `LoadResult` for a source whose load failed.
+
+  The value is `nil`, but the surface falls back to the source's declared
+  (`invalidated_by`) surface so the watch stays reactive: a later matching
+  invalidation can refresh it and recover, rather than the watch being inert.
+  """
+  def degraded_result(%Instance{} = instance) do
+    %LoadResult{
+      instance: instance,
+      value: nil,
+      tracked_deps: [],
+      surface: instance.explicit_surface,
+      coverage: nil
+    }
+  end
+
   def load(%Instance{} = instance, source_id, component, reason) do
     Telemetry.span(
       [:source, :reload],

@@ -7,6 +7,7 @@ defmodule Upkeep.Coordinator do
     deps: [
       Upkeep.Change,
       Upkeep.DAG,
+      Upkeep.ETS.TableOwner,
       Upkeep.Invalidation,
       Upkeep.InvalidationSurface,
       Upkeep.Source,

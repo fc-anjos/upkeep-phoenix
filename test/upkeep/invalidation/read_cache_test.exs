@@ -313,6 +313,82 @@ defmodule Upkeep.Invalidation.ReadCacheTest do
     assert :ets.tab2list(ReadCache.index_table()) == []
   end
 
+  test "invalidate/1 does not leak @generations rows after eviction" do
+    Repo.insert!(%Project{id: 1, name: "alpha"})
+
+    q = from(p in Project)
+
+    # Each load/evict cycle bumps the generation for the node. Without cleanup
+    # the @generations table grows by one row per distinct node and never
+    # shrinks, even after the value is evicted.
+    fetch_query(q)
+    assert ReadCache.count() == 1
+    assert :ets.info(ReadCache.generations_table(), :size) == 1
+
+    ReadCache.invalidate(Upkeep.Change.updated(%Project{id: 1, name: "alpha"}))
+    assert ReadCache.count() == 0
+
+    # After eviction, the generation row for the evicted node must be gone too.
+    assert :ets.info(ReadCache.generations_table(), :size) == 0
+  end
+
+  test "release/1 does not leak @generations rows after eviction" do
+    Repo.insert!(%Project{id: 1, name: "alpha"})
+
+    q = from(p in Project)
+    holder = {:gen_holder, %{}}
+
+    fetch_query(q, holder)
+    assert :ets.info(ReadCache.generations_table(), :size) == 1
+
+    assert ReadCache.release(holder) == 1
+    assert ReadCache.count() == 0
+    assert :ets.info(ReadCache.generations_table(), :size) == 0
+  end
+
+  test "a dead watcher's read-cache holder is reaped, un-pinning cached values" do
+    Repo.insert!(%Project{id: 1, name: "alpha"})
+
+    defmodule ReapSource do
+      use Upkeep.Ecto.Source, repo: Upkeep.TestSupport.Repo
+
+      import Ecto.Query
+
+      def load(params) do
+        Upkeep.read(
+          from(p in Upkeep.Invalidation.ReadCacheTest.Project, where: p.id == ^params.id)
+        )
+      end
+
+      def __upkeep_sharing_partition__(params), do: params
+    end
+
+    parent = self()
+
+    watcher =
+      spawn(fn ->
+        _socket =
+          LiveSocket.socket()
+          |> Upkeep.Live.watch(:project, ReapSource, id: 1)
+
+        send(parent, :watching)
+
+        receive do
+          :die -> :ok
+        end
+      end)
+
+    assert_receive :watching, 2_000
+    assert ReadCache.count() == 1
+
+    ref = Process.monitor(watcher)
+    send(watcher, :die)
+    assert_receive {:DOWN, ^ref, :process, _, _}, 2_000
+
+    wait_until(fn -> ReadCache.count() == 0 end, 2_000)
+    assert :ets.tab2list(ReadCache.refs_table()) == []
+  end
+
   test "release/1 is a no-op when no holder was recorded" do
     Repo.insert!(%Project{id: 1, name: "alpha"})
 
@@ -358,6 +434,25 @@ defmodule Upkeep.Invalidation.ReadCacheTest do
 
     pids = Enum.map(members, fn {pid, _meta} -> pid end)
     assert Process.whereis(Upkeep.Invalidation.SourceInvalidator) in pids
+  end
+
+  defp wait_until(fun, timeout) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_wait_until(fun, deadline)
+  end
+
+  defp do_wait_until(fun, deadline) do
+    cond do
+      fun.() ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("condition was not met before timeout")
+
+      true ->
+        Process.sleep(5)
+        do_wait_until(fun, deadline)
+    end
   end
 
   defp fetch_query(query, holder \\ nil) do

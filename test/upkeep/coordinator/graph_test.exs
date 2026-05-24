@@ -47,6 +47,16 @@ defmodule Upkeep.Coordinator.GraphTest do
     invalidated_by(Upkeep.Coordinator.GraphTest.Ev, on: [:id, :tenant_id])
   end
 
+  defmodule FirstLoadFailsSource do
+    use Upkeep.Source, retry: false
+
+    def load(_params) do
+      raise "first load failed"
+    end
+
+    invalidated_by(Upkeep.Coordinator.GraphTest.Ev, on: [:id, :tenant_id])
+  end
+
   setup tags do
     _ = tags
     Upkeep.Test.reset_graph()
@@ -635,6 +645,23 @@ defmodule Upkeep.Coordinator.GraphTest do
 
       Graph.unregister(node_id)
       :ets.delete(table)
+    end
+
+    test "register_source_and_load returns {:error, _} instead of crashing the caller on a failing initial load" do
+      event = %Ev{id: 15, tenant_id: 1}
+      params = %{id: event.id, tenant_id: event.tenant_id}
+      instance = Instance.build(FirstLoadFailsSource, params)
+      node_id = instance.id
+
+      log =
+        capture_log(fn ->
+          assert {:error, _reason} =
+                   Graph.register_source_and_load(node_id, instance.surface, instance)
+        end)
+
+      assert log =~ "first load failed"
+
+      Graph.unregister(node_id)
     end
   end
 

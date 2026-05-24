@@ -3,6 +3,8 @@ defmodule Upkeep.Coordinator.Graph do
 
   alias Upkeep.Coordinator.Graph.Notifier
   alias Upkeep.Coordinator.DerivedProcesses
+  alias Upkeep.Coordinator.LifecycleMonitor
+  alias Upkeep.Coordinator.RuntimeSupervisor
   alias Upkeep.Coordinator.SourceProcesses
   alias Upkeep.Coordinator.Subscriptions
   alias Upkeep.Coordinator.Topology
@@ -32,9 +34,17 @@ defmodule Upkeep.Coordinator.Graph do
   end
 
   def register_source_and_load(node_id, %InvalidationSurface{} = surface, %Instance{} = instance) do
-    {:ok, result} = SourceProcesses.register_source_and_load(node_id, surface, instance)
+    # Subscribe regardless of load outcome so the source process stays reachable
+    # for future invalidations/retries even when the initial load failed. A
+    # failing load returns `{:error, reason}` (see SourceProcess.handle_load_failure)
+    # which we propagate to the caller instead of crashing it with a MatchError.
+    result = SourceProcesses.register_source_and_load(node_id, surface, instance)
     subscribe_source(node_id)
-    {:ok, result}
+
+    case result do
+      {:ok, value} -> {:ok, value}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   def register_derived_and_compute(node_id, dep_node_ids, dep_values, compute, metadata)
@@ -80,15 +90,23 @@ defmodule Upkeep.Coordinator.Graph do
   defdelegate registered?(node_id), to: Topology
 
   def drain do
+    RuntimeSupervisor.drain()
+    LifecycleMonitor.drain()
     Notifier.drain()
     SourceProcesses.drain_all()
     DerivedProcesses.drain_all()
+    LifecycleMonitor.drain()
+    RuntimeSupervisor.drain()
   end
 
   def reset do
+    RuntimeSupervisor.drain()
+    LifecycleMonitor.drain()
     DerivedProcesses.reset_all()
     SourceProcesses.reset_all()
     Topology.reset()
+    LifecycleMonitor.drain()
+    RuntimeSupervisor.drain()
 
     :ok
   end

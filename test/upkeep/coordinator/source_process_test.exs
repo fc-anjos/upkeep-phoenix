@@ -122,6 +122,51 @@ defmodule Upkeep.Coordinator.SourceProcessTest do
       Graph.unregister(slow_id)
     end
 
+    test "a wedged source process does not block invalidation delivery to others" do
+      # A source whose GenServer is fully wedged (not processing its mailbox)
+      # must not stall steady-state invalidation delivery to other sources. This
+      # exercises the non-blocking (cast) delivery path on the Notifier.
+      parent = self()
+
+      wedged_event = %Ev{id: 20, tenant_id: 1}
+      fast_event = %Ev{id: 21, tenant_id: 1}
+      wedged_surface = event_surface(wedged_event)
+      fast_surface = event_surface(fast_event)
+      wedged_id = {:wedged_process_source, System.unique_integer()}
+      fast_id = {:fast_delivery_source, System.unique_integer()}
+
+      :ok = Graph.register_loader(wedged_id, wedged_surface, fn -> {:wedged, wedged_surface} end)
+
+      :ok =
+        Graph.register_loader(fast_id, fast_surface, fn ->
+          send(parent, :fast_loaded)
+          {:fast_value, fast_surface}
+        end)
+
+      # Fully suspend the wedged source's GenServer so it cannot process its
+      # mailbox at all (simulating a hung process). A blocking call to it would
+      # never return.
+      {:ok, wedged_pid} = wait_for_source(wedged_id)
+      :ok = :sys.suspend(wedged_pid)
+
+      try do
+        # Deliver on the steady-state (non-blocking) path. The Notifier processes
+        # these via handle_info and casts to both sources. The wedged source
+        # cannot ack its cast, but the fast source must still load — a blocking
+        # delivery would have stalled the whole funnel on the wedged source.
+        notify(wedged_event)
+        notify(fast_event)
+
+        assert_receive :fast_loaded, 1_000
+        assert DagMessages.receive_value(fast_id) == :fast_value
+      after
+        :sys.resume(wedged_pid)
+      end
+
+      Graph.unregister(fast_id)
+      Graph.unregister(wedged_id)
+    end
+
     test "a refresh racing a later invalidation reloads before dispatch" do
       counter = :counters.new(1, [:atomics])
       parent = self()
@@ -254,6 +299,26 @@ defmodule Upkeep.Coordinator.SourceProcessTest do
 
       wait_until(fn -> SourceProcesses.count() == 0 end, 1_000)
       refute Graph.registered?(node_id)
+    end
+  end
+
+  defp wait_for_source(node_id, timeout \\ 1_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_wait_for_source(node_id, deadline)
+  end
+
+  defp do_wait_for_source(node_id, deadline) do
+    case Registry.lookup(SourceProcesses.registry(), node_id) do
+      [{pid, _}] ->
+        {:ok, pid}
+
+      [] ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          flunk("source process for #{inspect(node_id)} did not start before timeout")
+        else
+          Process.sleep(5)
+          do_wait_for_source(node_id, deadline)
+        end
     end
   end
 
