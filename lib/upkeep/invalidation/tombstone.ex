@@ -50,13 +50,14 @@ defmodule Upkeep.Invalidation.Tombstone do
 
   @impl true
   def init(opts) do
-    :ets.new(@table, [
-      :named_table,
-      :public,
-      :set,
-      read_concurrency: true,
-      write_concurrency: true
-    ])
+    _table =
+      :ets.new(@table, [
+        :named_table,
+        :public,
+        :set,
+        read_concurrency: true,
+        write_concurrency: true
+      ])
 
     :ok = join_gossip()
     {:ok, build_state(opts), {:continue, :boot_sync}}
