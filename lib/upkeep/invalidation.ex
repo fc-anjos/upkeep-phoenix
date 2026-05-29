@@ -18,7 +18,7 @@ defmodule Upkeep.Invalidation do
 
   use Supervisor
 
-  alias Upkeep.Invalidation.{BroadUpdateDiagnostics, Bus, ReadCache}
+  alias Upkeep.Invalidation.{BroadUpdateDiagnostics, Bus, ReadCache, Tombstone}
 
   def start_link(opts \\ []) do
     Supervisor.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
@@ -41,7 +41,8 @@ defmodule Upkeep.Invalidation do
         [
           {Upkeep.SingleFlight.Registry,
            name: ReadCache.coalescer_name(), telemetry_prefix: [:upkeep, :read_nodes]},
-          Upkeep.Invalidation.SourceInvalidator
+          Upkeep.Invalidation.SourceInvalidator,
+          Upkeep.Invalidation.Tombstone
         ]
 
     Supervisor.init(children, strategy: :one_for_one)
@@ -76,6 +77,7 @@ defmodule Upkeep.Invalidation do
   defp dispatch_one(event) do
     BroadUpdateDiagnostics.emit(event)
     ReadCache.invalidate(event)
+    Tombstone.record(event)
     Bus.dispatch(event)
   end
 end
