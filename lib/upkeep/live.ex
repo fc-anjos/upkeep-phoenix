@@ -72,7 +72,8 @@ defmodule Upkeep.Live do
           remove_component: 2,
           unwatch: 2,
           unwatch: 3,
-          refresh: 4
+          refresh: 4,
+          revoke_authorization: 2
         ]
 
       @impl true
@@ -140,6 +141,23 @@ defmodule Upkeep.Live do
       socket,
       &Upkeep.Runtime.unwatch_source(&1, source, normalize_params(params))
     )
+  end
+
+  @doc """
+  Drop watches whose authorizing identity is no longer valid.
+
+  Each watch is tagged at watch time with the identity that authorized it
+  (derived from `:current_scope` via the `:authorizing_identity` extractor).
+  Pass the revoked identity to drop every watch tagged with it, or a predicate
+  receiving each watch's identity and returning `true` to drop it. Dropped
+  watches leave their source groups and unregister like `unwatch/2`.
+  """
+  def revoke_authorization(socket, predicate) when is_function(predicate, 1) do
+    with_current_scope(socket, &Upkeep.Runtime.revoke_authorization(&1, predicate))
+  end
+
+  def revoke_authorization(socket, identity) do
+    revoke_authorization(socket, fn watch_identity -> watch_identity == identity end)
   end
 
   def refresh(socket, assign_name, source, params) when is_atom(assign_name) do

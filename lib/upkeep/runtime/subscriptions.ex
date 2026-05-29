@@ -21,13 +21,21 @@ defmodule Upkeep.Runtime.Subscriptions do
     Graph.unregister(source_id)
   end
 
-  def track_source(source_id) do
+  def track_source(source_id, identity \\ nil) do
     Graph.group()
-    |> Group.join(Graph.source_key(source_id), %{kind: :local_lv})
+    |> Group.join(Graph.source_key(source_id), %{kind: :local_lv, authorizing_identity: identity})
     |> case do
       :ok -> :ok
       :already_joined -> :ok
     end
+  end
+
+  # The identity that authorized a watch, captured from the viewer scope at watch
+  # time. A configurable extractor maps the scope to whatever the application
+  # treats as the authorization principal (defaults to the scope itself).
+  def authorizing_identity(%Phoenix.LiveView.Socket{} = socket) do
+    extractor = Application.get_env(:upkeep, :authorizing_identity, & &1)
+    extractor.(Map.get(socket.assigns, :current_scope))
   end
 
   def untrack_source(source_id), do: unregister(source_id)

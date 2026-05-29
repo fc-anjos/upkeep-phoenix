@@ -78,6 +78,8 @@ defmodule Upkeep.Runtime do
 
   def unwatch_source(socket, source, params), do: Watches.unwatch_source(socket, source, params)
 
+  def revoke_authorization(socket, predicate), do: Watches.revoke(socket, predicate)
+
   def refresh(socket, assign_name, source, params),
     do: Refresh.refresh(socket, assign_name, source, params)
 

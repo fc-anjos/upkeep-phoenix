@@ -40,6 +40,7 @@ defmodule Upkeep.Runtime.Mount do
 
         existing_count = if tracked?, do: Subscriptions.source_member_count(source_id), else: 0
         registered? = policy == :eager or existing_count >= 1
+        identity = Subscriptions.authorizing_identity(socket)
 
         result = load_or_degrade(instance, source_id, producer.component)
 
@@ -52,14 +53,15 @@ defmodule Upkeep.Runtime.Mount do
             registered?: registered?,
             subscribed?: tracked?,
             surface: result.surface,
-            tracked_deps: result.tracked_deps
+            tracked_deps: result.tracked_deps,
+            authorizing_identity: identity
           })
           |> Patch.new()
           |> Patch.put_source(source_id, result.value, spec.deps, metadata: spec.metadata)
           |> Patch.put_assign_node(assign_name, spec.id)
 
         effects =
-          Effects.track_source(tracked?, source_id) ++
+          Effects.track_source(tracked?, source_id, identity) ++
             Effects.join_local_notifications(tracked? and not registered?) ++
             Effects.maybe_register_source(
               registered?,

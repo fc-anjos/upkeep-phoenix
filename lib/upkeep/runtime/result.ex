@@ -11,7 +11,7 @@ defmodule Upkeep.Runtime.Result do
           | {:telemetry, [atom()], map(), map()}
           | {:register_source, term(), Upkeep.InvalidationSurface.t(), Upkeep.Source.Instance.t()}
           | {:unregister, term()}
-          | {:track_source, term()}
+          | {:track_source, term(), term()}
           | {:join_local_notifications}
   @type result(socket) :: {:ok, socket, [effect()]}
 
@@ -31,7 +31,7 @@ defmodule Upkeep.Runtime.Result do
 
   defp external?({:register_source, _id, _surface, _instance}), do: true
   defp external?({:unregister, _id}), do: true
-  defp external?({:track_source, _id}), do: true
+  defp external?({:track_source, _id, _identity}), do: true
   defp external?({:join_local_notifications}), do: true
   defp external?(_effect), do: false
 
@@ -52,13 +52,16 @@ defmodule Upkeep.Runtime.Result do
     do: Subscriptions.register(source_id, surface, instance)
 
   defp apply_external({:unregister, source_id}), do: Subscriptions.unregister(source_id)
-  defp apply_external({:track_source, source_id}), do: Subscriptions.track_source(source_id)
+
+  defp apply_external({:track_source, source_id, identity}),
+    do: Subscriptions.track_source(source_id, identity)
+
   defp apply_external({:join_local_notifications}), do: Subscriptions.join_local_notifications()
 
   defp compensation({:register_source, source_id, _surface, _instance}),
     do: fn -> Subscriptions.unregister(source_id) end
 
-  defp compensation({:track_source, source_id}),
+  defp compensation({:track_source, source_id, _identity}),
     do: fn -> Subscriptions.untrack_source(source_id) end
 
   defp compensation(_effect), do: fn -> :ok end
@@ -91,7 +94,7 @@ defmodule Upkeep.Runtime.Result do
   defp effect_kind({:assign, _name, _value}), do: :assign
   defp effect_kind({:unregister, _source_id}), do: :unregister
   defp effect_kind({:telemetry, _event, _measurements, _metadata}), do: :telemetry
-  defp effect_kind({:track_source, _source_id}), do: :track_source
+  defp effect_kind({:track_source, _source_id, _identity}), do: :track_source
   defp effect_kind({:join_local_notifications}), do: :join_local_notifications
 
   defp effect_kind({:register_source, _source_id, _surface, _instance}),

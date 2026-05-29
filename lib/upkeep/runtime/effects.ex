@@ -10,8 +10,8 @@ defmodule Upkeep.Runtime.Effects do
 
   def maybe_register_source(false, _source_id, _surface, _producer), do: []
 
-  def track_source(true, source_id), do: [{:track_source, source_id}]
-  def track_source(false, _source_id), do: []
+  def track_source(true, source_id, identity), do: [{:track_source, source_id, identity}]
+  def track_source(false, _source_id, _identity), do: []
 
   def join_local_notifications(true), do: [{:join_local_notifications}]
   def join_local_notifications(false), do: []

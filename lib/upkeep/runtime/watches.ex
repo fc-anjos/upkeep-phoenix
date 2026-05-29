@@ -50,6 +50,19 @@ defmodule Upkeep.Runtime.Watches do
     |> then(fn {socket, effects} -> {:ok, socket, effects} end)
   end
 
+  def revoke(socket, predicate) when is_function(predicate, 1) do
+    socket
+    |> State.watches()
+    |> Enum.filter(fn {_source_id, watch} ->
+      predicate.(Map.get(watch, :authorizing_identity))
+    end)
+    |> Enum.reduce({socket, []}, fn {source_id, _watch}, {socket, effects} ->
+      {socket, remove_effects} = remove_watch(socket, source_id)
+      {socket, effects ++ remove_effects}
+    end)
+    |> then(fn {socket, effects} -> {:ok, socket, effects} end)
+  end
+
   def remove_watch(socket, source_id) do
     current_watches = State.watches(socket)
 
