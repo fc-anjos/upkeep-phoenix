@@ -38,16 +38,8 @@ defmodule Upkeep.Runtime.Mount do
         policy = Subscriptions.tracking_policy(socket)
         tracked? = policy == :auto
 
-        if tracked? do
-          :ok = Subscriptions.track_source(source_id)
-        end
-
-        subscriber_count = if tracked?, do: Subscriptions.source_member_count(source_id), else: 0
-        registered? = policy == :eager or subscriber_count > 1
-
-        if tracked? and not registered? do
-          :ok = Subscriptions.join_local_notifications()
-        end
+        existing_count = if tracked?, do: Subscriptions.source_member_count(source_id), else: 0
+        registered? = policy == :eager or existing_count >= 1
 
         result = load_or_degrade(instance, source_id, producer.component)
 
@@ -67,12 +59,14 @@ defmodule Upkeep.Runtime.Mount do
           |> Patch.put_assign_node(assign_name, spec.id)
 
         effects =
-          Effects.maybe_register_source(
-            registered?,
-            source_id,
-            result.surface,
-            producer
-          ) ++
+          Effects.track_source(tracked?, source_id) ++
+            Effects.join_local_notifications(tracked? and not registered?) ++
+            Effects.maybe_register_source(
+              registered?,
+              source_id,
+              result.surface,
+              producer
+            ) ++
             [
               {:telemetry, [:source, :watch], %{count: 1},
                spec.metadata

@@ -59,6 +59,23 @@ defmodule Upkeep.Runtime.ResultTest do
     assert is_integer(duration)
   end
 
+  test "to_socket rolls back committed external effects when a later one raises" do
+    alias Upkeep.Coordinator.Graph
+
+    source_id = {ProjectIssues, %{project_id: System.unique_integer([:positive])}}
+
+    effects = [
+      {:track_source, source_id},
+      {:register_source, source_id, :not_a_surface, :not_an_instance}
+    ]
+
+    assert_raise FunctionClauseError, fn ->
+      Runtime.to_socket({:ok, LiveSocket.socket(), effects})
+    end
+
+    assert Graph.member_count(Graph.source_key(source_id)) == 0
+  end
+
   defp find_effect(effects, kind) do
     Enum.find(effects, fn
       {^kind, _event, _measurements, _metadata} -> true

@@ -10,6 +10,12 @@ defmodule Upkeep.Runtime.Effects do
 
   def maybe_register_source(false, _source_id, _surface, _producer), do: []
 
+  def track_source(true, source_id), do: [{:track_source, source_id}]
+  def track_source(false, _source_id), do: []
+
+  def join_local_notifications(true), do: [{:join_local_notifications}]
+  def join_local_notifications(false), do: []
+
   def assign_source(assign_name, value, source_id) do
     [
       {:telemetry, [:live, :assign], %{count: 1},
