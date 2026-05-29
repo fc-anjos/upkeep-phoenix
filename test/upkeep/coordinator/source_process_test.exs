@@ -226,8 +226,8 @@ defmodule Upkeep.Coordinator.SourceProcessTest do
       # unambiguous and any delivery inversion is detectable.
       :ok =
         Graph.register_loader(node_id, surface, fn ->
-          next = :counters.add(counter, 1, 1)
-          {{:seq, next}, surface}
+          :ok = :counters.add(counter, 1, 1)
+          {{:seq, :counters.get(counter, 1)}, surface}
         end)
 
       # Fire many invalidations as fast as possible to maximize the chance of
