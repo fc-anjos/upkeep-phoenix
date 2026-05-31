@@ -9,6 +9,31 @@ defmodule Upkeep.Mutation do
     ]
 
   @journal_key {__MODULE__, :journal}
+  @capture_key {__MODULE__, :capture}
+
+  @doc """
+  Run `fun` with repo capture forced on or off for the current process.
+
+  A process-scoped form of the per-write `upkeep: false` option. Every write
+  made by code inside the block — including existing context functions called
+  unchanged — uses `enabled?` as its capture default, so it can skip (or force)
+  Upkeep notifications without threading `upkeep:` through each call. An explicit
+  `upkeep:` option on an individual write still takes precedence. The previous
+  default is restored afterward, so the helper nests and is safe across raises.
+  """
+  def with_upkeep(enabled?, fun) when is_boolean(enabled?) and is_function(fun, 0) do
+    previous = Process.get(@capture_key, :upkeep_no_capture_default)
+    Process.put(@capture_key, enabled?)
+
+    try do
+      fun.()
+    after
+      restore_capture_default(previous)
+    end
+  end
+
+  @doc false
+  def capture_default, do: Process.get(@capture_key, true)
 
   def notify(event) when is_struct(event) do
     if journal_active?() do
@@ -110,4 +135,7 @@ defmodule Upkeep.Mutation do
 
   defp restore_journal(:upkeep_no_journal), do: Process.delete(@journal_key)
   defp restore_journal(previous), do: Process.put(@journal_key, previous)
+
+  defp restore_capture_default(:upkeep_no_capture_default), do: Process.delete(@capture_key)
+  defp restore_capture_default(previous), do: Process.put(@capture_key, previous)
 end

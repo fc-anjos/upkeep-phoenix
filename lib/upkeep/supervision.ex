@@ -8,6 +8,7 @@ defmodule Upkeep.Supervision do
       Group,
       Upkeep,
       Upkeep.Coordinator,
+      Upkeep.Ecto,
       Upkeep.Invalidation,
       Upkeep.Runtime,
       Upkeep.SingleFlight
@@ -16,12 +17,16 @@ defmodule Upkeep.Supervision do
 
   use Supervisor
 
+  alias Upkeep.Ecto.Repo
+
   def start_link(opts \\ []) do
     Supervisor.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
   end
 
   @impl true
   def init(_opts) do
+    Repo.verify_configuration()
+
     children = [
       Upkeep.Observability,
       {Group, name: Upkeep.Group, log: false},

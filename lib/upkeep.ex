@@ -29,6 +29,8 @@ defmodule Upkeep do
   ## Current Entry Points
 
   - `mutate/1`, `mutate/2` — transaction boundary that journals notifications.
+  - `with_upkeep/2` — run a block with repo capture forced on or off.
+  - `attach_write_guard/2`, `detach_write_guard/1` — warn on out-of-band writes.
   - `notify/1` — publish a domain event.
   - `inserted/2`, `updated/2`, `deleted/2`, `changed/3` — typed event helpers.
   - `read/1` — Ecto-backed read inside a source context.
@@ -67,6 +69,46 @@ defmodule Upkeep do
   notifications after the transaction commits.
   """
   defdelegate mutate(repo, fun), to: Upkeep.Ecto.Mutation
+
+  @doc """
+  Run `fun` with repo capture forced on or off for the current process.
+
+  A process-scoped form of the per-write `upkeep: false` option. Writes made by
+  any code inside the block — including existing context functions called
+  unchanged — skip Upkeep notifications when disabled, without passing
+  `upkeep: false` to each call. An explicit `upkeep:` option on an individual
+  write still takes precedence.
+
+      Upkeep.with_upkeep(false, fn ->
+        Catalog.rename_item(id, name)
+      end)
+  """
+  defdelegate with_upkeep(enabled?, fun), to: Upkeep.Mutation
+
+  @doc """
+  Start warning about out-of-band writes through `repo` for the running system.
+
+  Call this once from your application start (after the repo is started), in the
+  environments where you want it:
+
+      Upkeep.attach_write_guard(MyApp.Repo)
+
+  It attaches to the repo's Ecto query telemetry and logs a warning whenever a
+  write reaches the database without flowing through `Upkeep.Ecto.Repo` capture
+  (for example raw SQL), so it would silently leave watched sources stale. Writes
+  marked `upkeep: false` are intentional and never warn.
+
+  Pass `policy: :ignore` to make the call a no-op, or set a default with
+  `config :upkeep, out_of_band_writes: :warn | :ignore`. The guard only ever
+  warns; for hard, fail-the-build enforcement use
+  `Upkeep.Test.assert_all_writes_captured/1` in tests.
+  """
+  defdelegate attach_write_guard(repo, opts \\ []), to: Upkeep.Ecto.WriteGuard, as: :attach
+
+  @doc """
+  Stop the out-of-band write guard previously attached to `repo`.
+  """
+  defdelegate detach_write_guard(repo), to: Upkeep.Ecto.WriteGuard, as: :detach
 
   @doc """
   Publish a domain event to Upkeep's invalidation runtime.

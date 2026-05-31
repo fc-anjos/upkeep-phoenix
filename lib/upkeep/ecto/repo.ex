@@ -64,4 +64,40 @@ defmodule Upkeep.Ecto.Repo do
   end
 
   def capture_enabled?(_repo), do: false
+
+  @doc false
+  defdelegate observed, to: Upkeep.Ecto.RepoCapture
+
+  @doc """
+  Warn once at boot when a repo is configured for Upkeep but was not built with
+  `use Upkeep.Ecto.Repo`, so writes through it would silently leave watched
+  sources stale.
+
+  This is advisory and never raises (it cannot block boot). Applications that
+  intentionally use a plain repo with explicit-only sources can silence it with
+  `config :upkeep, repo_capture_misconfiguration: :ignore`.
+  """
+  def verify_configuration do
+    repo = Application.get_env(:upkeep, :repo)
+    policy = Application.get_env(:upkeep, :repo_capture_misconfiguration, :warn)
+
+    if is_atom(repo) and not is_nil(repo) and not capture_enabled?(repo) and policy != :ignore do
+      require Logger
+      Logger.warning(boot_misconfiguration_message(repo))
+    end
+
+    :ok
+  end
+
+  defp boot_misconfiguration_message(repo) do
+    """
+    Upkeep is configured with `repo: #{inspect(repo)}`, but that repo is not \
+    built with `use Upkeep.Ecto.Repo`. Writes through it will not refresh \
+    watched sources.
+
+    Replace `use Ecto.Repo` with `use Upkeep.Ecto.Repo` (keeping the adapter and \
+    options). If this repo only backs explicit-only sources, set \
+    `config :upkeep, repo_capture_misconfiguration: :ignore` to silence this.\
+    """
+  end
 end

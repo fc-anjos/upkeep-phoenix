@@ -19,6 +19,7 @@ defmodule Upkeep.Test do
   alias Ecto.Adapters.SQL.Sandbox
   alias Upkeep.Coordinator.Graph
   alias Upkeep.Ecto.Repo
+  alias Upkeep.Ecto.WriteGuard
   alias Upkeep.Source.Coverage
 
   @doc """
@@ -104,6 +105,56 @@ defmodule Upkeep.Test do
   end
 
   @doc """
+  Assert that every write inside `fun` flowed through `Upkeep.Ecto.Repo`.
+
+  Wraps `fun`, watching the repo's Ecto query telemetry, and fails if any
+  write (`INSERT`/`UPDATE`/`DELETE`) reaches the database without going through
+  capture — for example raw SQL via `Ecto.Adapters.SQL.query/4`, or an unwrapped
+  repo sharing the same telemetry prefix. Such writes silently leave watched
+  sources stale, so this turns the repo-capture precondition into an enforceable
+  test:
+
+      Upkeep.Test.assert_all_writes_captured(fn ->
+        Catalog.import_items(rows)
+      end)
+
+  Writes explicitly opted out with `upkeep: false` (or inside
+  `Upkeep.with_upkeep(false, ...)`) are intentional and do not fail the
+  assertion. Pass `repo:` to target a repo other than the configured one.
+
+  Detection is process-local: writes must run in the calling process (the usual
+  case under the SQL sandbox).
+  """
+  def assert_all_writes_captured(fun, opts \\ []) when is_function(fun, 0) do
+    repo = Keyword.get(opts, :repo, default_repo!())
+    handler_id = {__MODULE__, :write_guard, System.unique_integer([:positive])}
+    parent = self()
+
+    :telemetry.attach(
+      handler_id,
+      WriteGuard.telemetry_prefix(repo) ++ [:query],
+      fn _event, _measurements, metadata, _config ->
+        if self() == parent and Repo.observed() == :none and
+             WriteGuard.write_sql?(metadata[:query]) do
+          send(parent, {handler_id, metadata[:query]})
+        end
+      end,
+      nil
+    )
+
+    try do
+      fun.()
+    after
+      :telemetry.detach(handler_id)
+    end
+
+    case drain_escaped_writes(handler_id, []) do
+      [] -> :ok
+      escaped -> raise ExUnit.AssertionError, message: out_of_band_message(repo, escaped)
+    end
+  end
+
+  @doc """
   Allow the calling test pid's sandboxed connection to be used by the
   coordinator's shard processes and their task supervisor.
 
@@ -146,5 +197,31 @@ defmodule Upkeep.Test do
 
   defp allowable_pids do
     [Process.whereis(Graph.task_sup())] |> Enum.reject(&is_nil/1)
+  end
+
+  defp drain_escaped_writes(handler_id, acc) do
+    receive do
+      {^handler_id, query} -> drain_escaped_writes(handler_id, [query | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
+  defp out_of_band_message(repo, escaped) do
+    queries = escaped |> Enum.uniq() |> Enum.map_join("\n", &"  - #{&1}")
+
+    """
+    expected every write through #{inspect(repo)} to flow through Upkeep capture
+
+    #{length(escaped)} write(s) reached the database out-of-band and will not
+    refresh watched sources:
+
+    #{queries}
+
+    Route these through a repo built with `use Upkeep.Ecto.Repo`, emit the change
+    yourself (`Upkeep.updated/2`, `Upkeep.inserted/2`, `Upkeep.deleted/2`), or, if
+    the staleness is intentional, mark the write with `upkeep: false` (or wrap it
+    in `Upkeep.with_upkeep(false, ...)`).
+    """
   end
 end

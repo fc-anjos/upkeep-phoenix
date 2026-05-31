@@ -1,7 +1,9 @@
 defmodule Upkeep.RepoCaptureTest do
   use Upkeep.TestSupport.DataCase, async: false
 
+  alias Ecto.Adapters.SQL
   alias Ecto.Changeset
+  alias Upkeep.Ecto.WriteGuard
   alias Upkeep.Live
   alias Upkeep.Source.Loader
   alias Upkeep.TestSupport.{Config, DagMessages, LiveSocket, TelemetryMessages}
@@ -694,6 +696,180 @@ defmodule Upkeep.RepoCaptureTest do
     end)
 
     refute_any_repo_refresh()
+  end
+
+  test "with_upkeep(false) suppresses capture for writes that pass no upkeep option" do
+    watch_project(user_id: 9)
+
+    Upkeep.Test.sync(fn ->
+      Upkeep.with_upkeep(false, fn ->
+        Repo.insert!(issue(id: 1, assignee_id: 9))
+        Repo.insert_all(Issue, [issue_attrs(id: 2, assignee_id: 9, position: 2)])
+      end)
+    end)
+
+    refute_any_repo_refresh()
+    assert Repo.get(Issue, 1)
+    assert Repo.get(Issue, 2)
+  end
+
+  test "with_upkeep(false) suppresses capture through unmodified mutate paths" do
+    watch_project(user_id: 9)
+
+    Upkeep.Test.sync(fn ->
+      Upkeep.with_upkeep(false, fn ->
+        Upkeep.mutate(fn -> Repo.insert!(issue(id: 1, assignee_id: 9)) end)
+      end)
+    end)
+
+    refute_any_repo_refresh()
+    assert Repo.get(Issue, 1)
+  end
+
+  test "with_upkeep restores the capture default after the block" do
+    socket = watch_project(user_id: 9)
+
+    Upkeep.with_upkeep(false, fn ->
+      Repo.insert!(issue(id: 1, assignee_id: 9, title: "Silent"))
+    end)
+
+    assert {:ok, _} =
+             Upkeep.mutate(fn ->
+               Repo.insert!(issue(id: 2, assignee_id: 9, title: "Loud", position: 2))
+             end)
+
+    socket = assert_project_issues_refresh(socket, 9, ["Silent", "Loud"])
+    assert Enum.map(socket.assigns.issues, & &1.title) == ["Silent", "Loud"]
+  end
+
+  test "an explicit upkeep: true overrides a disabled block" do
+    socket = watch_project(user_id: 9)
+
+    Upkeep.with_upkeep(false, fn ->
+      Repo.insert!(issue(id: 1, assignee_id: 9, title: "Forced"), upkeep: true)
+    end)
+
+    socket = assert_project_issues_refresh(socket, 9, ["Forced"])
+    assert Enum.map(socket.assigns.issues, & &1.title) == ["Forced"]
+  end
+
+  test "with_upkeep(true) re-enables capture inside a disabled block" do
+    socket = watch_project(user_id: 9)
+
+    Upkeep.with_upkeep(false, fn ->
+      Repo.insert!(issue(id: 1, assignee_id: 9, title: "Silent"))
+
+      Upkeep.with_upkeep(true, fn ->
+        Repo.insert!(issue(id: 2, assignee_id: 9, title: "Loud", position: 2))
+      end)
+    end)
+
+    socket = assert_project_issues_refresh(socket, 9, ["Silent", "Loud"])
+    assert Enum.map(socket.assigns.issues, & &1.title) == ["Silent", "Loud"]
+  end
+
+  test "assert_all_writes_captured passes when writes flow through the wrapped repo" do
+    assert :ok =
+             Upkeep.Test.assert_all_writes_captured(fn ->
+               Repo.insert!(issue(id: 1, assignee_id: 9))
+
+               Repo.update_all(
+                 from(i in Issue, where: i.id == 1),
+                 set: [title: "Renamed"]
+               )
+             end)
+  end
+
+  test "assert_all_writes_captured ignores writes intentionally opted out" do
+    assert :ok =
+             Upkeep.Test.assert_all_writes_captured(fn ->
+               Repo.insert!(issue(id: 1, assignee_id: 9), upkeep: false)
+
+               Upkeep.with_upkeep(false, fn ->
+                 Repo.insert!(issue(id: 2, assignee_id: 9, position: 2))
+               end)
+             end)
+  end
+
+  test "assert_all_writes_captured fails on raw SQL that bypasses capture" do
+    error =
+      assert_raise ExUnit.AssertionError, fn ->
+        Upkeep.Test.assert_all_writes_captured(fn ->
+          SQL.query!(Repo, "UPDATE upkeep_repo_capture_test_issues SET title = 'raw'", [])
+        end)
+      end
+
+    assert error.message =~ "reached the database out-of-band"
+    assert error.message =~ "UPDATE upkeep_repo_capture_test_issues"
+  end
+
+  test "attach_write_guard warns on out-of-band writes and detach stops it" do
+    WriteGuard.reset_warnings(Repo)
+    assert :ok = Upkeep.attach_write_guard(Repo)
+    on_exit(fn -> Upkeep.detach_write_guard(Repo) end)
+
+    log =
+      capture_log(fn ->
+        SQL.query!(Repo, "UPDATE upkeep_repo_capture_test_issues SET title = 'wg1'", [])
+      end)
+
+    assert log =~ "Out-of-band write through"
+    assert log =~ "will not refresh watched Upkeep"
+
+    assert :ok = Upkeep.detach_write_guard(Repo)
+
+    silent =
+      capture_log(fn ->
+        SQL.query!(Repo, "UPDATE upkeep_repo_capture_test_issues SET title = 'wg2'", [])
+      end)
+
+    refute silent =~ "Out-of-band write through"
+  end
+
+  test "attach_write_guard stays quiet for captured writes and when ignored" do
+    WriteGuard.reset_warnings(Repo)
+    assert :ok = Upkeep.attach_write_guard(Repo)
+    on_exit(fn -> Upkeep.detach_write_guard(Repo) end)
+
+    captured = capture_log(fn -> Repo.insert!(issue(id: 1, assignee_id: 9)) end)
+    refute captured =~ "Out-of-band write through"
+
+    assert :ok = Upkeep.attach_write_guard(Repo, policy: :ignore)
+
+    ignored =
+      capture_log(fn ->
+        SQL.query!(Repo, "UPDATE upkeep_repo_capture_test_issues SET title = 'wg3'", [])
+      end)
+
+    refute ignored =~ "Out-of-band write through"
+  end
+
+  test "verify_configuration warns when the configured repo is not capture-enabled" do
+    previous = Application.get_env(:upkeep, :repo)
+    Application.put_env(:upkeep, :repo, PlainRepo)
+    on_exit(fn -> Application.put_env(:upkeep, :repo, previous) end)
+
+    log = capture_log(fn -> assert :ok = Upkeep.Ecto.Repo.verify_configuration() end)
+
+    assert log =~ "is not"
+    assert log =~ "use Upkeep.Ecto.Repo"
+  end
+
+  test "verify_configuration stays silent when ignored or capture-enabled" do
+    silent = capture_log(fn -> assert :ok = Upkeep.Ecto.Repo.verify_configuration() end)
+    refute silent =~ "use Upkeep.Ecto.Repo"
+
+    previous = Application.get_env(:upkeep, :repo)
+    Application.put_env(:upkeep, :repo, PlainRepo)
+
+    on_exit(fn ->
+      Application.put_env(:upkeep, :repo, previous)
+      Application.delete_env(:upkeep, :repo_capture_misconfiguration)
+    end)
+
+    Application.put_env(:upkeep, :repo_capture_misconfiguration, :ignore)
+    ignored = capture_log(fn -> assert :ok = Upkeep.Ecto.Repo.verify_configuration() end)
+    refute ignored =~ "use Upkeep.Ecto.Repo"
   end
 
   defp watch_project(opts) do

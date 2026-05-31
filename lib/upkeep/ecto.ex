@@ -5,7 +5,8 @@ defmodule Upkeep.Ecto do
     top_level?: true,
     exports: [
       Mutation,
-      Repo
+      Repo,
+      WriteGuard
     ],
     deps: [
       Ecto.Adapters.Postgres,
@@ -18,6 +19,7 @@ defmodule Upkeep.Ecto do
       Ecto.Queryable,
       Ecto.Repo,
       Ecto.Schema.Metadata,
+      Logger,
       Upkeep.Change,
       Upkeep.Mutation
     ],

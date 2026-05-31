@@ -47,6 +47,35 @@ defmodule Upkeep.MutationTest do
     %{table: table}
   end
 
+  test "with_upkeep toggles the process capture default and restores it" do
+    assert Upkeep.Mutation.capture_default() == true
+
+    result =
+      Upkeep.with_upkeep(false, fn ->
+        assert Upkeep.Mutation.capture_default() == false
+
+        Upkeep.with_upkeep(true, fn ->
+          assert Upkeep.Mutation.capture_default() == true
+        end)
+
+        assert Upkeep.Mutation.capture_default() == false
+        :done
+      end)
+
+    assert result == :done
+    assert Upkeep.Mutation.capture_default() == true
+  end
+
+  test "with_upkeep restores the capture default even when the block raises" do
+    assert Upkeep.Mutation.capture_default() == true
+
+    assert_raise RuntimeError, "boom", fn ->
+      Upkeep.with_upkeep(false, fn -> raise "boom" end)
+    end
+
+    assert Upkeep.Mutation.capture_default() == true
+  end
+
   test "mutate flushes notifications after commit", %{table: table} do
     socket = watch_project(777)
 

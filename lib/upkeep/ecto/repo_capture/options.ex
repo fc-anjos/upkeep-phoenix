@@ -7,7 +7,7 @@ defmodule Upkeep.Ecto.RepoCapture.Options do
   end
 
   def pop_capture_opts(opts) do
-    {upkeep, opts} = Keyword.pop(opts, :upkeep, true)
+    {upkeep, opts} = Keyword.pop(opts, :upkeep, Upkeep.Mutation.capture_default())
     {schema, opts} = Keyword.pop(opts, :upkeep_schema, nil)
 
     case upkeep do

@@ -22,6 +22,7 @@ defmodule Upkeep.Observability do
     [:upkeep, :source, :coverage],
     [:upkeep, :source, :queue],
     [:upkeep, :repo, :capture_check],
+    [:upkeep, :repo, :out_of_band_write],
     [:upkeep, :repo, :update_all_returning, :deopt],
     [:upkeep, :repo, :bulk_capture, :deopt],
     [:upkeep, :source, :reload, :start],
