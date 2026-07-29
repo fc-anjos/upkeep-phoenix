@@ -130,17 +130,18 @@ defmodule Upkeep.Test do
     handler_id = {__MODULE__, :write_guard, System.unique_integer([:positive])}
     parent = self()
 
-    :telemetry.attach(
-      handler_id,
-      WriteGuard.telemetry_prefix(repo) ++ [:query],
-      fn _event, _measurements, metadata, _config ->
-        if self() == parent and Repo.observed() == :none and
-             WriteGuard.write_sql?(metadata[:query]) do
-          send(parent, {handler_id, metadata[:query]})
-        end
-      end,
-      nil
-    )
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        WriteGuard.telemetry_prefix(repo) ++ [:query],
+        fn _event, _measurements, metadata, _config ->
+          if self() == parent and Repo.observed() == :none and
+               WriteGuard.write_sql?(metadata[:query]) do
+            send(parent, {handler_id, metadata[:query]})
+          end
+        end,
+        nil
+      )
 
     try do
       fun.()

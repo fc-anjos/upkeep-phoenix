@@ -1,10 +1,15 @@
 defmodule Upkeep.MixProject do
   use Mix.Project
 
+  @version "0.1.0"
+  @source_url "https://github.com/fc-anjos/upkeep-phoenix"
+
   def project do
     [
       app: :upkeep,
-      version: "0.1.0",
+      version: @version,
+      source_url: @source_url,
+      homepage_url: @source_url,
       elixir: "~> 1.19",
       elixirc_paths: elixirc_paths(Mix.env()),
       compilers: compilers(Mix.env()),
@@ -71,7 +76,7 @@ defmodule Upkeep.MixProject do
         :missing_return,
         :overlapping_contract
       ],
-      plt_add_apps: [:ex_unit],
+      plt_add_apps: [:ex_unit, :mix],
       plt_core_path: "priv/plts",
       plt_local_path: "priv/plts"
     ]
@@ -122,16 +127,29 @@ defmodule Upkeep.MixProject do
   defp package do
     [
       licenses: ["MIT"],
-      links: %{"Docs" => "https://hexdocs.pm/upkeep"},
-      files: ~w(lib docs mix.exs README.md LICENSE*)
+      links: %{
+        "GitHub" => @source_url,
+        "Docs" => "https://hexdocs.pm/upkeep"
+      },
+      files: ~w(lib mix.exs README.md CHANGELOG.md LICENSE*)
     ]
   end
 
   defp docs do
     [
       main: "readme",
+      source_url: @source_url,
+      source_ref: "v#{@version}",
       extras: [
-        "README.md"
+        "README.md",
+        "docs/guides/repo-capture.md",
+        "docs/guides/sources.md",
+        "docs/guides/identity-and-authorization.md",
+        "docs/guides/testing.md",
+        "CHANGELOG.md"
+      ],
+      groups_for_extras: [
+        Guides: ~r{docs/guides/}
       ]
     ]
   end

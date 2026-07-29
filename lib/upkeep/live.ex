@@ -93,6 +93,20 @@ defmodule Upkeep.Live do
     end
   end
 
+  @doc """
+  Load a source into `socket.assigns[assign_name]` and keep it fresh.
+
+  `source` is a module using `Upkeep.Source` or `Upkeep.Ecto.Source`; `params`
+  is a map (keyword lists are normalized to maps). Two LiveViews watching the
+  same `{source, params}` pair share one loaded value. The assign refreshes
+  whenever a captured write or explicit domain fact matches the source's
+  surface.
+
+  Options:
+
+    * `:under` - scope the watch to a component boundary created with
+      `component/4`.
+  """
   def watch(socket, assign_name, source, params, opts \\ []) when is_atom(assign_name) do
     params = normalize_params(params)
     component = Keyword.get(opts, :under)
@@ -110,6 +124,14 @@ defmodule Upkeep.Live do
     end)
   end
 
+  @doc """
+  Create a component-scoped dependency boundary.
+
+  `deps` lists the watched or derived assigns the component reads; `fun`
+  receives a map of those values and returns the component's assigns. Use for
+  repeated UI fragments that need their own stable identity. Remove it with
+  `remove_component/2`.
+  """
   def component(socket, component_id, deps, fun, opts \\ [])
       when not is_nil(component_id) and is_list(deps) and is_function(fun, 1) do
     location = Keyword.get(opts, :source_location)
@@ -119,10 +141,22 @@ defmodule Upkeep.Live do
     end)
   end
 
+  @doc """
+  Remove a component boundary created with `component/4`, dropping the
+  watches scoped under it.
+  """
   def remove_component(socket, component_id) when not is_nil(component_id) do
     with_current_scope(socket, &Upkeep.Runtime.remove_component(&1, component_id))
   end
 
+  @doc """
+  Compute `socket.assigns[assign_name]` as a pure function of other watched
+  or derived assigns.
+
+  `deps` lists the input assign names; `fun` receives a map of their current
+  values. The derive recomputes whenever any input changes. Derives are local
+  to this LiveView and never hit the database.
+  """
   def derive(socket, assign_name, deps, fun, opts \\ [])
       when is_atom(assign_name) and is_list(deps) and is_function(fun, 1) do
     location = Keyword.get(opts, :source_location)
@@ -132,10 +166,17 @@ defmodule Upkeep.Live do
     end)
   end
 
+  @doc """
+  Stop watching the source behind `assign_name` and drop the assign's
+  subscription. The assign value itself is left in place.
+  """
   def unwatch(socket, assign_name) when is_atom(assign_name) do
     with_current_scope(socket, &Upkeep.Runtime.unwatch_assign(&1, assign_name))
   end
 
+  @doc """
+  Stop watching every assign backed by the `{source, params}` identity.
+  """
   def unwatch(socket, source, params) when is_atom(source) do
     with_current_scope(
       socket,
@@ -160,6 +201,9 @@ defmodule Upkeep.Live do
     revoke_authorization(socket, fn watch_identity -> watch_identity == identity end)
   end
 
+  @doc """
+  Reload a watched source now, regardless of invalidation state.
+  """
   def refresh(socket, assign_name, source, params) when is_atom(assign_name) do
     with_current_scope(
       socket,
@@ -167,10 +211,15 @@ defmodule Upkeep.Live do
     )
   end
 
+  @doc """
+  Refresh every watched source whose surface matches `event`, an
+  `Upkeep.Change` struct.
+  """
   def refresh_matching(socket, event) when is_struct(event) do
     with_current_scope(socket, &Upkeep.Runtime.refresh_matching(&1, event))
   end
 
+  @doc false
   def refresh_local_matching(socket, event) when is_struct(event) do
     with_current_scope(socket, &Upkeep.Runtime.refresh_local_matching(&1, event))
   end
@@ -182,32 +231,35 @@ defmodule Upkeep.Live do
     Upkeep.Runtime.graph_snapshot(socket)
   end
 
+  @doc """
+  Whether the Upkeep inspector is active for this socket.
+  """
   def inspecting?(socket) do
     Map.get(socket.assigns, :upkeep_inspector?, false)
   end
 
+  @doc false
   def queue_matching(socket, event) when is_struct(event) do
     with_current_scope(socket, &Upkeep.Runtime.queue_matching(&1, event))
   end
 
+  @doc false
   def flush_refreshes(socket) do
     with_current_scope(socket, &Upkeep.Runtime.flush_refreshes/1)
   end
 
+  @doc """
+  Dispatch an `Upkeep.Change` event to the coordinator, as if a captured
+  write had committed.
+  """
   def notify(event) when is_struct(event), do: Upkeep.Mutation.notify(event)
 
-  @doc """
-  Apply a batch of Graph-pushed values to the LV in one pass.
-  Reduces subscriber-side wakeups to one handle_info per shard flush.
-  """
+  @doc false
   def apply_dag_values(socket, pairs) when is_list(pairs) do
     with_current_scope(socket, &Upkeep.Runtime.apply_dag_values(&1, pairs))
   end
 
-  @doc """
-  Apply a Graph-pushed value to the LV. Mirrors `maybe_refresh` but skips
-  the source.load step — the coordinator already ran it once for everyone.
-  """
+  @doc false
   def apply_dag_value(socket, source_id, value) do
     with_current_scope(socket, &Upkeep.Runtime.apply_dag_value(&1, source_id, value))
   end

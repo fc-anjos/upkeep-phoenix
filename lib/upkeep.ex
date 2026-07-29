@@ -26,7 +26,7 @@ defmodule Upkeep do
   `Upkeep.mutate(MyApp.Repo, fn -> ... end)` and
   `Upkeep.Test.allow_sandbox(MyApp.Repo)` instead of configuring.
 
-  ## Current Entry Points
+  ## Entry Points
 
   - `mutate/1`, `mutate/2` — transaction boundary that journals notifications.
   - `with_upkeep/2` — run a block with repo capture forced on or off.
@@ -62,12 +62,18 @@ defmodule Upkeep do
   Run a mutation inside the configured repo transaction and dispatch any
   Upkeep notifications after the transaction commits.
   """
+  @spec mutate((-> result) | Ecto.Multi.t()) ::
+          {:ok, result} | {:error, term()} | {:error, Ecto.Multi.name(), term(), map()}
+        when result: term()
   defdelegate mutate(fun), to: Upkeep.Ecto.Mutation
 
   @doc """
   Run a mutation inside the given repo transaction and dispatch any Upkeep
   notifications after the transaction commits.
   """
+  @spec mutate(module(), (-> result) | Ecto.Multi.t()) ::
+          {:ok, result} | {:error, term()} | {:error, Ecto.Multi.name(), term(), map()}
+        when result: term()
   defdelegate mutate(repo, fun), to: Upkeep.Ecto.Mutation
 
   @doc """
@@ -83,6 +89,7 @@ defmodule Upkeep do
         Catalog.rename_item(id, name)
       end)
   """
+  @spec with_upkeep(boolean(), (-> result)) :: result when result: term()
   defdelegate with_upkeep(enabled?, fun), to: Upkeep.Mutation
 
   @doc """
@@ -103,26 +110,31 @@ defmodule Upkeep do
   warns; for hard, fail-the-build enforcement use
   `Upkeep.Test.assert_all_writes_captured/1` in tests.
   """
+  @spec attach_write_guard(module(), keyword()) :: :ok | {:error, :already_exists}
   defdelegate attach_write_guard(repo, opts \\ []), to: Upkeep.Ecto.WriteGuard, as: :attach
 
   @doc """
   Stop the out-of-band write guard previously attached to `repo`.
   """
+  @spec detach_write_guard(module()) :: :ok
   defdelegate detach_write_guard(repo), to: Upkeep.Ecto.WriteGuard, as: :detach
 
   @doc """
   Publish a domain event to Upkeep's invalidation runtime.
   """
+  @spec notify(Upkeep.Change.t()) :: :ok
   defdelegate notify(event), to: Upkeep.Mutation
 
   @doc """
   Publish a semantic domain change.
   """
+  @spec changed(atom(), term(), keyword()) :: :ok
   defdelegate changed(name, payload, opts \\ []), to: Upkeep.Mutation
 
   @doc """
   Publish an inserted-record change.
   """
+  @spec inserted(struct(), keyword()) :: :ok
   defdelegate inserted(record, opts \\ []), to: Upkeep.Mutation
 
   @doc """
@@ -131,11 +143,13 @@ defmodule Upkeep do
   Pass `from: old_record` when possible so field-indexed invalidation can
   refresh the old and new matching source sets precisely.
   """
+  @spec updated(struct(), keyword()) :: :ok
   defdelegate updated(record, opts \\ []), to: Upkeep.Mutation
 
   @doc """
   Publish a deleted-record change.
   """
+  @spec deleted(struct(), keyword()) :: :ok
   defdelegate deleted(record, opts \\ []), to: Upkeep.Mutation
 
   @doc """
@@ -145,21 +159,25 @@ defmodule Upkeep do
   This is only valid from a source `load/1`, `load/2`, `query/1`, or `query/2`
   callback. For ad-hoc queries outside a source, call your repo directly.
   """
+  @spec read(term()) :: term()
   defdelegate read(query), to: Upkeep.Ecto.Source.Reader
 
   @doc """
   Return Phoenix's `:current_scope` value inside an identity-aware source
   callback.
   """
+  @spec current_scope!(Upkeep.Source.Context.t()) :: term()
   defdelegate current_scope!(context), to: Upkeep.Source
 
   @doc """
   Return recent diagnostic runtime events.
   """
+  @spec recent_events(keyword()) :: [map()]
   defdelegate recent_events(opts \\ []), to: Upkeep.Observability, as: :recent
 
   @doc """
   Clear the diagnostic runtime event buffer.
   """
+  @spec clear_events() :: :ok
   defdelegate clear_events(), to: Upkeep.Observability, as: :clear
 end

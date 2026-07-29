@@ -1,42 +1,11 @@
 # Upkeep
 
-Upkeep refreshes Phoenix LiveView assigns when the data they depend on changes.
+Upkeep keeps Phoenix LiveView assigns in sync with the data they read.
 
-LiveViews watch named sources. Writes through your repo or explicit domain facts
-mark those sources stale, and Upkeep refreshes the matching assigns.
-
-## Why Upkeep
-
-In ordinary LiveView code, a write path often has to know every assign, panel,
-counter, sidebar, or derived value that might now be stale:
-
-```elixir
-def handle_event("rename_item", %{"item" => params}, socket) do
-  {:ok, _item} = Catalog.rename_item(params["id"], params["name"])
-
-  items = Catalog.list_items(socket.assigns.project_id)
-  activity = Catalog.recent_activity(socket.assigns.project_id)
-  visible_items =
-    Catalog.visible_items(socket.assigns.project_id, socket.assigns.current_scope)
-
-  socket =
-    socket
-    |> assign(:items, items)
-    |> assign(:activity, activity)
-    |> assign(:visible_items, visible_items)
-    |> assign(:item_count, length(items))
-    |> assign(:visible_item_count, length(visible_items))
-
-  {:noreply, socket}
-end
-```
-
-That works, but the mutation handler is coupled to every part of the UI that
-depends on the changed data. Adding another dependent view means revisiting old
-write paths or broadcasts.
-
-With Upkeep, the LiveView declares the data graph once. The write path performs
-the domain action and stops:
+A LiveView watches named sources. When a write commits through your repo,
+Upkeep finds the sources that write touches and reloads only the matching
+assigns, so a mutation handler can perform the domain action and leave the
+refreshing to the data graph the view already declared:
 
 ```elixir
 def handle_event("rename_item", %{"item" => %{"id" => id, "name" => name}}, socket) do
@@ -45,78 +14,34 @@ def handle_event("rename_item", %{"item" => %{"id" => id, "name" => name}}, sock
 end
 ```
 
-Committed Ecto writes are captured through your repo, matching sources reload,
-derived values recompute, and unrelated watches are left alone.
+Without Upkeep, that handler would also need to reload the item list, the
+counters, and every other assign derived from the changed rows, which couples
+each write path to every part of the UI that reads the data. With Upkeep, the
+view declares what it reads once and the write paths stay small.
 
-## Status
+## Core concepts
 
-Upkeep is early alpha. Application code should start from the documented public
-entry points:
-
-- `Upkeep` - mutation and read helpers.
-- `Upkeep.Ecto.Repo` - repo capture for committed Ecto writes.
-- `Upkeep.Ecto.Source` - Ecto-backed sources.
-- `Upkeep.Source` - non-Ecto sources.
-- `Upkeep.Live` - LiveView integration.
-- `Upkeep.Test` - test helpers.
-
-Telemetry, internal modules, and undocumented runtime details may change during
-alpha.
-
-## Core Concepts
-
-### Source
-
-A **source** is a named, parameterized read. A module that loads one value,
-usually from an Ecto query, given a stable set of params such as
+A **source** is a named, parameterized read: a module that loads one value,
+usually from an Ecto query, given stable params such as
 `%{project_id: project_id}`. The pair `{SourceModule, params}` is the source's
-identity: two LiveViews watching the same module with the same params share
+identity, so two LiveViews watching the same module with the same params share
 one loaded value.
 
-A source describes *what* to read.
-
-### Surface
-
-A source's **surface** is the set of facts about future writes that would make
-its value stale.
-
-For Ecto sources Upkeep derives the surface from the query: the table read,
-the columns filtered, and the values they are filtered to. `where:
-item.project_id == ^42 and item.archived == false` produces a surface that
-matches writes on the `items` table where `project_id` is `42` and the row is
-not archived.
-
-For non-Ecto sources (ETS, files, caches, external APIs) declare the surface
-explicitly with `invalidated_by(...)`.
-
-On commit, Upkeep matches the write against every active surface and refreshes
-only the sources it touches.
-
-A surface describes *when* to reread.
-
-### Derive
+A source's **surface** is the set of writes that would make its value stale.
+For Ecto sources Upkeep derives the surface from the query itself: a
+`where: item.project_id == ^42` filter produces a surface that matches writes
+on the `items` table where `project_id` is `42`. Sources that read from
+somewhere other than Ecto declare their surface explicitly with
+`invalidated_by(...)`. On commit, Upkeep matches the write against every
+active surface and refreshes only the sources it touches.
 
 A **derive** is a pure function of other watched values, local to one
-LiveView. `derive(:item_count, [:items], fn %{items: items} -> length(items)
-end)` recomputes whenever its inputs change. Derives are not shared and do not
-hit the database; they shape source values into the form this view needs.
+LiveView. It recomputes whenever its inputs change and never hits the
+database; derives shape source values into the form a particular view needs.
 
-A derive describes *how this viewer wants to see it*.
+## Quick start
 
-### Supporting vocabulary
-
-| Term | What it means |
-| --- | --- |
-| Repo capture | Your repo uses `Upkeep.Ecto.Repo`, so Upkeep can see committed Ecto writes. |
-| Watch | `watch(:assign_name, SourceModule, params)` loads a source into an assign and keeps it fresh. |
-| Mutation | A write that changes domain data. Ecto writes are captured automatically; non-Ecto writes emit explicit facts with `Upkeep.changed(name, metadata)`. |
-
-## Quick Start
-
-### 1. Add Upkeep
-
-Upkeep is early alpha and is **not yet published to Hex**. Add it from Git,
-pinning a revision so upgrades are deliberate:
+Upkeep is not yet on Hex, so add it from Git and pin a revision:
 
 ```elixir
 def deps do
@@ -126,34 +51,19 @@ def deps do
 end
 ```
 
-Once a Hex release is cut, this becomes `{:upkeep, "~> 0.1.0"}`.
-
-### 2. Enable Repo Capture
-
-Use `Upkeep.Ecto.Repo` for every repo whose committed writes should refresh
-watched sources. Replace `use Ecto.Repo` with `use Upkeep.Ecto.Repo` and keep
-the repo's existing options, including its Ecto adapter:
-
-```diff
-- use Ecto.Repo, ...
-+ use Upkeep.Ecto.Repo, ...
-```
-
-Configure the default repo:
+Replace `use Ecto.Repo` with `use Upkeep.Ecto.Repo` in every repo whose
+committed writes should refresh watched sources, keeping the repo's existing
+options, and point Upkeep at your default repo:
 
 ```elixir
 # config/config.exs
 config :upkeep, repo: MyApp.Repo
 ```
 
-`Upkeep.Ecto.Repo` uses `Ecto.Repo` under the hood and adds capture around
-write functions. It keeps the public Repo API while capturing committed inserts,
-updates, deletes, bulk writes, direct transactions, and `Ecto.Multi` operations.
+`Upkeep.Ecto.Repo` keeps the public repo API and captures committed inserts,
+updates, deletes, bulk writes, transactions, and `Ecto.Multi` operations.
 
-### 3. Define A Source
-
-Use `Upkeep.Ecto.Source` when a source value comes from an Ecto query. Define
-`query(params)` and return the Ecto query Upkeep should load.
+Define a source by returning the query it should load:
 
 ```elixir
 defmodule MyApp.Catalog.Sources.ProjectItems do
@@ -169,12 +79,7 @@ defmodule MyApp.Catalog.Sources.ProjectItems do
 end
 ```
 
-### 4. Watch The Source
-
-Use `Upkeep.Live` in the LiveView and call `watch(:assign_name, SourceModule,
-params)` with an assign name, source module, and params. Pass source params as a
-map. Keyword lists are also accepted and normalized to maps, but maps are easier
-to read.
+Then watch it from a LiveView:
 
 ```elixir
 defmodule MyAppWeb.ProjectLive do
@@ -196,364 +101,39 @@ defmodule MyAppWeb.ProjectLive do
 end
 ```
 
-`watch(:items, ProjectItems, params)` assigns the loaded value to
-`socket.assigns.items`. `derive(:item_count, [:items], fun)` computes another
-assign from watched values or earlier derived values.
-
-### 5. Keep Write Handlers Focused
-
-Writes through a repo that uses `Upkeep.Ecto.Repo` notify Upkeep after the
-transaction commits. Mutation handlers do the domain action and leave watched
-assign refreshes to Upkeep:
-
-```elixir
-def handle_event("rename_item", %{"item" => %{"id" => id, "name" => name}}, socket) do
-  {:ok, _item} = MyApp.Catalog.rename_item(String.to_integer(id), name)
-  {:noreply, socket}
-end
-```
-
-After the commit, Upkeep dispatches an invalidation, reloads `ProjectItems`,
-recomputes `:item_count`, and sends updated assigns to the LiveView.
-
-## Repo Capture Details
-
-Ecto-backed sources refresh automatically when the source exposes what it reads
-and the repo emits committed writes. A specific write can opt out with
-`upkeep: false`.
-
-### Opting out for a whole block
-
-`upkeep: false` opts out a single write. To run existing code — context
-functions, scripts, console sessions — without refreshing any watcher, wrap it
-in `Upkeep.with_upkeep/2` instead of threading the option through every call:
-
-```elixir
-# A console fix or backfill that must not refresh connected LiveViews.
-Upkeep.with_upkeep(false, fn ->
-  Catalog.rename_item(id, name)
-  Catalog.rebuild_counts()
-end)
-```
-
-Every write inside the block uses the given value as its capture default, so
-unmodified context code stops emitting `Upkeep.Change` events without needing a
-separate non-capturing repo. An explicit `upkeep:` option on an individual write
-still wins, and `with_upkeep/2` nests, so `Upkeep.with_upkeep(true, fn -> ... end)`
-re-enables capture for a region inside a disabled block. The previous default is
-restored when the block returns or raises.
-
-This is the supported way to make an intentional, non-refreshing change. If those
-rows should still appear on screen eventually, emit one broad refresh afterward
-(`Upkeep.updated(SomeSchema)`) rather than per row.
-
-### Precondition: every refreshing write must go through the wrapped repo
-
-Upkeep only sees writes that flow through a repo built with `use Upkeep.Ecto.Repo`.
-This is a hard precondition, not a best-effort convenience:
-
-> **Every write that should trigger refreshes MUST go through the wrapped repo.**
-> Out-of-band writes do not emit `Upkeep.Change` events, so watched sources keep
-> serving stale data until the next unrelated invalidation.
-
-Writes that Upkeep cannot see, and therefore will **not** invalidate:
-
-```elixir
-# 1. A plain Ecto.Repo (not built with `use Upkeep.Ecto.Repo`)
-MyApp.PlainRepo.update!(changeset)
-
-# 2. A second/unwrapped repo, even against the same database
-MyApp.ReportingRepo.insert_all(Invoice, rows)
-
-# 3. Raw SQL, including Ecto.Adapters.SQL.query/4 and migrations
-Ecto.Adapters.SQL.query!(MyApp.Repo, "UPDATE items SET archived = true", [])
-
-# 4. Bulk ops on an unwrapped repo
-MyApp.PlainRepo.delete_all(Item)
-```
-
-If you must write out-of-band, emit the change yourself so sources still
-refresh, for example `Upkeep.updated(record, from: old_record)` (or the broad
-`Upkeep.updated(record)` when you lack the old row), or declare an explicit
-`invalidated_by(...)`/`reacts_to(...)` surface and notify it.
-
-Note that even captured bulk writes can fall back to a broad, schema/table-wide
-invalidation when Upkeep cannot materialize the affected rows (no schema, an
-uninspectable table source, an adapter without `RETURNING`, a caller-supplied
-`select`, or a table-metadata failure). The refresh is still correct, just less
-selective.
-
-Inside transactions, Upkeep journals captured changes and dispatches them only
-when the outer transaction commits.
-
-Upkeep starts through its own OTP application when it is included as a normal
-runtime dependency, so Phoenix applications should not add `{Upkeep, []}` to
-their own supervision tree. Applications that disable dependency application
-startup can start `{Upkeep.Supervision, name: Upkeep.Supervisor}` manually.
-
-If an Ecto-backed source uses a plain `Ecto.Repo`, Upkeep catches that at
-watch/read time. The default policy raises in dev/test and warns in prod:
-
-```elixir
-config :upkeep, repo_capture_misconfiguration: :raise
-# or :warn / :ignore
-```
-
-Set `:raise` in prod to turn the unenforced precondition above into a hard,
-fail-fast check so a non-capturing source can never silently ship. This guard
-verifies the repo a source **reads** through; it cannot detect out-of-band
-**writes** (a second/plain repo or raw SQL), which remain the caller's
-responsibility per the precondition above.
-
-At boot, Upkeep also warns once (it never blocks startup) when `config :upkeep,
-repo: ...` points at a repo that is not built with `use Upkeep.Ecto.Repo`.
-Silence it with `repo_capture_misconfiguration: :ignore` if that repo only backs
-explicit-only sources.
-
-### Reactive or not? A quick guide
-
-Reactivity is opt-in on both sides, so most non-reactive data needs no special
-handling — you simply don't watch it:
-
-| You have | Do this | Reactive? |
-| --- | --- | --- |
-| Data on screen that must stay current | `watch` a source for it | Yes |
-| A point-in-time snapshot or an on-demand report | Read it plainly; don't watch it | No (by default) |
-| A write that should never refresh the UI (audit row, counter, cache rebuild) | `upkeep: false`, or wrap a block in `Upkeep.with_upkeep(false, ...)` | No (intentionally) |
-
-Rule of thumb: *if it's on screen and should stay current, `watch` it; if it's a
-snapshot or a number nobody is staring at, read it plainly; if a write should
-never wake the UI, mark it `upkeep: false` so the intent is explicit.*
-
-### Catching out-of-band writes
-
-Because the precondition is "every refreshing write goes through the wrapped
-repo," the failure mode is silent staleness. Two tools turn that into something
-you can enforce instead of remember:
-
-- **In tests**, wrap a path with `Upkeep.Test.assert_all_writes_captured/1`. It
-  fails if any `INSERT`/`UPDATE`/`DELETE` reaches the database without flowing
-  through capture (for example raw SQL), while ignoring writes you deliberately
-  marked `upkeep: false`:
-
-  ```elixir
-  test "import refreshes watched sources" do
-    Upkeep.Test.assert_all_writes_captured(fn ->
-      Catalog.import_items(rows)
-    end)
-  end
-  ```
-
-- **At runtime (dev)**, opt in from your application start to get a warning the
-  moment a write slips past capture:
-
-  ```elixir
-  # lib/my_app/application.ex, after the repo has started
-  if Application.get_env(:my_app, :env) == :dev do
-    Upkeep.attach_write_guard(MyApp.Repo)
-  end
-  ```
-
-  It logs a warning (it never raises — a raising telemetry handler would detach
-  itself) for each out-of-band write, ignoring `upkeep: false` writes. Set a
-  default with `config :upkeep, out_of_band_writes: :warn | :ignore`, or pass
-  `policy: :ignore` to disable. Call `Upkeep.detach_write_guard(MyApp.Repo)` to
-  stop it. Attachment is explicit (not automatic at boot) so it binds to your
-  repo only once the repo is running.
-
-- **Across the codebase**, run `mix upkeep.audit` to statically list the common
-  out-of-band shapes (raw SQL, an unwrapped `use Ecto.Repo`) so each can be
-  confirmed intentional. It parses the AST, so comments and docs are never
-  flagged. It is advisory and always exits successfully.
-
-None of these can see writes that never reach your app (psql, another service, a
-database trigger); for those, emit the change yourself or accept the staleness.
-
-## Source Shapes
-
-The Quick Start source covers the standard Ecto path: every LiveView watching
-the same source module and params can share the same loaded value.
-
-Upkeep narrows a source's surface from supported Ecto equality and membership
-filters. Query filters it cannot narrow still refresh correctly, but at a
-broader schema or table surface. The refresh is still correct, just less
-selective.
-
-Custom Ecto reads can use `load(params)` and `Upkeep.read(query)`:
-
-```elixir
-defmodule MyApp.Catalog.Sources.ProjectSummary do
-  use Upkeep.Ecto.Source, repo: MyApp.Repo
-
-  import Ecto.Query
-
-  def load(%{project_id: project_id}) do
-    items =
-      from(item in MyApp.Catalog.Item,
-        where: item.project_id == ^project_id and item.archived == false
-      )
-      |> Upkeep.read()
-
-    %{item_count: length(items)}
-  end
-end
-```
-
-`Upkeep.read(query)` is only for Ecto reads inside source callbacks. For queries
-outside a source, call your repo directly.
-
-Non-Ecto reads, spawned task reads, ETS, files, caches, external APIs, and
-process state need an explicit surface. Declare it with `invalidated_by(...)`:
-
-```elixir
-defmodule MyApp.Search.Sources.Results do
-  use Upkeep.Source
-
-  invalidated_by(:search_index_rebuilt, on: :project_id)
-
-  def load(%{project_id: project_id}) do
-    MyApp.Search.fetch(project_id)
-  end
-end
-```
-
-## Mutations
-
-Ecto writes are captured automatically when they go through a repo using
-`Upkeep.Ecto.Repo`. For work outside Ecto, wrap the mutation and emit a domain
-fact:
-
-```elixir
-Upkeep.mutate(fn ->
-  MyApp.Search.reindex!(project)
-  Upkeep.changed(:search_index_rebuilt, %{project_id: project.id})
-end)
-```
-
-Manual record changes can use `Upkeep.updated(new_item, from: old_item)`:
-
-```elixir
-old_item = item
-new_item = %{item | project_id: new_project.id}
-
-Upkeep.updated(new_item, from: old_item)
-```
-
-When `from:` is omitted, Upkeep cannot prove which field-indexed sources the
-record may have moved out of. It refreshes every matching `:updated` source and
-emits `[:upkeep, :change, :broad_update]`.
-
-## Identity And Authorization
-
-Sources whose rows depend on Phoenix's `:current_scope` use `load(params,
-upkeep)` or `query(params, upkeep)`. Read the scope from the `upkeep` context so
-different viewers do not share the same source load:
-
-```elixir
-defmodule MyApp.Catalog.Sources.VisibleProjectItems do
-  use Upkeep.Ecto.Source, repo: MyApp.Repo
-
-  import Ecto.Query
-
-  def query(%{project_id: project_id}, upkeep) do
-    scope = Upkeep.current_scope!(upkeep)
-
-    from item in MyApp.Catalog.Item,
-      where:
-        item.project_id == ^project_id and
-          item.account_id == ^scope.account_id and
-          item.value <= ^scope.max_item_value,
-      order_by: [asc: item.position]
-  end
-end
-```
-
-If every viewer may receive the same loaded rows, keep the source shared and
-derive viewer-specific assigns locally:
-
-```elixir
-socket
-|> watch(:items, MyApp.Catalog.Sources.ProjectItems, %{project_id: project_id})
-|> derive(:visible_items, [:items], fn %{items: items, current_scope: scope} ->
-  MyApp.Policy.visible_items(items, scope)
-end)
-```
-
-Do not hide viewer identity in process state, session state, closures, or socket
-captures inside shared source callbacks. Put stable identity in source params,
-or read `current_scope` through `Upkeep.current_scope!(upkeep)`.
-
-Upkeep does not inspect your app-specific scope struct to decide what fields
-mean account, project, user, or session.
-
-When authorization changes what rows a source may load:
-
-- If the policy can be expressed with stable ids known at the watch site, put
-  those ids in source params.
-- If the policy reads Phoenix `:current_scope`, use `query(params, upkeep)` or
-  `load(params, upkeep)` and call `Upkeep.current_scope!(upkeep)`.
-- If the source value is shared and authorization only affects display, derive
-  a local value from `%{current_scope: scope}`.
-- If authorization data changes independently from the source tables, emit a
-  domain change and add an invalidator for that change.
-
-## Testing
-
-Assert that the repo is capture-enabled:
-
-```elixir
-test "repo is capture-enabled" do
-  assert :ok = Upkeep.Test.assert_repo_capture_enabled!(MyApp.Repo)
-end
-```
-
-Assert that a source has a known invalidation surface:
-
-```elixir
-test "project items source is reactive" do
-  Upkeep.Test.assert_source_reactive!(
-    MyApp.Catalog.Sources.ProjectItems,
-    %{project_id: 1}
-  )
-end
-```
-
-If a test uses `Ecto.Adapters.SQL.Sandbox`, allow Upkeep coordinator processes
-to use the checked-out connection:
-
-```elixir
-setup do
-  :ok = Ecto.Adapters.SQL.Sandbox.checkout(MyApp.Repo)
-  Upkeep.Test.allow_sandbox(MyApp.Repo)
-  :ok
-end
-```
-
-### Synchronous Assertions
-
-When a test performs a mutation and immediately asserts on refreshed assigns,
-wrap the mutation with `Upkeep.Test.sync(fn -> ... end)`:
-
-```elixir
-Upkeep.Test.sync(fn ->
-  Upkeep.changed(:search_index_rebuilt, %{project_id: project.id})
-end)
-```
-
-## SQLite Notes
-
-`ecto_sqlite3` apps must set `default_transaction_mode: :immediate` in every
-environment. Without it, WAL pool connections can hold stale read snapshots and
-miss commits made through sibling connections:
-
-```elixir
-config :my_app, MyApp.Repo,
-  database: "...",
-  pool_size: 5,
-  journal_mode: :wal,
-  busy_timeout: 30_000,
-  default_transaction_mode: :immediate
-```
+`watch/4` assigns the loaded value to `socket.assigns.items` and keeps it
+fresh; `derive/4` computes `:item_count` from it. After a captured write
+commits, Upkeep reloads `ProjectItems`, recomputes `:item_count`, and sends
+the updated assigns to the LiveView.
+
+## The capture precondition
+
+Upkeep only sees writes that flow through a wrapped repo. A write made
+through a plain `Ecto.Repo`, a second unwrapped repo, or raw SQL does not
+refresh anything, and the watched sources keep serving stale data until an
+unrelated invalidation happens to touch them. If you must write out of band,
+emit the change yourself with `Upkeep.updated/2` and friends, and use
+`Upkeep.Test.assert_all_writes_captured/1`, `Upkeep.attach_write_guard/2`, or
+`mix upkeep.audit` to catch writes that slip past capture. The
+[repo capture guide](docs/guides/repo-capture.md) covers this in detail,
+including how to intentionally opt a write out with `upkeep: false`.
+
+## Status
+
+Upkeep is early alpha. Application code should stick to the documented entry
+points: `Upkeep`, `Upkeep.Ecto.Repo`, `Upkeep.Ecto.Source`, `Upkeep.Source`,
+`Upkeep.Live`, and `Upkeep.Test`. Telemetry and internal modules may change.
+
+## Learn more
+
+- [Repo capture](docs/guides/repo-capture.md): opting out, catching
+  out-of-band writes, transactions, and SQLite configuration.
+- [Sources](docs/guides/sources.md): custom `load/1` reads, non-Ecto
+  sources, and emitting domain facts.
+- [Identity and authorization](docs/guides/identity-and-authorization.md):
+  sources that depend on `:current_scope`.
+- [Testing](docs/guides/testing.md): sandbox setup and synchronous
+  assertions.
 
 ## License
 

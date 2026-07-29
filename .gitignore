@@ -46,3 +46,6 @@ npm-debug.log
 # Database files
 *.db
 *.db-*
+
+# macOS
+.DS_Store

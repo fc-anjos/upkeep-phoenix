@@ -49,8 +49,8 @@ defmodule Upkeep.Coordinator.Graph.Notifier do
 
   def handle_info(_msg, state), do: {:noreply, state}
 
-  defp new_state(pending \\ MapSet.new()) do
-    %{events: MapSet.new(), message_count: 0, pending: pending}
+  defp new_state do
+    %{events: MapSet.new(), message_count: 0, pending: MapSet.new()}
   end
 
   defp enqueue(state, event) do
@@ -106,7 +106,7 @@ defmodule Upkeep.Coordinator.Graph.Notifier do
 
     emit_flush(events, message_count, source_node_ids, duration)
 
-    new_state(track_pending(pending, source_node_ids))
+    %{new_state() | pending: track_pending(pending, source_node_ids)}
   end
 
   # The pending set is only consumed by the drain barrier (test determinism);

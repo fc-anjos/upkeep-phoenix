@@ -6,8 +6,8 @@ defmodule Upkeep.Observability do
   recent Upkeep runtime events so tooling can answer basic "why did this update?"
   questions without every caller attaching telemetry handlers by hand.
 
-  Event names are diagnostic contracts for this release slice; metadata fields
-  may evolve until a later stability decision marks them stable.
+  Event names are stable diagnostic contracts; metadata fields may still
+  change while Upkeep is in alpha.
   """
 
   use GenServer
